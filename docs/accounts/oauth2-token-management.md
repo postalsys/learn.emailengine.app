@@ -122,7 +122,6 @@ https://www.googleapis.com/auth/calendar
 https://www.googleapis.com/auth/postmaster.readonly
 ```
 
-<!-- Shows: Additional scopes field in EmailEngine OAuth2 configuration -->
 
 **Microsoft Example:**
 
@@ -158,7 +157,6 @@ Navigate to **APIs & Services** → **Enabled APIs and services**.
 
 Search for and enable required APIs (e.g., "Google Calendar API", "Gmail Postmaster API").
 
-<!-- Shows: Enabling APIs in Google Cloud Console -->
 
 **Azure AD:**
 
@@ -277,9 +275,10 @@ Microsoft Graph API OAuth2 **client secrets expire** and must be renewed regular
 4. Azure AD allows multiple active secrets simultaneously, so you can add the new secret before removing the old one
 
 **If the secret expires:**
-- All accounts bound to that OAuth2 app will fail authentication
-- Users will need to re-authenticate after you update the client secret
-- No data is lost, but accounts become inaccessible until the secret is updated
+- Every account bound to that OAuth2 app fails authentication and stops syncing
+- Replacing the secret is enough to recover them. Refresh tokens are bound to the application registration rather than to the secret, so the users do not have to authorize again
+- An outage that runs longer than [`EENGINE_MAX_IMAP_AUTH_FAILURE_TIME`](/docs/reference/configuration-options#max-imap-auth-failure-time), three days by default, is the exception: those accounts are parked and have to be re-enabled once the secret is fixed
+- No stored data is lost either way
 :::
 
 #### Token Lifetime Summary
@@ -415,3 +414,10 @@ EmailEngine handles token refresh automatically:
 While you can cache tokens in your application for a short time (e.g., 5-10 minutes), it's usually simpler to just request them from EmailEngine on-demand. EmailEngine's token retrieval is fast and guarantees validity.
 :::
 
+## See Also
+
+- [OAuth2 setup](/docs/accounts/oauth2-setup) - Registering the provider application and its scopes
+- [Gmail API scopes](/docs/accounts/gmail/gmail-api-scopes) - What each Google scope combination allows
+- [Authentication server](/docs/accounts/authentication-server) - Keeping token management outside EmailEngine entirely
+- [authenticationError webhook](/docs/webhooks/authenticationerror) - Being told when a token stops working
+- [Managing accounts](/docs/accounts/managing-accounts) - Re-enabling an account that was parked

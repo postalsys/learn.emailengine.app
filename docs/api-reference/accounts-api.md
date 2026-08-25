@@ -43,8 +43,9 @@ Email accounts are the core resource in EmailEngine. Each account represents a c
     "secure": true,
     "disabled": false
   },
+  "type": "gmail",
   "oauth2": {
-    "provider": "gmail",
+    "provider": "AAABhaBPHscAAAAH",
     "auth": {
       "user": "user@example.com"
     }
@@ -712,9 +713,11 @@ curl "http://localhost:3000/v1/account/user%40example.com" \
 **Account Already Exists:**
 ```json
 {
-  "error": "Another account for the same OAuth2 user already exists",
+  "statusCode": 400,
+  "error": "Bad Request",
+  "message": "Another account for the same OAuth2 user already exists",
   "code": "AccountAlreadyExists",
-  "statusCode": 400
+  "existingAccount": "user123"
 }
 ```
 **Solution:** Use PUT to update existing account or choose different account ID.
@@ -738,8 +741,9 @@ curl "http://localhost:3000/v1/account/user%40example.com" \
 **Account Not Found:**
 ```json
 {
-  "error": "Account record was not found for requested ID",
-  "statusCode": 404
+  "statusCode": 404,
+  "error": "Not Found",
+  "message": "Account record was not found for requested ID"
 }
 ```
 **Solution:** Verify account ID is correct and account exists.

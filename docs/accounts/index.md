@@ -453,49 +453,10 @@ Limit which folders EmailEngine syncs and monitors to save resources:
 
 ### Custom Special Folder Paths
 
-EmailEngine automatically detects special-use folders (Sent, Drafts, Junk, Trash, Archive) using the following priority order:
+EmailEngine decides which folder is Sent, Drafts, Junk, Trash, or Archive from the paths you set, the server's SPECIAL-USE flags, and folder names, in that order. Outlook over IMAP advertises no flags at all, and a localized mailbox may name its folders in any language, so the guess is not always right.
 
-1. **User-configured paths** (`specialUseSource: "user"`) - Highest priority. Paths you explicitly set via API.
-2. **Server SPECIAL-USE extension** (`specialUseSource: "extension"`) - Folder flags provided by the IMAP server.
-3. **Folder name heuristics** (`specialUseSource: "name"`) - Lowest priority. EmailEngine guesses based on common folder names.
+Override any of them with `sentMailPath`, `draftsMailPath`, `junkMailPath`, `trashMailPath`, and `archiveMailPath` inside the account's `imap` object. See [Custom special folder paths](/docs/accounts/imap-smtp#custom-special-folder-paths) for the field reference and what `specialUseSource` reports.
 
-**Why custom paths are needed:**
-
-- **Outlook IMAP** does not expose SPECIAL-USE flags, so EmailEngine relies on folder name matching
-- **Localized accounts** may have folder names in different languages (e.g., "Gesendete Elemente" in German, "Saadetud kirjad" in Estonian)
-- **Non-standard servers** may use unusual folder names like "Outbox" instead of "Sent"
-- **Custom folder structures** where you want sent emails stored in a specific location
-
-If EmailEngine doesn't correctly identify your special folders, override them explicitly:
-
-```json
-{
-  "account": "user123",
-  "imap": {
-    "partial": true,
-    "sentMailPath": "Sent Items",
-    "draftsMailPath": "Draft Messages",
-    "junkMailPath": "Spam",
-    "trashMailPath": "Deleted Items",
-    "archiveMailPath": "Archive"
-  }
-}
-```
-
-:::warning Important
-Always include `"partial": true` when updating IMAP settings to avoid replacing the entire IMAP configuration and losing authentication credentials.
-:::
-
-**Available overrides:**
-- `sentMailPath` - Where sent messages are stored
-- `draftsMailPath` - Where drafts are saved
-- `junkMailPath` - Where spam/junk goes
-- `trashMailPath` - Where deleted messages go
-- `archiveMailPath` - Where archived messages are stored
-
-You can check how EmailEngine detected each folder's special-use status by looking at the `specialUseSource` field in the [mailbox listing response](/docs/api/get-v-1-account-account-mailboxes).
-
-[Learn more about special-use folders →](/docs/receiving/mailbox-operations#special-use-folders)
 
 ## OAuth2 Token Management
 
@@ -634,7 +595,7 @@ When EmailEngine needs to authenticate, it calls your server at `GET {authServer
 - [PUT /v1/account/\{account\} - Update Account](/docs/api/put-v-1-account-account)
 - [DELETE /v1/account/\{account\} - Delete Account](/docs/api/delete-v-1-account-account)
 - [PUT /v1/account/\{account\}/reconnect - Reconnect](/docs/api/put-v-1-account-account-reconnect)
-- [POST /v1/verifyaccount - Verify Account](/docs/api/post-v-1-verifyaccount)
+- [POST /v1/verifyAccount - Verify Account](/docs/api/post-v-1-verifyaccount)
 - [GET /v1/account/\{account\}/oauth-token - Get OAuth Token](/docs/api/get-v-1-account-account-oauthtoken)
 
 ## See Also

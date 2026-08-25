@@ -624,9 +624,15 @@ Response if successful:
 
 ### Custom Special Folder Paths {#custom-special-folder-paths}
 
-EmailEngine automatically detects special-use folders (Sent, Drafts, Junk, Trash, Archive) using IMAP special-use flags and common folder name patterns. When auto-detection fails, you can override folder paths per account.
+EmailEngine works out which folder is Sent, Drafts, Junk, Trash, and Archive from three sources, in this order:
 
-This can happen when:
+1. **Paths you set** (`specialUseSource: "user"`) - what this section is about, and what wins over everything else
+2. **The server's SPECIAL-USE flags** (`specialUseSource: "extension"`) - the folder attributes an IMAP server advertises
+3. **Folder names** (`specialUseSource: "name"`) - a guess from common names, used only when the first two say nothing
+
+The [mailbox listing](/docs/api/get-v-1-account-account-mailboxes) reports `specialUseSource` per folder, so you can see which of the three decided a given folder before overriding anything.
+
+Auto-detection can miss when:
 
 - The server doesn't support the SPECIAL-USE extension and uses a folder name that EmailEngine's heuristics don't recognize
 - The server uses localized folder names (e.g., Microsoft 365 over IMAP without SPECIAL-USE support may use language-specific names)
@@ -647,6 +653,7 @@ Set any combination of these fields inside the `imap` object when registering or
 ```json
 {
   "imap": {
+    "partial": true,
     "sentMailPath": "Sent Items",
     "draftsMailPath": "Drafts",
     "junkMailPath": "Junk E-mail",
@@ -655,6 +662,8 @@ Set any combination of these fields inside the `imap` object when registering or
   }
 }
 ```
+
+`partial` is what makes this an update rather than a replacement. Leave it out when registering a new account, where the whole `imap` object is being written anyway.
 
 Set a field to `null` to revert to auto-detection:
 
@@ -807,3 +816,11 @@ curl -X POST https://emailengine.example.com/v1/settings \
 
 For environments with strict outbound firewalls, see [Outbound Connection Whitelist](/docs/deployment/security#outbound-connection-whitelist) for a list of domains that EmailEngine needs to reach.
 :::
+
+## See Also
+
+- [Managing accounts](/docs/accounts/managing-accounts) - Updating, pausing, and deleting an account once it exists
+- [Hosted authentication](/docs/accounts/hosted-authentication) - Letting the user enter their own server settings
+- [IMAP indexers](/docs/accounts/imap-indexers) - How EmailEngine detects change in a mailbox
+- [Proxying connections](/docs/accounts/proxying-connections) - Routing mail traffic through a proxy
+- [Troubleshooting accounts](/docs/accounts/troubleshooting) - When a connection or login fails

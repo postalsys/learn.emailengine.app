@@ -137,19 +137,16 @@ Go to [Google Cloud Console](https://console.cloud.google.com/) and open the pro
 
 ![Creating a new Google Cloud project](/img/external/6V0B1AgnvU.gif)
 
-<!-- Shows: Clicking "New project" button from project selector -->
 
 Click the "New project" button to start.
 
 ![Naming your project](/img/external/owSQLNV1_5.gif)
 
-<!-- Shows: Project creation form with name field -->
 
 On the project settings screen, name your project (e.g., "EmailEngine"). All other fields are pre-filled and cannot be changed.
 
 ![Waiting for project creation](/img/external/0B4b3JeP3t.gif)
 
-<!-- Shows: Project creation progress and selection -->
 
 Wait for the project to be created, then select it from the project menu.
 
@@ -161,13 +158,11 @@ Click the hamburger menu (top-left) → **APIs & Services** → **Enabled APIs &
 
 ![Navigating to APIs & Services](/img/external/v3Flo-WBVG.gif)
 
-<!-- Shows: Navigation to API configuration -->
 
 Find and enable **Gmail API** for your project.
 
 ![Enabling Gmail API](/img/external/vz7Is1SAWe.gif)
 
-<!-- Shows: Searching for and enabling Gmail API -->
 
 :::info Why Enable Gmail API for IMAP?
 Enabling Gmail API means your project can access Gmail email accounts regardless of protocol. EmailEngine uses IMAP and SMTP for actual email operations, and Gmail API is **only used to generate OAuth2 access tokens** for authenticating those IMAP/SMTP sessions.
@@ -191,13 +186,11 @@ Click hamburger menu → **APIs & Services** → **OAuth consent screen**.
 
 ![Navigating to consent screen](/img/external/0h3kuzzsCN.gif)
 
-<!-- Shows: Navigation to OAuth consent screen -->
 
 ### Choose User Type
 
 ![Selecting user type](/img/external/mT6n2spEgt.gif)
 
-<!-- Shows: Internal vs External selection -->
 
 **Internal:**
 
@@ -219,7 +212,6 @@ For this tutorial, we'll use **Internal**. For production public apps, select **
 
 ![Configuring consent screen details](/img/external/FIRIMzunwz.gif)
 
-<!-- Shows: Filling app name, support email, etc. -->
 
 Provide:
 
@@ -236,7 +228,6 @@ Click **Add or remove scopes** and find `https://mail.google.com/` from the list
 
 ![Adding required scope](/img/external/BONjtoR9p6.gif)
 
-<!-- Shows: Adding https://mail.google.com/ scope -->
 
 :::important Required Scope for IMAP/SMTP
 The `https://mail.google.com/` scope is **required for IMAP and SMTP access**.
@@ -254,13 +245,11 @@ Navigate to **APIs & Services** → **Credentials**, then click **Create Credent
 
 ![Creating OAuth credentials](/img/external/dd27iNGkH0.gif)
 
-<!-- Shows: Creating OAuth client ID -->
 
 ### Configure OAuth Client
 
 ![Configuring OAuth client details](/img/external/5gMPcI0kJe.gif)
 
-<!-- Shows: Setting application type and URIs -->
 
 **Application type:** Web application
 
@@ -288,7 +277,6 @@ Click **Create**.
 
 ![Downloading OAuth credentials](/img/external/4UhRTwH9yL.gif)
 
-<!-- Shows: Downloading credentials JSON file -->
 
 Click the **Download** button to save the credentials JSON file. You'll need this file to configure EmailEngine.
 
@@ -304,13 +292,11 @@ Now that you have your Google Cloud project configured, let's set up EmailEngine
 
 ![Creating Gmail OAuth2 app in EmailEngine](/img/external/tg5rojB4ov.gif)
 
-<!-- Shows: Navigating to OAuth2 configuration in EmailEngine -->
 
 ### Configure OAuth2 Settings
 
 ![Configuring OAuth2 application](/img/external/aMN66YONKa.gif)
 
-<!-- Shows: Uploading credentials file and configuring settings -->
 
 **Application name:** Give it a descriptive name (e.g., "Gmail OAuth2")
 
@@ -346,7 +332,6 @@ Now you can add a Gmail account to test the OAuth2 flow.
 
 ![Testing with hosted authentication](/img/external/EhohdYsEDc.gif)
 
-<!-- Shows: Using hosted authentication form to add account -->
 
 1. In EmailEngine, click **Add account**
 2. Click **Sign in with Google**

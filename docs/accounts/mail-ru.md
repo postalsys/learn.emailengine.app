@@ -129,13 +129,18 @@ curl -XPOST "https://emailengine.example.com/v1/account" \
     "name": "User Name",
     "email": "user@mail.ru",
     "oauth2": {
-      "provider": "mailRu",
+      "provider": "AAABkQw...",
       "accessToken": "ACCESS_TOKEN_FROM_MAILRU",
       "refreshToken": "REFRESH_TOKEN_FROM_MAILRU",
-      "expires": "2024-12-31T23:59:59.000Z"
+      "expires": "2024-12-31T23:59:59.000Z",
+      "auth": {
+        "user": "user@mail.ru"
+      }
     }
   }'
 ```
+
+`provider` is the application ID returned when you registered the app in step 2, and `auth.user` is required.
 
 ## Step 4: Verify Connection
 
@@ -154,8 +159,10 @@ curl "https://emailengine.example.com/v1/account/mailru-user" \
   "name": "User Name",
   "email": "user@mail.ru",
   "state": "connected",
+  "type": "mailRu",
   "oauth2": {
-    "provider": "mailRu"
+    "provider": "AAABkQw...",
+    "auth": { "user": "user@mail.ru" }
   }
 }
 ```

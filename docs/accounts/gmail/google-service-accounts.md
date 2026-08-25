@@ -135,17 +135,13 @@ For push notification setup, see [Setting Up Gmail API](/docs/accounts/gmail/gma
 
 Go to [Google Cloud Console](https://console.cloud.google.com/) and create a new project.
 
-<!-- Shows: Project selector in Google Cloud Console -->
 
 Click the project selector and then **New Project**.
 
-<!-- Shows: New project button -->
 
-<!-- Shows: Project creation form -->
 
 Fill in the project name (e.g., "EmailEngine Service Account").
 
-<!-- Shows: Project being created, then "Select project" button -->
 
 Wait for the project to be created, then click **Select project** to switch to it.
 
@@ -164,11 +160,9 @@ Service accounts authenticate using JWT tokens, not the OAuth consent flow, so u
 
 Navigate to **APIs & Services** → **OAuth consent screen**.
 
-<!-- Shows: Navigation to OAuth consent screen -->
 
 ### Select User Type
 
-<!-- Shows: Internal vs External selection -->
 
 Select **Internal** and click **Create**.
 
@@ -178,7 +172,6 @@ The "Internal" vs "External" choice primarily affects standard OAuth2 flows wher
 
 ### Fill in App Information
 
-<!-- Shows: OAuth consent form fields -->
 
 Fill in the required fields:
 
@@ -192,13 +185,11 @@ Click **Save and continue**.
 
 ### Configure Scopes (Optional)
 
-<!-- Shows: Scopes configuration page -->
 
 Click **Add or remove scopes**.
 
 For service accounts, the actual scope authorization happens in the Google Admin Console's domain-wide delegation settings (Step 4), not here. However, adding scopes here documents what your project uses and is required if you later add standard OAuth2 clients.
 
-<!-- Shows: Manually adding scope -->
 
 If desired, scroll to the end of the scopes list and manually add:
 
@@ -208,7 +199,6 @@ https://mail.google.com/
 
 Click **Add to table** then **Update**.
 
-<!-- Shows: Scope listed in restricted scopes -->
 
 The scope should now appear in the "Restricted scopes" section.
 
@@ -222,15 +212,12 @@ Click **Save and continue** to finish consent screen setup.
 
 Navigate to **APIs & Services** → **Credentials** and click the **Manage service accounts** link (bottom right corner).
 
-<!-- Shows: Credentials page with "Manage service accounts" link -->
 
 Click **Create service account**.
 
-<!-- Shows: Service accounts page with create button -->
 
 ### Configure Service Account
 
-<!-- Shows: Service account creation form -->
 
 **Service account name**: Choose a descriptive name (e.g., "emailengine-service")
 
@@ -242,7 +229,6 @@ Click **Create and continue**.
 
 ### Grant Role
 
-<!-- Shows: Role selection with "Owner" highlighted -->
 
 **Role**: Select **Owner**
 
@@ -254,7 +240,6 @@ Click **Continue**.
 
 ### Complete Setup
 
-<!-- Shows: Final step, grant users access (can be left empty) -->
 
 Leave the optional fields empty and click **Done**.
 
@@ -266,7 +251,6 @@ Now we need to authorize the service account to access user mailboxes.
 
 From the service accounts list, copy the **OAuth2 Client ID** for your service account.
 
-<!-- Shows: Service account list with Client ID column -->
 
 :::tip Finding Client ID
 The Client ID is a long numeric string in the service account listing. You'll need this for domain-wide delegation setup.
@@ -276,21 +260,17 @@ The Client ID is a long numeric string in the service account listing. You'll ne
 
 Open [Google Admin Console](https://admin.google.com/) for your domain and search for "API Controls".
 
-<!-- Shows: Google Admin search for "API Controls" -->
 
 ### Manage Domain-Wide Delegation
 
 Scroll down to find the "Domain-wide delegation" section and click **Manage domain-wide delegation**.
 
-<!-- Shows: Domain-wide delegation section in Security settings -->
 
 Click **Add new**.
 
-<!-- Shows: API clients list with "Add new" button -->
 
 ### Authorize API Client
 
-<!-- Shows: API client authorization form -->
 
 **Client ID**: Paste the Client ID you copied from the service account
 
@@ -316,15 +296,12 @@ Return to the Google Cloud Console service accounts page.
 
 Open the context menu for your service account (three dots) and click **Manage keys**.
 
-<!-- Shows: Service account context menu with "Manage keys" option -->
 
 Click **Add Key** → **Create new key**.
 
-<!-- Shows: Add Key dropdown menu -->
 
 Select **JSON** as the key type and click **Create**.
 
-<!-- Shows: Key type selection dialog -->
 
 The browser will automatically download the key file as a `.json` file.
 
@@ -369,17 +346,13 @@ Enabling the Gmail API is not needed for the IMAP and SMTP base scope - EmailEng
 
 Navigate to **APIs & Services** → **Dashboard** and click **Enable APIs and Services**.
 
-<!-- Shows: Dashboard with "Enable APIs and Services" button -->
 
 Search for "mail" to find Gmail API.
 
-<!-- Shows: API Library search results -->
 
-<!-- Shows: Gmail API details page -->
 
 Click **Enable**.
 
-<!-- Shows: Gmail API enabled confirmation -->
 
 ## Step 7: Configure EmailEngine
 
@@ -387,7 +360,6 @@ Now configure EmailEngine to use the service account.
 
 ### Add Gmail Service Account Application
 
-<!-- Shows: EmailEngine OAuth2 configuration page -->
 
 1. Open EmailEngine dashboard
 2. Navigate to **Integrations** > **OAuth2 Apps**
@@ -396,7 +368,6 @@ Now configure EmailEngine to use the service account.
 
 ### Upload Credentials File
 
-<!-- Shows: Service account configuration form in EmailEngine -->
 
 **Credentials file**: Use the file input to select the service account key JSON file
 
@@ -768,7 +739,6 @@ curl -X POST https://emailengine.example.com/v1/account \
 
 Check the accounts list in EmailEngine:
 
-<!-- Shows: Accounts list showing Gmail OAuth2 accounts -->
 
 Service account-based accounts appear as "OAuth2 (Gmail Service Accounts)" accounts in the list.
 

@@ -268,7 +268,6 @@ Configure your email client with these settings:
 **Example: Thunderbird**
 
 
-<!-- Shows: Thunderbird account settings using EmailEngine IMAP proxy -->
 
 1. Add new account
 2. Configure manually

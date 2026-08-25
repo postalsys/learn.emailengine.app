@@ -30,20 +30,24 @@ Every account in EmailEngine has a state that indicates its current status:
 
 ```mermaid
 stateDiagram-v2
-    [*] --> init
+    [*] --> init: account registered
     init --> connecting
-    connecting --> syncing
-    syncing --> connected
-    connected --> [*]
+    connecting --> syncing: authenticated
+    syncing --> connected: sync finished
+    connected --> syncing: periodic resync
 
-    connecting --> authenticationError
-    authenticationError --> reconnect: fix credentials
-    reconnect --> connecting
+    connecting --> authenticationError: credentials rejected
+    authenticationError --> connecting: new credentials saved
+    authenticationError --> unset: three days of failures
 
-    connecting --> connectError
-    connectError --> connecting: wait/retry
-    connectError --> disconnected: if persists
-    disconnected --> [*]
+    connected --> disconnected: connection dropped
+    disconnected --> connecting: backoff elapsed
+    connecting --> connectError: server unreachable
+    connectError --> connecting: backoff elapsed
+
+    connected --> paused: paused through the API
+    paused --> connecting: resumed
+    unset --> connecting: re-enabled
 ```
 
 ## Adding Accounts
@@ -102,12 +106,17 @@ curl -X POST https://emailengine.example.com/v1/account \
     "name": "John Doe",
     "email": "john@gmail.com",
     "oauth2": {
-      "provider": "gmail",
+      "provider": "AAABhaBPHscAAAAH",
       "accessToken": "ya29.a0AWY7Ckl...",
-      "refreshToken": "1//0gDj5..."
+      "refreshToken": "1//0gDj5...",
+      "auth": {
+        "user": "john@gmail.com"
+      }
     }
   }'
 ```
+
+`provider` is the ID of an OAuth2 application registered in EmailEngine, shown on **Integrations** > **OAuth2 Apps**, not the name of the provider and not the client ID from Google or Azure. `auth.user` is required: it is the mailbox the tokens belong to.
 
 [See Gmail OAuth2 guide →](./gmail/gmail-imap)
 [See Outlook OAuth2 guide →](./microsoft-365/outlook-365)
@@ -123,7 +132,7 @@ curl -X POST https://emailengine.example.com/v1/account \
     "name": "John Doe",
     "email": "john@company.com",
     "oauth2": {
-      "provider": "gmailService",
+      "provider": "AAABhaBPHscAAAAI",
       "auth": {
         "user": "john@company.com"
       }
@@ -215,8 +224,10 @@ curl https://emailengine.example.com/v1/account/user123 \
   "email": "john@gmail.com",
   "state": "connected",
   "syncTime": "2024-01-15T10:30:00.000Z",
+  "type": "gmail",
   "oauth2": {
-    "provider": "gmail",
+    "provider": "AAABhaBPHscAAAAH",
+    "auth": { "user": "john@gmail.com" },
     "expires": "2024-01-15T11:30:00.000Z"
   },
   "imap": {
@@ -348,7 +359,7 @@ curl -X PUT https://emailengine.example.com/v1/account/user123 \
 :::warning Partial Updates
 Use `"partial": true` inside the `imap` or `smtp` object to update only specific fields. Without it, you'll replace the entire configuration, which may lose existing settings like auth credentials or special folder paths.
 
-Note: The `partial` flag only works for main-level objects (`imap`, `smtp`, `oauth2`), not for nested objects like `imap.auth`.
+The flag itself belongs on `imap`, `smtp`, or `oauth2` and nowhere deeper. The merge it performs is recursive, though, so sending `auth: { pass: "..." }` under a partial update keeps the stored `auth.user`.
 :::
 
 ### Update OAuth2 Tokens
@@ -359,6 +370,7 @@ curl -X PUT https://emailengine.example.com/v1/account/user123 \
   -H "Content-Type: application/json" \
   -d '{
     "oauth2": {
+      "partial": true,
       "accessToken": "new.access.token",
       "refreshToken": "new.refresh.token"
     }
@@ -430,6 +442,7 @@ curl -X PUT https://emailengine.example.com/v1/account/user123 \
   -H "Content-Type: application/json" \
   -d '{
     "imap": {
+      "partial": true,
       "sentMailPath": "Sent Items"
     }
   }'
@@ -447,7 +460,9 @@ If an account enters an error state, trigger a reconnection:
 
 ```bash
 curl -X PUT https://emailengine.example.com/v1/account/user123/reconnect \
-  -H "Authorization: Bearer YOUR_TOKEN"
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"reconnect": true}'
 ```
 
 **When to Use:**
@@ -474,10 +489,13 @@ curl -X PUT https://emailengine.example.com/v1/account/user123/reconnect \
 **Account Not Found:**
 ```json
 {
-  "error": "Account not found",
-  "code": "AccountNotFound"
+  "statusCode": 404,
+  "error": "Not Found",
+  "message": "Account record was not found for requested ID"
 }
 ```
+
+`error` carries the HTTP status phrase and `message` the explanation. See [Error codes](/docs/reference/error-codes).
 
 ## Disabling and Enabling Accounts
 
@@ -806,3 +824,10 @@ curl -X PUT "https://emailengine.example.com/v1/account/user123" \
 
 The merge is recursive, so the stored `auth.user` is kept and only the password changes. Updating credentials on an account in an error state triggers a reconnect on its own, so no separate reconnect call is needed.
 
+## See Also
+
+- [Account types](/docs/accounts) - Choosing between IMAP, OAuth2, and the native provider APIs
+- [Hosted authentication](/docs/accounts/hosted-authentication) - Letting EmailEngine collect credentials from the user
+- [IMAP indexers](/docs/accounts/imap-indexers) - What a flush rebuilds, and which changes each indexer detects
+- [Troubleshooting accounts](/docs/accounts/troubleshooting) - Diagnosing a connection that will not come up
+- [Accounts API](/docs/api-reference/accounts-api) - The same operations as a reference

@@ -291,7 +291,6 @@ You cannot use both IMAP/SMTP and Mail.\* scopes together. Choose one backend:
 Pick one approach and stick with it.
 :::
 
-<!-- Shows: All required permissions listed -->
 
 Verify all required permissions are listed, then continue to the next step.
 

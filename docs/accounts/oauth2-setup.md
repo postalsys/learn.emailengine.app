@@ -19,7 +19,7 @@ OAuth2 is an authorization framework that allows applications to access user dat
 - No password storage required
 - Tokens can be revoked without changing passwords
 - Scoped permissions (request only what you need)
-- Works seamlessly with two-factor authentication
+- Works with accounts that have two-factor authentication enabled
 
 **Better User Experience:**
 
@@ -408,7 +408,7 @@ curl -X POST https://emailengine.example.com/v1/authentication/form \
   -H "Content-Type: application/json" \
   -d '{
     "account": "user123",
-    "email": "user@gmail.com",  // Pre-filled
+    "email": "user@gmail.com",
     "redirectUrl": "https://myapp.com/settings"
   }'
 ```
@@ -424,7 +424,7 @@ curl -X POST https://emailengine.example.com/v1/authentication/form \
   -d '{
     "account": "shared-support",
     "email": "support@company.com",
-    "delegated": true,  // Important
+    "delegated": true,
     "redirectUrl": "https://myapp.com/settings"
   }'
 ```
@@ -438,7 +438,7 @@ Access any user's mailbox without individual consent:
 ```json
 {
   "oauth2": {
-    "provider": "gmailService",
+    "provider": "AAABhaBPHscAAAAI",
     "auth": {
       "user": "user@company.com"
     }
@@ -446,6 +446,16 @@ Access any user's mailbox without individual consent:
 }
 ```
 
+`provider` is the ID of the service-account application you registered in EmailEngine.
+
 Requires domain-wide delegation setup.
 
 [Learn more about service accounts →](./gmail/google-service-accounts)
+
+## See Also
+
+- [Gmail OAuth2 over IMAP](/docs/accounts/gmail/gmail-imap) - The Google Cloud side, step by step
+- [Outlook OAuth2](/docs/accounts/microsoft-365/outlook-365) - The Azure side, step by step
+- [Gmail API scopes](/docs/accounts/gmail/gmail-api-scopes) - Which scope combination supports which feature
+- [OAuth2 token management](/docs/accounts/oauth2-token-management) - Using the stored tokens against other provider APIs
+- [Hosted authentication](/docs/accounts/hosted-authentication) - Sending users through the consent flow
