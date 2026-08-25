@@ -164,3 +164,10 @@ See [Searching Threads](./searching-threads) for complete details.
   }
 }
 ```
+
+## See Also
+
+- [Provider support](/docs/sending/threading/provider-support) - Which backends assign a thread ID at all
+- [Searching threads](/docs/sending/threading/searching-threads) - Retrieving every message in a conversation
+- [Sending threaded messages](/docs/sending/threading/sending-threaded) - Keeping a sequence you send in one thread
+- [Replies and forwards](/docs/sending/replies-forwards) - Letting EmailEngine build the headers

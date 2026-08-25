@@ -345,12 +345,14 @@ All messages will be queued and sent at the specified time.
 
 ### Provider Limits
 
-Be aware of provider sending limits:
+A mail merge sends through the account's own mailbox, so the provider's per-day recipient limit applies. The figures below are the published ones at the time of writing, and providers revise them, so treat them as an order of magnitude and check the provider's own page before planning a campaign around them:
 
-- **Gmail**: ~500 recipients/day for free accounts, ~2000 for Google Workspace
-- **Outlook**: ~300 recipients/day for personal, ~10,000 for business
-- **Yahoo**: ~500 recipients/day
-- **Custom SMTP**: Check with your provider
+- **Gmail**: around 500 recipients a day on a free account, around 2000 on Google Workspace ([Google's limits](https://support.google.com/a/answer/166852))
+- **Outlook**: around 300 a day on a personal account, around 10,000 on a business one ([Microsoft's limits](https://learn.microsoft.com/en-us/office365/servicedescriptions/exchange-online-service-description/exchange-online-limits))
+- **Yahoo**: around 500 a day
+- **Anything else**: ask the provider
+
+Exceeding the limit does not fail quietly: the provider rejects the submission, and EmailEngine reports it as a [`messageDeliveryError`](/docs/webhooks/messagedeliveryerror) or [`messageFailed`](/docs/webhooks/messagefailed) depending on whether the rejection is retriable.
 
 ### Implement Throttling
 
@@ -667,3 +669,11 @@ Test with invalid data to ensure graceful failure:
 - Invalid email addresses
 - Missing required params
 - Oversized attachments
+
+## See Also
+
+- [Templates](/docs/sending/templates) - Storing the subject and body instead of repeating them per send
+- [Virtual mailing lists](/docs/advanced/virtual-lists) - Unsubscribe handling for a recurring send
+- [Outbox queue](/docs/sending/outbox-queue) - Watching a large merge drain
+- [Blocklists](/docs/advanced/blocklists) - Keeping unsubscribed and bounced addresses out of a merge
+- [Sending API](/docs/api-reference/sending-api) - The endpoint reference

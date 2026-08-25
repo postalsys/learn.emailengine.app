@@ -745,3 +745,9 @@ curl -XPOST "https://emailengine.example.com/v1/account/example/submit" \
 
 Each recipient gets a personalized email based on their params.
 
+## See Also
+
+- [Mail merge](/docs/sending/mail-merge) - Sending one template to a list with per-recipient values
+- [Basic sending](/docs/sending/basic-sending) - The submit fields a template fills in
+- [Templates API](/docs/api/get-v-1-templates) - The endpoint reference
+- [Pre-processing](/docs/advanced/pre-processing) - Rewriting a message after it is rendered

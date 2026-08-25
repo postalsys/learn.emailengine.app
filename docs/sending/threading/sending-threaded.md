@@ -199,3 +199,10 @@ See [Replies & Forwards](/docs/sending/replies-forwards) for details on the Refe
 - Use full OAuth2 scopes for Gmail (not just `gmail.send`)
 - Be aware that AWS WorkMail requires alternative threading strategies
 - Test your threading implementation with your specific mail server configuration
+
+## See Also
+
+- [Threading overview](/docs/sending/threading/overview) - What each header does
+- [Replies and forwards](/docs/sending/replies-forwards) - The automatic alternative to building headers
+- [Mail merge](/docs/sending/mail-merge) - Sending a sequence to many recipients
+- [Basic sending](/docs/sending/basic-sending) - The submit fields used here

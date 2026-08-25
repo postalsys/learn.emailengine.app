@@ -338,3 +338,10 @@ If `threadId` is missing:
 
 - Provider doesn't support native threading
 - Must build threads manually from Message-ID headers
+
+## See Also
+
+- [Threading overview](/docs/sending/threading/overview) - The headers and IDs this table is about
+- [Searching threads](/docs/sending/threading/searching-threads) - The search strategy each provider needs
+- [Account types](/docs/accounts) - Choosing the backend that gives you native threading
+- [Searching messages](/docs/receiving/searching) - What else the search endpoint can filter on

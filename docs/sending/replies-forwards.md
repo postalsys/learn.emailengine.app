@@ -171,7 +171,7 @@ curl -XPOST "https://emailengine.example.com/v1/account/example/submit" \
       "name": "Andris Reinman",
       "address": "andris@ethereal.email"
     },
-    "html": "<p>FYI  -  see below</p>"
+    "html": "<p>FYI, see below</p>"
   }'
 ```
 
@@ -565,3 +565,10 @@ If you need to reply multiple times to the same message:
 - Fetch the original message once via API
 - Cache the necessary fields in your application
 - Build the reply headers yourself
+
+## See Also
+
+- [Threading](/docs/sending/threading) - The headers that keep a conversation together
+- [Basic sending](/docs/sending/basic-sending) - Composing a message rather than answering one
+- [Message operations](/docs/receiving/message-operations) - Finding the message ID a reference needs
+- [Sending API](/docs/api-reference/sending-api) - The reference block in the endpoint reference
