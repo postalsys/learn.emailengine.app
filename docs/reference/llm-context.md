@@ -185,9 +185,9 @@ Webhook routes are read-only through the API - create and edit them in the Email
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/v1/tokens` | List all tokens (each includes `id`, the SHA-256 hash identifying the token) |
-| `POST` | `/v1/token` | Create token |
-| `DELETE` | `/v1/token/{token}` | Delete token (accepts the token value or its `id` hash) |
-| `GET` | `/v1/tokens/account/{account}` | List account tokens |
+| `POST` | `/v1/tokens` | Create token |
+| `DELETE` | `/v1/tokens/{token}` | Delete token (accepts the token value or its `id` hash) |
+| `GET` | `/v1/tokens?account={account}` | List account tokens |
 
 ### Blocklists
 

@@ -668,7 +668,7 @@ The Prometheus metrics endpoint is available at `/metrics` on the main API serve
 emailengine tokens issue -d "Prometheus" -s "metrics"
 
 # Or create via API
-curl -X POST https://emailengine.example.com/v1/token \
+curl -X POST https://emailengine.example.com/v1/tokens \
   -H "Authorization: Bearer ADMIN_TOKEN" \
   -d '{"description": "Prometheus", "scopes": ["metrics"]}'
 

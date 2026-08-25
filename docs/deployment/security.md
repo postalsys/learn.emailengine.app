@@ -709,7 +709,7 @@ The EmailEngine API is designed to be an internal resource, accessed only by you
 If you need to expose the API with account-specific tokens (rare use case), EmailEngine supports optional per-token rate limiting. Configure rate limits when creating access tokens:
 
 ```bash
-curl -X POST http://localhost:3000/v1/token \
+curl -X POST http://localhost:3000/v1/tokens \
   -H "Authorization: Bearer ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

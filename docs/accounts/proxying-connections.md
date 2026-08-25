@@ -180,7 +180,7 @@ The account must be configured to use **IMAP/SMTP**, not Gmail API or MS Graph A
 Create an access token scoped specifically for IMAP proxy access using the [Generate Token API endpoint](/docs/api/post-v-1-tokens):
 
 ```bash
-curl -X POST https://emailengine.example.com/v1/token \
+curl -X POST https://emailengine.example.com/v1/tokens \
   -H "Authorization: Bearer YOUR_EMAILENGINE_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -267,8 +267,6 @@ Configure your email client with these settings:
 
 **Example: Thunderbird**
 
-
-
 1. Add new account
 2. Configure manually
 3. Use EmailEngine proxy settings
@@ -339,7 +337,7 @@ Generate tokens for specific purposes:
 **Backup Script Token:**
 
 ```bash
-curl -X POST https://emailengine.example.com/v1/token \
+curl -X POST https://emailengine.example.com/v1/tokens \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -352,7 +350,7 @@ curl -X POST https://emailengine.example.com/v1/token \
 **Admin Access Token (Multiple Scopes):**
 
 ```bash
-curl -X POST https://emailengine.example.com/v1/token \
+curl -X POST https://emailengine.example.com/v1/tokens \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -367,7 +365,7 @@ curl -X POST https://emailengine.example.com/v1/token \
 See all tokens for an account:
 
 ```bash
-curl https://emailengine.example.com/v1/tokens/account/user123 \
+curl "https://emailengine.example.com/v1/tokens?account=user123" \
   -H "Authorization: Bearer YOUR_TOKEN"
 ```
 
@@ -375,8 +373,13 @@ curl https://emailengine.example.com/v1/tokens/account/user123 \
 
 ```json
 {
+  "account": "user123",
+  "total": 1,
+  "page": 0,
+  "pages": 1,
   "tokens": [
     {
+      "account": "user123",
       "id": "6cad01dae08f...458576a026c1ec",
       "description": "Daily backup script",
       "scopes": ["imap-proxy"],
@@ -390,7 +393,7 @@ curl https://emailengine.example.com/v1/tokens/account/user123 \
 ```
 
 :::info Token IDs
-The `id` value is the SHA-256 hash that identifies the token - the raw token value is shown only once at creation and cannot be retrieved later. The `DELETE /v1/token/{token}` endpoint accepts either the raw token or this id.
+The `id` value is the SHA-256 hash that identifies the token - the raw token value is shown only once at creation and cannot be retrieved later. The `DELETE /v1/tokens/{token}` endpoint accepts either the raw token or this id.
 :::
 
 ### Revoking Tokens
@@ -398,7 +401,7 @@ The `id` value is the SHA-256 hash that identifies the token - the raw token val
 Immediately invalidate a token:
 
 ```bash
-curl -X DELETE https://emailengine.example.com/v1/token/6cad01dae08f...458576a026c1ec \
+curl -X DELETE https://emailengine.example.com/v1/tokens/6cad01dae08f...458576a026c1ec \
   -H "Authorization: Bearer YOUR_TOKEN"
 ```
 
@@ -422,7 +425,7 @@ Best practice: Rotate tokens periodically:
 
 ```bash
 # Generate new token
-NEW_TOKEN=$(curl -X POST https://emailengine.example.com/v1/token \
+NEW_TOKEN=$(curl -X POST https://emailengine.example.com/v1/tokens \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -438,7 +441,7 @@ echo "New token: $NEW_TOKEN"
 # ... deploy updated script ...
 
 # Delete old token
-curl -X DELETE https://emailengine.example.com/v1/token/OLD_TOKEN \
+curl -X DELETE https://emailengine.example.com/v1/tokens/OLD_TOKEN \
   -H "Authorization: Bearer YOUR_TOKEN"
 ```
 
@@ -449,7 +452,7 @@ Restrict tokens to specific IP addresses or networks:
 ### Single IP Address
 
 ```bash
-curl -X POST https://emailengine.example.com/v1/token \
+curl -X POST https://emailengine.example.com/v1/tokens \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -464,7 +467,7 @@ curl -X POST https://emailengine.example.com/v1/token \
 ### IP Range (CIDR)
 
 ```bash
-curl -X POST https://emailengine.example.com/v1/token \
+curl -X POST https://emailengine.example.com/v1/tokens \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type": application/json" \
   -d '{
@@ -612,7 +615,7 @@ In EmailEngine: **Configuration** → **SMTP Server**
 ### Generate Token with Both Scopes
 
 ```bash
-curl -X POST https://emailengine.example.com/v1/token \
+curl -X POST https://emailengine.example.com/v1/tokens \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -644,21 +647,15 @@ Now the email client can both send and receive through EmailEngine's proxies.
 
 ## Performance Considerations
 
-### Connection Pooling
+### One Connection In, One Connection Out
 
-EmailEngine maintains persistent connections:
+The proxy does not pool. Each client session opens its own upstream IMAP connection to the provider and holds it for the life of the session, which is what makes the relay transparent: the client's IDLE, its selected mailbox, and its command pipeline are all real state on the provider's side.
 
-- Reduces connection overhead
-- Faster operation execution
-- Efficient resource usage
+The arithmetic follows from that:
 
-### Concurrent Connections
-
-Monitor simultaneous connections:
-
-- Each proxy connection uses one upstream IMAP connection
-- Provider connection limits still apply (typically 10-15)
-- Don't exceed provider limits
+- Every proxy session counts against the provider's per-account connection limit, typically 10 to 15
+- The account's own sync connection counts too, and so does each configured sub-connection
+- A client that reconnects aggressively will hit the limit faster than one that keeps a session open
 
 ### Large-Scale Deployments
 
@@ -675,3 +672,10 @@ For many concurrent users:
 - Track connection count
 - Monitor resource usage
 - Alert on capacity issues
+
+## See Also
+
+- [Access tokens](/docs/api-reference/access-tokens) - Scopes, restrictions, and revocation for the tokens used as passwords here
+- [IMAP and SMTP accounts](/docs/accounts/imap-smtp) - The account configuration the proxy relays to
+- [Security](/docs/deployment/security) - Exposing the proxy port safely
+- [Environment variables](/docs/configuration/environment-variables#certificates-for-emailengines-own-listeners) - Supplying your own TLS certificate for the proxy

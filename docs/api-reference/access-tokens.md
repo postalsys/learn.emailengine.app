@@ -323,7 +323,7 @@ Access tokens can be configured with security restrictions to limit their usage 
 Token restrictions are configured when creating a token via the API:
 
 ```bash
-curl -X POST http://localhost:3000/v1/token \
+curl -X POST http://localhost:3000/v1/tokens \
   -H "Authorization: Bearer EXISTING_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -431,7 +431,7 @@ When the rate limit is exceeded, requests are rejected with a 429 Too Many Reque
 All restriction types can be combined. A request must satisfy ALL configured restrictions:
 
 ```bash
-curl -X POST http://localhost:3000/v1/token \
+curl -X POST http://localhost:3000/v1/tokens \
   -H "Authorization: Bearer EXISTING_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

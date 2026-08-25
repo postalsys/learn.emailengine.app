@@ -443,6 +443,8 @@ Your authentication server must return one of the following:
 
 **Important:** For OAuth2, EmailEngine expects the access token to be valid immediately. If it's expired, authentication will fail. Your server must handle token refresh before returning.
 
+The response is validated before it is used. `user` is required and capped at 256 characters, `pass` at 256, and `accessToken` at 16384. Any other field is discarded, so returning an expiry or a refresh token alongside them is harmless but has no effect: EmailEngine asks again when it next needs a credential rather than tracking the lifetime itself.
+
 ### Step 3: Configure EmailEngine
 
 Set the authentication server URL in EmailEngine settings using the [Update Settings API endpoint](/docs/api/post-v-1-settings):
@@ -565,11 +567,14 @@ EmailEngine calls your authentication server when:
 ### Request from EmailEngine
 
 ```http
-GET https://myservice.com/authenticate?account=user123
+GET https://myservice.com/authenticate?account=user123&proto=imap
 Host: myservice.com
+User-Agent: emailengine/2.79.3 (+https://emailengine.app)
 ```
 
-Simple GET request with account ID as query parameter.
+A GET request carrying the account ID and the protocol it is authenticating. `proto` is `imap`, `smtp`, or `api`.
+
+If the configured `authServer` URL contains a username and password, EmailEngine strips them from the URL and sends them as an HTTP Basic `Authorization` header instead, so `https://ee:s3cret@auth.example.com/authenticate` authenticates the caller without putting the credentials in your access logs.
 
 ### Your Server's Response
 
@@ -610,6 +615,8 @@ Simple GET request with account ID as query parameter.
 - Account enters error state
 - Retries periodically
 - Logs error for debugging
+
+An account that carries `useAuthServer` but also has stored credentials is a special case. If no `authServer` is configured, EmailEngine logs a warning and uses the stored credentials rather than failing the account, which keeps long-lived instances working where the flag was set years ago and never had an effect.
 
 
 ## Advanced Patterns
@@ -675,3 +682,10 @@ app.get("/health", (req, res) => {
 ```
 
 Monitor this endpoint to ensure authentication server is running.
+
+## See Also
+
+- [Hosted authentication](/docs/accounts/hosted-authentication) - Letting EmailEngine own the OAuth2 flow instead
+- [OAuth2 setup](/docs/accounts/oauth2-setup) - Registering the provider application this still needs
+- [Managing accounts](/docs/accounts/managing-accounts) - Registering and updating the accounts that use the server
+- [Security](/docs/deployment/security) - Protecting the endpoint that hands out credentials

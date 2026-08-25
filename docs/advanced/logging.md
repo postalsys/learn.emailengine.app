@@ -137,8 +137,17 @@ _Configuration > Logging, with the account log settings and the Sentry error rep
 
 | Setting | Default | Purpose |
 |---------|---------|---------|
-| `logs.all` | `false` | Collect logs for every account. Without it, logging is enabled per account |
-| `logs.maxLogLines` | `10000` | Entries retained per account |
+| `logs.all` | `false` | Collect logs for every account. Without it, each account is switched on individually |
+| `logs.maxLogLines` | `10000` | Entries retained per account. Server-wide, not per account |
+
+Switch it on for one account with the account's own `logs` flag, which is a boolean:
+
+```bash
+curl -X PUT "https://emailengine.example.com/v1/account/user123" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"logs": true}'
+```
 
 Retrieve an account's log as a plain text file:
 
@@ -149,7 +158,7 @@ curl "https://emailengine.example.com/v1/logs/user123" \
 ```
 
 :::warning These logs live in Redis
-Every retained entry consumes RAM on the Redis instance, and `logs.all` multiplies that by your account count. Turn it on to investigate a specific problem and turn it back off afterwards, or raise `maxLogLines` only for the account you are debugging. Changing `logs.all` requires a restart.
+Every retained entry consumes RAM on the Redis instance, and `logs.all` multiplies that by your account count. Switch logging on for the one account you are investigating and turn it back off afterwards. `maxLogLines` applies to every account that has logging on, so raising it is not a per-account decision. Changing `logs.all` requires a restart.
 :::
 
 Only IMAP accounts produce these logs. Gmail API and Microsoft Graph accounts talk over HTTPS rather than IMAP, so there is no protocol transcript to record and the endpoint returns nothing for them.

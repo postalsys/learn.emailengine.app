@@ -747,7 +747,7 @@ curl https://www.googleapis.com/gmail/v1/users/me/profile \
 
 When seeking help, include:
 
-1. **EmailEngine version:** Check dashboard or `package.json`
+1. **EmailEngine version:** The dashboard footer, or `emailengine --version`
 2. **Account state:** From account details API
 3. **Error messages:** From logs
 4. **Provider:** Gmail, Outlook, Yahoo, etc.
@@ -755,6 +755,24 @@ When seeking help, include:
 6. **Reproduction steps:** What leads to the issue
 
 ### EmailEngine Logs
+
+The per-account log is usually more useful than the server log, because it holds the protocol conversation for that one account. Turn it on for the account, reproduce the problem, then read it back:
+
+```bash
+curl -X PUT https://emailengine.example.com/v1/account/user123 \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"logs": true}'
+
+curl "https://emailengine.example.com/v1/logs/user123" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+`logs` on an account is a boolean. Retention (`logs.maxLogLines`) and the switch that turns this on for every account (`logs.all`) are server-wide settings. See [Per-account protocol logs](/docs/advanced/logging#per-account-protocol-logs).
+
+See [Logging](/docs/advanced/logging) for the format and what each level records.
+
+For the server log:
 
 ```bash
 # Logs with account-specific filter
@@ -772,9 +790,17 @@ journalctl -u emailengine -f
 
 ### Useful Resources
 
-- [EmailEngine API Documentation](https://api.emailengine.app/)
+- [EmailEngine API reference](/docs/api/emailengine-api)
 - [EmailEngine GitHub Issues](https://github.com/postalsys/emailengine/issues)
 - [Support Contact](/docs/support)
 - Provider-specific documentation:
   - [Gmail IMAP Settings](https://support.google.com/mail/answer/7126229)
   - [Outlook IMAP Settings](https://support.microsoft.com/en-us/office/pop-imap-and-smtp-settings-8361e398-8af4-4e97-b147-6c6c4ac95353)
+
+## See Also
+
+- [Managing accounts](/docs/accounts/managing-accounts) - Reconnecting, re-enabling, and rotating credentials
+- [Account types](/docs/accounts) - Whether a different backend avoids the problem entirely
+- [Logging](/docs/advanced/logging) - Turning up detail on one account or on the whole server
+- [Troubleshooting](/docs/troubleshooting) - Problems that are not account-specific
+- [Support](/docs/support) - What to send when you ask for help

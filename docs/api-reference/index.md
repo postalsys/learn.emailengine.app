@@ -73,7 +73,7 @@ Authorization: Bearer YOUR_ACCESS_TOKEN
 **Via API (Account-Specific Tokens Only):**
 
 ```bash
-curl -X POST http://localhost:3000/v1/token \
+curl -X POST http://localhost:3000/v1/tokens \
   -H "Authorization: Bearer EXISTING_SYSTEM_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
