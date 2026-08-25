@@ -12,12 +12,6 @@ keywords:
 
 # Tracking Deleted Messages
 
-<!--
-Source attribution:
-- PRIMARY: blog/2021-07-16-tracking-deleted-messages-on-an-imap-account.md
-- Enhanced with EmailEngine implementation details
--->
-
 Tracking deleted messages on an IMAP account is one of the more challenging aspects of email synchronization. While it's straightforward to detect new messages, identifying deletions requires careful handling of IMAP's complexity.
 
 ## Why Deletion Tracking is Challenging

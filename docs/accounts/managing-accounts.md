@@ -555,7 +555,6 @@ The account keeps its credentials and folder state throughout, so resuming does 
 An account that fails authentication for [three days running](/docs/reference/configuration-options#max-imap-auth-failure-time) is parked with the same flag, so a disabled account is not always one somebody disabled. Working credentials have to be in place before re-enabling it, or the account is parked again once the window passes.
 :::
 
-
 ## Deleting Accounts
 
 Permanently remove an account from EmailEngine using the [delete account API](/docs/api/delete-v-1-account-account):

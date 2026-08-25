@@ -12,13 +12,6 @@ keywords:
 
 # Searching Messages
 
-<!--
-Source attribution:
-- EmailEngine API documentation
-- IMAP SEARCH command reference
-- Common search patterns
--->
-
 The [search endpoint](/docs/api/post-v-1-account-account-search) finds messages in a connected account. For IMAP accounts the terms are translated into IMAP SEARCH, which every standards-compliant server implements.
 
 ## Why Use Search?

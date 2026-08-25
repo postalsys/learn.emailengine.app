@@ -363,7 +363,6 @@ console.log(report);
 
 A passing DKIM signature that is not aligned still fails DMARC, which is why `dkimAligned` is reported separately rather than folded into the DKIM result.
 
-
 ## Troubleshooting Authentication Issues
 
 ### DKIM Failures

@@ -206,7 +206,6 @@ gcloud pubsub subscriptions describe ee-sub-AAABkQ3c5eQ \
 ```
 :::
 
-
 ## Required Google Cloud Permissions
 
 The service account requires these permissions:

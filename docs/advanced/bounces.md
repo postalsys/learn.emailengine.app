@@ -15,13 +15,6 @@ keywords:
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-<!--
-SOURCES:
-- docs/usage/bounces.md
-- sources/blog/2022-10-12-tracking-bounces.md
-This guide covers EmailEngine's automatic bounce detection and tracking capabilities.
--->
-
 # Bounce Detection and Handling
 
 EmailEngine automatically detects and tracks email bounces, providing detailed bounce information through webhooks and message listings. Learn how to handle bounce notifications and maintain email list hygiene.

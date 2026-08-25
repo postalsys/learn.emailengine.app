@@ -13,12 +13,6 @@ keywords:
 
 # Message Operations
 
-<!--
-Source attribution:
-- EmailEngine API documentation
-- Common message operation patterns
--->
-
 Message operations allow you to list, fetch, move, delete, and update email messages programmatically. These operations work consistently across IMAP, Gmail API, and Microsoft Graph backends.
 
 ## Listing Messages

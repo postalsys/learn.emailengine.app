@@ -383,7 +383,6 @@ Which field drives which workflow:
 
 The model does not always populate every field. Treat each one as optional and fall back to your existing routing when it is missing, since an OpenAI outage or a rate limit leaves the message delivered but unenriched. See [Handling Failures](#handling-failures).
 
-
 ### 6. Smart Email Search Assistant
 
 :::danger Being removed on October 1, 2026

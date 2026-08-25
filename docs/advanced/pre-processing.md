@@ -11,11 +11,6 @@ keywords:
   - custom logic
 ---
 
-<!--
-SOURCE: docs/usage/pre-processing-functions.md
-This guide covers EmailEngine's pre-processing functions for custom filtering and transformation logic.
--->
-
 # Pre-Processing Functions
 
 Pre-processing functions allow you to run custom JavaScript code to filter or transform data before EmailEngine processes it. Use these functions to implement custom business logic, filter unwanted events, or modify webhook payloads.

@@ -8,7 +8,6 @@ description: Connecting EmailEngine to a CRM: syncing mail into contact records,
 
 How to connect EmailEngine to a CRM: syncing mail into contact records, tracking activity, and sending from the user's own mailbox.
 
-
 ## Overview
 
 EmailEngine is frequently utilized by smaller, niche CRM systems for email integration, such as those designed for managing donations at a church or coordinating influencers for marketing campaigns.
@@ -510,7 +509,6 @@ Point it at a request bin, connect one real mailbox, and read the actual payload
 :::
 
 For a ready-made client rather than raw HTTP calls, see the [PHP SDK](/docs/integrations/php), which wraps authentication and error handling for the same endpoints used throughout this guide.
-
 
 ## Production Considerations
 

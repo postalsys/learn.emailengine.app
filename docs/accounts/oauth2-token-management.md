@@ -122,7 +122,6 @@ https://www.googleapis.com/auth/calendar
 https://www.googleapis.com/auth/postmaster.readonly
 ```
 
-
 **Microsoft Example:**
 
 Additional Microsoft Graph scopes are automatically included if you add them as delegated permissions in Azure AD. Just ensure they're configured in the Azure app.
@@ -156,7 +155,6 @@ Make sure the APIs you want to use are enabled in the provider console.
 Navigate to **APIs & Services** → **Enabled APIs and services**.
 
 Search for and enable required APIs (e.g., "Google Calendar API", "Gmail Postmaster API").
-
 
 **Azure AD:**
 

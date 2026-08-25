@@ -8,7 +8,6 @@ description: Connect EmailEngine with low-code platforms like Zapier, Make.com, 
 
 Learn how to integrate EmailEngine with low-code platforms and automation tools using webhooks and custom routing.
 
-
 ## Overview
 
 Anything that can receive a webhook and make an HTTP request can drive EmailEngine, which covers most low-code platforms without writing any code.
@@ -510,7 +509,6 @@ journalctl -u emailengine
 ```
 
 EmailEngine logs to stdout using the pino logger. There is no log file - logs are available through your process manager or container runtime.
-
 
 ## Common Use Cases
 

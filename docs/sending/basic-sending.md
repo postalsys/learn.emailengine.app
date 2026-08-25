@@ -4,12 +4,6 @@ sidebar_position: 2
 description: Learn how to send emails using EmailEngine's submit API with HTML, attachments, and custom headers
 ---
 
-<!--
-SOURCE ATTRIBUTION:
-- Primary: blog/2025-01-08-sending-an-email-from-emailengine.md
-- Merged: docs/usage/sending-emails.md
--->
-
 # Basic Email Sending
 
 EmailEngine simplifies sending emails through registered accounts' SMTP servers. This guide covers the fundamentals of sending emails using the [submit API](/docs/api/post-v-1-account-account-submit).

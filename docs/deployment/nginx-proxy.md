@@ -17,7 +17,6 @@ Configure Nginx as a reverse proxy in front of EmailEngine to enable HTTPS, load
 - **WebSocket support** - Proxy WebSocket connections
 :::
 
-
 ## Quick Start
 
 ### 1. Install Nginx

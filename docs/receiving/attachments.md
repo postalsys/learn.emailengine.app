@@ -15,12 +15,6 @@ import TabItem from '@theme/TabItem';
 
 # Working with Attachments
 
-<!--
-Source attribution:
-- EmailEngine API documentation
-- Attachment handling patterns
--->
-
 Attachments are listed with the message and fetched on demand. This page covers [downloading them](/docs/api/get-v-1-account-account-attachment-attachment), the inline images an HTML body references, and the metadata that comes with each one.
 
 ## Understanding Attachments

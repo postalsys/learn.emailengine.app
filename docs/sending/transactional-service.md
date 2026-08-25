@@ -14,11 +14,6 @@ keywords:
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-<!--
-SOURCE: sources/blog/2021-08-17-using-as-a-transactional-email-service.md
-Migrated to documentation format with technical how-to content.
--->
-
 # Transactional Email Service
 
 EmailEngine can function as a self-hosted transactional email service, allowing you to convert any email account into a reliable email delivery system. You can submit messages for delivery, schedule future sends, track delivery status, and receive bounce notifications.
@@ -656,5 +651,4 @@ For high-volume sending:
 - If growing, increase worker concurrency
 - Check SMTP server rate limits
 - Review delivery errors in **Failed** tab
-
 

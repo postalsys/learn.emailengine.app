@@ -291,7 +291,6 @@ You cannot use both IMAP/SMTP and Mail.\* scopes together. Choose one backend:
 Pick one approach and stick with it.
 :::
 
-
 Verify all required permissions are listed, then continue to the next step.
 
 ## Step 5: Create Client Secret
@@ -452,7 +451,10 @@ curl -X POST https://emailengine.example.com/v1/account \
     "oauth2": {
       "provider": "AAABlf_0iLgAAAAQ",
       "accessToken": "EwBIA8l6...",
-      "refreshToken": "M.R3_BAY..."
+      "refreshToken": "M.R3_BAY...",
+      "auth": {
+        "user": "user@outlook.com"
+      }
     }
   }'
 ```
@@ -563,3 +565,11 @@ Microsoft OAuth2 **client secrets expire** (90 days to 2 years max). When expire
 :::
 
 [Learn more about OAuth2 token management →](../oauth2-token-management)
+
+## See Also
+
+- [Outlook application access](/docs/accounts/microsoft-365/outlook-client-credentials) - Reaching mailboxes with no interactive login
+- [Shared mailboxes](/docs/accounts/microsoft-365/shared-mailboxes) - Delegated and direct access to a shared mailbox
+- [OAuth2 token management](/docs/accounts/oauth2-token-management) - Refresh token lifetimes and client secret expiry
+- [OAuth2 setup](/docs/accounts/oauth2-setup) - The concepts shared by every provider
+- [Account troubleshooting](/docs/accounts/troubleshooting) - Consent, tenant, and redirect URI failures

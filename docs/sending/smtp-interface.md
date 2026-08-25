@@ -365,7 +365,6 @@ curl "https://emailengine.example.com/v1/outbox" \
   -H "Authorization: Bearer <token>"
 ```
 
-
 ## When to Use the SMTP Server vs REST API
 
 ### Use the SMTP Server When:

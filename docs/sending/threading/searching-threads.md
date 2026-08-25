@@ -279,7 +279,6 @@ Deduplicating on `id` matters for the per-folder path: a message can legitimatel
 
 For generic IMAP, search by `subject` first and then group on the `References` and `In-Reply-To` headers, as described in [Building Threads Manually](#building-threads-manually) above.
 
-
 ## Pagination
 
 Thread searches support pagination for long threads:

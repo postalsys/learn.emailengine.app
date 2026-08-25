@@ -12,11 +12,6 @@ keywords:
   - alerting
 ---
 
-<!--
-SOURCE: docs/configuration/monitoring.md
-This guide covers monitoring EmailEngine in production with health checks, metrics, and alerting.
--->
-
 # Monitoring and Observability
 
 Monitor EmailEngine health, performance, and activity with built-in health check endpoints, Prometheus metrics, and integrations with popular observability platforms.
@@ -749,7 +744,6 @@ New Relic, Elastic, Honeycomb, and similar tools all accept Prometheus metrics t
 :::note APM agents do not apply here
 Language-level APM agents instrument an application you build and run yourself. EmailEngine is a packaged service, so there is no place to load one, and the metrics endpoint already reports what an agent would have collected.
 :::
-
 
 ## Bull Board Dashboard
 

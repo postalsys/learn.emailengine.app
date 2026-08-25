@@ -12,11 +12,6 @@ keywords:
   - job types
 ---
 
-<!--
-SOURCE: sources/blog/2022-09-11-interpreting-queue-types.md
-Migrated to documentation format with technical guidance on queue internals.
--->
-
 # Queue Management
 
 EmailEngine uses [BullMQ](https://docs.bullmq.io/) for background task processing. Understanding how queues work helps you monitor performance, troubleshoot issues, and optimize your EmailEngine deployment.

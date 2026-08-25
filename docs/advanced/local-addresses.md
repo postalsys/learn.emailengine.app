@@ -11,11 +11,6 @@ keywords:
   - connection distribution
 ---
 
-<!--
-SOURCE: docs/usage/local-addresses.md
-This guide covers configuring EmailEngine to bind outbound connections to specific local IP addresses.
--->
-
 # Local IP Address Binding
 
 If your server has multiple IP addresses or network interfaces, configure EmailEngine to use specific local addresses for outbound IMAP and SMTP connections. This helps distribute connections across IPs and avoid rate limiting.
@@ -285,7 +280,6 @@ curl -X POST "http://localhost:3000/v1/settings" \
 ```
 
 Changes take effect for new connections. Existing connections continue using their current IP until they reconnect.
-
 
 ## Performance Considerations
 

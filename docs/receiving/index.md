@@ -12,12 +12,6 @@ keywords:
 
 # Receiving Emails with EmailEngine
 
-<!--
-Source attribution:
-- Original concept: EmailEngine documentation
-- Enhanced with webhook and processing patterns
--->
-
 EmailEngine watches connected mailboxes and reports what arrives, so a support desk, an analytics pipeline, or an automated workflow can act on new mail as it lands rather than polling for it.
 
 ## Why EmailEngine for Receiving Emails?
@@ -255,5 +249,4 @@ This section covers all aspects of receiving and processing emails:
 8. **[Tracking Deleted Messages](/docs/receiving/tracking-deleted)** - Monitoring message deletions
 9. **[Continuous Processing](/docs/receiving/continuous-processing)** - Building real-time email processing pipelines
 10. **[Exporting Messages](/docs/receiving/exporting)** - Bulk export with concurrency tuning
-
 

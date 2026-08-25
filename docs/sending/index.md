@@ -181,4 +181,10 @@ Integrate email into your application logic:
 6. **[Outbox Queue](./outbox-queue.md)** - Understanding the queue system
 7. **[SMTP Server](./smtp-interface.md)** - Alternative SMTP integration
 
+## See Also
 
+- [Outbox queue](/docs/sending/outbox-queue) - What happens between "queued" and "sent"
+- [messageSent](/docs/webhooks/messagesent) and [messageFailed](/docs/webhooks/messagefailed) - The delivery events to handle
+- [Sending API](/docs/api-reference/sending-api) - Every field the submit endpoint accepts
+- [Bounces](/docs/advanced/bounces) - Recognizing a delivery failure that arrives by mail rather than by webhook
+- [SMTP gateways](/docs/sending/transactional-service) - Relaying through a sending service instead of the user's own server

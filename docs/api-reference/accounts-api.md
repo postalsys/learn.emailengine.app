@@ -705,7 +705,6 @@ curl "http://localhost:3000/v1/account/user%40example.com" \
 | `syncTime` | When the last sync completed. A timestamp that stops advancing points at a stalled account |
 | `lastError` | Details of the most recent failure, or `null`. Present even after EmailEngine has recovered |
 
-
 ## Error Handling
 
 ### Common Errors

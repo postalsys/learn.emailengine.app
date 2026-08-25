@@ -14,7 +14,6 @@ Deploy EmailEngine on Render.com with zero DevOps overhead. Render provides mana
 Use the "Deploy to Render" button for automated setup with EmailEngine + Redis configured automatically.
 :::
 
-
 ## Overview
 
 [Render.com](https://render.com/) is a modern cloud platform that makes deploying applications simple. You can set up EmailEngine entirely from the web UI without SSH access.

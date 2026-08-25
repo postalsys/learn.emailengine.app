@@ -240,3 +240,9 @@ References: <original@example.com> <reply1@example.com> <reply2@example.com>
 | Manual Threading Required | No              | No              | Yes            | No             | Yes             |
 | Cross-Folder Search       | Single API call | Single API call | Multiple calls | Multiple calls | Manual building |
 
+## See Also
+
+- [Replies and forwards](/docs/sending/replies-forwards) - Letting EmailEngine build the threading headers for you
+- [Searching messages](/docs/receiving/searching) - The search terms the thread queries here are built from
+- [Message IDs](/docs/advanced/ids-explained) - What a `threadId` is, and why it is not portable between providers
+- [Messages API](/docs/api-reference/messages-api) - Where `threadId` appears in a message payload

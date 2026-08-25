@@ -11,11 +11,6 @@ keywords:
   - gmail categories
 ---
 
-<!--
-SOURCE: sources/blog/2023-02-27-measuging-inbox-spam-placement.md
-This guide covers using EmailEngine to test email delivery and measure inbox/spam placement.
--->
-
 # Inbox Placement Testing
 
 Measure email deliverability by monitoring test mailboxes with EmailEngine. Track whether your emails land in the inbox or spam folder, and for Gmail, which category tab they appear in.
@@ -275,7 +270,6 @@ An inbox placement test is a loop over a seed list:
 The marker matters. Searching by subject alone collides with earlier runs of the same campaign, and a stale hit reports yesterday's placement as today's.
 
 The example below implements all four steps.
-
 
 ### Python Example
 

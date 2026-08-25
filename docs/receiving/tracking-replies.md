@@ -12,12 +12,6 @@ keywords:
 
 # Tracking Email Replies
 
-<!--
-Source attribution:
-- PRIMARY: blog/2025-04-01-tracking-email-replies-with-imap-api.md
-- Enhanced with complete implementation patterns
--->
-
 Reply tracking is essential when building email integrations that need to know when recipients respond to your messages. This guide shows you how to send trackable emails and reliably detect replies using EmailEngine.
 
 ## Why Track Replies?
@@ -444,7 +438,6 @@ Two details decide whether this works in production:
 - **Check `references` as well as `inReplyTo`.** A reply from a client that threads loosely, or a reply to a reply, may carry your Message-ID only in `references`. Matching on `inReplyTo` alone silently misses those.
 
 Filter auto-responses before recording a reply, or vacation autoresponders will close out threads nobody read. See [Filtering Auto-Responses](#filtering-auto-responses) above.
-
 
 ## Advanced Patterns
 

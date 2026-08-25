@@ -4,11 +4,6 @@ sidebar_position: 7
 description: Understanding EmailEngine's message queue system for reliable email delivery
 ---
 
-<!--
-SOURCE ATTRIBUTION:
-- Primary: blog/2022-09-11-interpreting-queue-types.md
--->
-
 # Outbox Queue
 
 EmailEngine uses queues to process background tasks including email sending. Understanding the queue system helps you monitor delivery, troubleshoot issues, and optimize performance.

@@ -4,11 +4,6 @@ sidebar_position: 3
 description: Learn how to properly reply to and forward emails with correct threading headers and IMAP flags
 ---
 
-<!--
-SOURCE ATTRIBUTION:
-- Primary: blog/2025-02-07-sending-reply-and-forward-emails.md
--->
-
 # Sending Replies and Forwards
 
 EmailEngine makes it easy to reply to or forward any message in your customer's mailbox with just one API call. This guide covers how to use the reference modes to maintain proper email threading.

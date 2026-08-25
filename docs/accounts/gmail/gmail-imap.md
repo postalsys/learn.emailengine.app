@@ -137,16 +137,13 @@ Go to [Google Cloud Console](https://console.cloud.google.com/) and open the pro
 
 ![Creating a new Google Cloud project](/img/external/6V0B1AgnvU.gif)
 
-
 Click the "New project" button to start.
 
 ![Naming your project](/img/external/owSQLNV1_5.gif)
 
-
 On the project settings screen, name your project (e.g., "EmailEngine"). All other fields are pre-filled and cannot be changed.
 
 ![Waiting for project creation](/img/external/0B4b3JeP3t.gif)
-
 
 Wait for the project to be created, then select it from the project menu.
 
@@ -158,11 +155,9 @@ Click the hamburger menu (top-left) → **APIs & Services** → **Enabled APIs &
 
 ![Navigating to APIs & Services](/img/external/v3Flo-WBVG.gif)
 
-
 Find and enable **Gmail API** for your project.
 
 ![Enabling Gmail API](/img/external/vz7Is1SAWe.gif)
-
 
 :::info Why Enable Gmail API for IMAP?
 Enabling Gmail API means your project can access Gmail email accounts regardless of protocol. EmailEngine uses IMAP and SMTP for actual email operations, and Gmail API is **only used to generate OAuth2 access tokens** for authenticating those IMAP/SMTP sessions.
@@ -186,11 +181,9 @@ Click hamburger menu → **APIs & Services** → **OAuth consent screen**.
 
 ![Navigating to consent screen](/img/external/0h3kuzzsCN.gif)
 
-
 ### Choose User Type
 
 ![Selecting user type](/img/external/mT6n2spEgt.gif)
-
 
 **Internal:**
 
@@ -212,7 +205,6 @@ For this tutorial, we'll use **Internal**. For production public apps, select **
 
 ![Configuring consent screen details](/img/external/FIRIMzunwz.gif)
 
-
 Provide:
 
 - **App name**: "EmailEngine" (or your application name)
@@ -227,7 +219,6 @@ Click **Save and continue**.
 Click **Add or remove scopes** and find `https://mail.google.com/` from the list.
 
 ![Adding required scope](/img/external/BONjtoR9p6.gif)
-
 
 :::important Required Scope for IMAP/SMTP
 The `https://mail.google.com/` scope is **required for IMAP and SMTP access**.
@@ -245,11 +236,9 @@ Navigate to **APIs & Services** → **Credentials**, then click **Create Credent
 
 ![Creating OAuth credentials](/img/external/dd27iNGkH0.gif)
 
-
 ### Configure OAuth Client
 
 ![Configuring OAuth client details](/img/external/5gMPcI0kJe.gif)
-
 
 **Application type:** Web application
 
@@ -277,7 +266,6 @@ Click **Create**.
 
 ![Downloading OAuth credentials](/img/external/4UhRTwH9yL.gif)
 
-
 Click the **Download** button to save the credentials JSON file. You'll need this file to configure EmailEngine.
 
 ## Step 5: Configure EmailEngine
@@ -292,11 +280,9 @@ Now that you have your Google Cloud project configured, let's set up EmailEngine
 
 ![Creating Gmail OAuth2 app in EmailEngine](/img/external/tg5rojB4ov.gif)
 
-
 ### Configure OAuth2 Settings
 
 ![Configuring OAuth2 application](/img/external/aMN66YONKa.gif)
-
 
 **Application name:** Give it a descriptive name (e.g., "Gmail OAuth2")
 
@@ -331,7 +317,6 @@ Now you can add a Gmail account to test the OAuth2 flow.
 ### Option 1: Via Hosted Authentication Form
 
 ![Testing with hosted authentication](/img/external/EhohdYsEDc.gif)
-
 
 1. In EmailEngine, click **Add account**
 2. Click **Sign in with Google**
@@ -390,7 +375,10 @@ curl -X POST https://emailengine.example.com/v1/account \
     "oauth2": {
       "provider": "AAABlf_0iLgAAAAQ",
       "accessToken": "ya29.a0AWY7Ckl...",
-      "refreshToken": "1//0gDj5..."
+      "refreshToken": "1//0gDj5...",
+      "auth": {
+        "user": "user@gmail.com"
+      }
     }
   }'
 ```
@@ -483,7 +471,7 @@ EmailEngine automatically:
 - Refreshes access tokens when they expire during API requests
 - Makes regular API requests (at least daily) even for idle accounts, keeping refresh tokens active
 - Stores refresh tokens securely in Redis
-- Re-authenticates on token refresh failures
+- Reports a failed refresh as an [`authenticationError`](/docs/webhooks/authenticationerror), since obtaining a new grant needs the user
 
 You can:
 
@@ -504,3 +492,11 @@ EmailEngine keeps tokens active by making regular API requests, but if an accoun
 :::
 
 [Learn more about OAuth2 token management →](../oauth2-token-management)
+
+## See Also
+
+- [Gmail API](/docs/accounts/gmail/gmail-api) - The other Gmail backend, and when it is the better choice
+- [Gmail API scopes](/docs/accounts/gmail/gmail-api-scopes) - What each scope combination supports
+- [Google service accounts](/docs/accounts/gmail/google-service-accounts) - Workspace access without per-user consent
+- [OAuth2 token management](/docs/accounts/oauth2-token-management) - Token lifetimes and using them elsewhere
+- [Account troubleshooting](/docs/accounts/troubleshooting) - When the connection or the consent fails

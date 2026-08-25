@@ -51,16 +51,13 @@ Go to [Google Cloud Console](https://console.cloud.google.com/) and open the pro
 
 ![Creating a new Google Cloud project](/img/external/6V0B1AgnvU.gif)
 
-
 Click the "New project" button to start.
 
 ![Naming your project](/img/external/owSQLNV1_5.gif)
 
-
 Name your project (e.g., "EmailEngine Gmail API").
 
 ![Waiting for project creation](/img/external/0B4b3JeP3t.gif)
-
 
 Wait for the project to be created, then select it from the project menu.
 
@@ -70,13 +67,11 @@ Click the hamburger menu (top-left) → **APIs & Services** → **Enabled APIs &
 
 ![Navigating to APIs & Services](/img/external/v3Flo-WBVG.gif)
 
-
 ### Enable Gmail API
 
 Find and enable **Gmail API** for your project.
 
 ![Enabling Gmail API](/img/external/vz7Is1SAWe.gif)
-
 
 This allows EmailEngine to perform Gmail REST API requests.
 
@@ -85,7 +80,6 @@ This allows EmailEngine to perform Gmail REST API requests.
 Also find and enable **Cloud Pub/Sub API**.
 
 ![Enabling Cloud Pub/Sub API](/img/external/KwfF06xSzN.gif)
-
 
 :::info Why Cloud Pub/Sub?
 Gmail pushes change notifications (new messages, flag changes, etc.) to Google's Pub/Sub system, not directly to EmailEngine. EmailEngine sets up a Pub/Sub topic and subscription to receive these notifications and convert them into webhooks for your application.
@@ -101,11 +95,9 @@ Click hamburger menu → **APIs & Services** → **OAuth consent screen**.
 
 ![Navigating to consent screen](/img/external/0h3kuzzsCN.gif)
 
-
 ### Choose User Type
 
 ![Selecting user type](/img/external/mT6n2spEgt.gif)
-
 
 **Internal:**
 
@@ -125,7 +117,6 @@ For this tutorial, we'll use **Internal**. For production, select **External** a
 
 ![Configuring consent screen details](/img/external/FIRIMzunwz.gif)
 
-
 Provide:
 
 - **App name**: "EmailEngine" (or your application name)
@@ -141,7 +132,6 @@ Click **Add or remove scopes** and find `gmail.modify` from the list.
 
 ![Adding required scope](/img/external/BONjtoR9p6.gif)
 
-
 Check `gmail.modify` and click **Update**.
 
 :::important Required Scope
@@ -152,7 +142,6 @@ If Google's verification process determines you need different scopes (e.g., `gm
 
 ![Saving consent screen configuration](/img/external/THYy7q5W6Z.gif)
 
-
 Scroll down and click **Save and continue** to finish consent screen setup.
 
 ## Step 4: Create OAuth Credentials for User Authentication
@@ -161,16 +150,13 @@ Navigate to **APIs & Services** → **Credentials**.
 
 ![Navigating to credentials page](/img/external/7bDFveWih1.gif)
 
-
 Click **Create credentials** → **OAuth client ID**.
 
 ![Creating OAuth client ID](/img/external/dd27iNGkH0.gif)
 
-
 ### Configure OAuth Client
 
 ![Configuring OAuth client details](/img/external/5gMPcI0kJe.gif)
-
 
 **Application type:** Web application
 
@@ -192,7 +178,6 @@ Click **Create**.
 
 ![Downloading OAuth credentials](/img/external/4UhRTwH9yL.gif)
 
-
 Click the **Download** button. Save this file - you'll need it to configure EmailEngine.
 
 :::tip Credential File Names
@@ -211,13 +196,11 @@ On the **Credentials** page, navigate to the **Service Account management** page
 
 ![Navigating to service accounts](/img/external/FztCvZP6it.gif)
 
-
 Click **Create Service Account**.
 
 ### Configure Service Account
 
 ![Creating service account](/img/external/M5HVdcmnY8.gif)
-
 
 **Service account name:** Choose any name (e.g., "EmailEngine Pub/Sub Manager")
 
@@ -241,7 +224,6 @@ Once created, select the service account and navigate to **Manage Keys**.
 
 ![Generating service account keys](/img/external/VtJcozUfxY.gif)
 
-
 Click **Add key** → **Create new key** → **JSON format**.
 
 The key file will automatically download. Store it securely - you cannot download it again.
@@ -254,7 +236,6 @@ Now configure EmailEngine to use the service account for managing webhooks.
 
 ![Creating service account app in EmailEngine](/img/external/YvOpC3QjWZ.gif)
 
-
 1. Open EmailEngine dashboard
 2. Navigate to **Integrations** > **OAuth2 Apps**
 3. Click the **Create OAuth2 app** dropdown
@@ -263,7 +244,6 @@ Now configure EmailEngine to use the service account for managing webhooks.
 ### Configure Service Account Settings
 
 ![Configuring service account](/img/external/OfoPs4TldB.gif)
-
 
 **Application name:** Give it a descriptive name (e.g., "Gmail Pub/Sub Manager")
 
@@ -288,7 +268,6 @@ Now configure the user OAuth application that will authenticate Gmail accounts.
 
 ![Creating Gmail OAuth2 app](/img/external/cJspELPMDV.gif)
 
-
 1. Navigate to **Integrations** > **OAuth2 Apps**
 2. Click the **Create OAuth2 app** dropdown
 3. Select **Gmail**
@@ -296,7 +275,6 @@ Now configure the user OAuth application that will authenticate Gmail accounts.
 ### Configure OAuth2 Settings
 
 ![Configuring Gmail OAuth2 settings](/img/external/vj8qeSQt6D.gif)
-
 
 **Application name:** Give it a descriptive name (e.g., "Gmail API OAuth2")
 
@@ -329,7 +307,6 @@ Add a Gmail account to test the complete flow.
 ### Via Hosted Authentication Form
 
 ![Testing with hosted authentication](/img/external/5OA36VmtxU.gif)
-
 
 1. In EmailEngine, click **Add account**
 2. Click **Sign in with Google**
@@ -434,7 +411,7 @@ EmailEngine automatically:
 - Refreshes access tokens when they expire during API requests
 - Makes regular API requests (at least daily) even for idle accounts, keeping refresh tokens active
 - Stores refresh tokens securely
-- Re-authenticates on token failures
+- Reports a failed refresh as an [`authenticationError`](/docs/webhooks/authenticationerror), since obtaining a new grant needs the user
 
 You can:
 
@@ -455,3 +432,11 @@ EmailEngine keeps tokens active by making regular API requests, but if an accoun
 :::
 
 [Learn more about OAuth2 token management →](../oauth2-token-management)
+
+## See Also
+
+- [Gmail over IMAP](/docs/accounts/gmail/gmail-imap) - The other Gmail backend, and how the two differ
+- [Gmail API scopes](/docs/accounts/gmail/gmail-api-scopes) - Which features each scope combination supports
+- [Gmail Pub/Sub](/docs/accounts/gmail/gmail-pubsub) - The push subscription this setup depends on
+- [Google service accounts](/docs/accounts/gmail/google-service-accounts) - Workspace access without per-user consent
+- [Account troubleshooting](/docs/accounts/troubleshooting) - When consent or sync fails

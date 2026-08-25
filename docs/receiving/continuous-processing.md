@@ -13,12 +13,6 @@ keywords:
 
 # Continuous Email Processing
 
-<!--
-Source attribution:
-- PRIMARY: blog/2025-08-01-using-emailengine-to-continuously-feed-emails-for-analysis.md
-- Enhanced with pipeline architectures and patterns
--->
-
 Continuous email processing enables you to build real-time pipelines that analyze, archive, and act on emails as they arrive. Unlike one-time exports, continuous processing keeps your systems synchronized with the latest email data, making it ideal for AI analysis, vector databases, and automation workflows.
 
 ## Why Continuous Processing?

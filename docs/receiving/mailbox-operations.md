@@ -12,12 +12,6 @@ keywords:
 
 # Mailbox Operations
 
-<!--
-Source attribution:
-- PRIMARY: blog/2023-04-04-about-mailbox.md
-- Enhanced with API examples and operations
--->
-
 Mailbox operations in EmailEngine allow you to list, manage, and work with email folders (also called mailboxes in IMAP terminology). Understanding folder structure and special-use folders is essential for properly routing messages and building email applications.
 
 ## Understanding Mailboxes

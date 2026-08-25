@@ -618,7 +618,6 @@ If the configured `authServer` URL contains a username and password, EmailEngine
 
 An account that carries `useAuthServer` but also has stored credentials is a special case. If no `authServer` is configured, EmailEngine logs a warning and uses the stored credentials rather than failing the account, which keeps long-lived instances working where the flag was set years ago and never had an effect.
 
-
 ## Advanced Patterns
 
 ### Multiple EmailEngine Instances

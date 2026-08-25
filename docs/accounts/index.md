@@ -457,7 +457,6 @@ EmailEngine decides which folder is Sent, Drafts, Junk, Trash, or Archive from t
 
 Override any of them with `sentMailPath`, `draftsMailPath`, `junkMailPath`, `trashMailPath`, and `archiveMailPath` inside the account's `imap` object. See [Custom special folder paths](/docs/accounts/imap-smtp#custom-special-folder-paths) for the field reference and what `specialUseSource` reports.
 
-
 ## OAuth2 Token Management
 
 For OAuth2 accounts, EmailEngine automatically refreshes access tokens in the background. You never need to handle token expiration.
@@ -585,7 +584,6 @@ For Gmail API or MS Graph API accounts:
 When EmailEngine needs to authenticate, it calls your server at `GET {authServer}?account={account}&proto={proto}` (where `proto` is `imap`, `smtp`, or `api`) and expects a response with `user` and either `pass` or `accessToken` fields.
 
 [Authentication Server Guide →](/docs/accounts/authentication-server)
-
 
 ## API Reference
 

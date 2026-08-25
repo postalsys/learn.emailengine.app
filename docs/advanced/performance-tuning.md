@@ -8,7 +8,6 @@ description: Optimize EmailEngine performance for production workloads with prop
 
 Learn how to optimize EmailEngine for production workloads by tuning worker threads, Redis configuration, and implementing scaling strategies.
 
-
 ## Overview
 
 When you start with EmailEngine and only have a handful of test accounts, a modest server with default configuration is usually enough. As your usage grows, however, you'll want to review both your hardware and your EmailEngine configuration.

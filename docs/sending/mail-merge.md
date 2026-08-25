@@ -4,11 +4,6 @@ sidebar_position: 4
 description: Send bulk personalized emails with EmailEngine's mail merge feature and Handlebars templates
 ---
 
-<!--
-SOURCE ATTRIBUTION:
-- Primary: blog/2025-01-19-mail-merge-with-emailengine.md
--->
-
 # Mail Merge
 
 Use the `mailMerge` array in the [message submission API](/docs/api/post-v-1-account-account-submit) call to generate per-recipient copies of the same message, inject template variables, and keep each copy in the mailbox's Sent Mail folder.

@@ -12,11 +12,6 @@ keywords:
   - log aggregation
 ---
 
-<!--
-SOURCE: docs/configuration/logging.md
-This guide covers EmailEngine logging configuration, formats, and integration with log management platforms.
--->
-
 # Logging
 
 EmailEngine logs structured JSON through Pino. This page covers the levels, the output format, and shipping the stream to an aggregator.
@@ -126,7 +121,6 @@ emailengine | jq -r '"[\(.time)] \(.level): \(.msg)"'
 ```
 
 For anything beyond ad-hoc inspection, ship the raw JSON to your log platform and format it there. Reformatting before shipping throws away the structured fields that make the logs searchable.
-
 
 ## Per-Account Protocol Logs
 
@@ -484,7 +478,6 @@ services:
 
 Point the Agent at the container or the log file rather than writing a forwarder of your own. The Agent handles batching, retries, and back-pressure, none of which a hand-rolled HTTP POST per log line does, and a failed POST inside the logging path is a good way to lose the logs that explain an incident.
 
-
 ### Splunk
 
 Forward logs to Splunk:
@@ -501,7 +494,6 @@ sourcetype = _json
 ```
 
 The Universal Forwarder above is the supported path. If you must use the HTTP Event Collector instead, put a log shipper such as [Vector](https://vector.dev/) or [Fluent Bit](https://fluentbit.io/) between EmailEngine and Splunk: both read NDJSON, buffer to disk, and retry, so a Splunk outage does not become an EmailEngine outage.
-
 
 ## Debugging with Logs
 

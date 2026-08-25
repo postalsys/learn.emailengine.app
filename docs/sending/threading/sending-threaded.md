@@ -96,7 +96,6 @@ curl -XPOST "http://127.0.0.1:3000/v1/account/demo/submit" \
 - Oldest message first, newest last
 - Build up the chain with each new message
 
-
 ## Using the Reference API
 
 For replies and forwards, EmailEngine can handle threading automatically using the `reference` parameter:

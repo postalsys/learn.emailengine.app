@@ -85,7 +85,6 @@ Install on Windows 10+ (native or WSL2).
 
 [View Windows guide →](/docs/installation/windows)
 
-
 ### By Deployment Type
 
 #### [Docker Installation](/docs/installation/docker)
@@ -110,7 +109,6 @@ Run in containers with Docker or Docker Compose.
 Run from source code (Node.js 20+ required, 24+ recommended).
 
 [View source guide →](/docs/installation/source)
-
 
 ## System Requirements
 

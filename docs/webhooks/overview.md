@@ -15,14 +15,6 @@ import TabItem from '@theme/TabItem';
 
 # Webhooks
 
-<!--
-Source attribution:
-- PRIMARY: docs/usage/webhooks.md
-- ENHANCED: blog/2022-06-22-tailing-webhooks.md
-- ENHANCED: blog/2025-05-05-debugging-webhooks-in-emailengine.md
-- Additional patterns and best practices
--->
-
 Webhooks are the primary mechanism for receiving real-time notifications from EmailEngine about mailbox events, message changes, and delivery status. Instead of repeatedly polling for updates, EmailEngine pushes notifications to your application as events occur.
 
 ## Why Use Webhooks?

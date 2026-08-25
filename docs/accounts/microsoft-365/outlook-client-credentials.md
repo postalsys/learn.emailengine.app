@@ -513,3 +513,11 @@ For the most up-to-date information, refer to Microsoft's official documentation
 
 - [Grant tenant-wide admin consent](https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/grant-admin-consent) - How to grant and manage admin consent
 - [Configure admin consent workflow](https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/configure-admin-consent-workflow) - Setting up approval workflows
+
+## See Also
+
+- [Outlook OAuth2 (delegated)](/docs/accounts/microsoft-365/outlook-365) - The interactive alternative, and when it is required
+- [Shared mailboxes](/docs/accounts/microsoft-365/shared-mailboxes) - Reaching a mailbox nobody signs into
+- [OAuth2 token management](/docs/accounts/oauth2-token-management) - Client secret lifetimes and what expiry costs
+- [Managing accounts](/docs/accounts/managing-accounts) - Registering mailboxes once consent is granted
+- [Account troubleshooting](/docs/accounts/troubleshooting) - Consent, tenant, and permission failures

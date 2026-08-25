@@ -178,7 +178,6 @@ Embed email functionality in business apps:
 - Document operational procedures
 - Plan for scaling
 
-
 ## Getting Started
 
 Choose your integration path:

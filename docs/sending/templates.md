@@ -4,11 +4,6 @@ sidebar_position: 6
 description: Create and manage reusable email templates with Handlebars for consistent messaging
 ---
 
-<!--
-SOURCE ATTRIBUTION:
-- Primary: docs/usage/email-templates.md
--->
-
 # Email Templates
 
 Email templating allows you to prepare and reuse email content efficiently. Create templates once, then reference them when sending to ensure consistent branding and messaging across all your emails.
