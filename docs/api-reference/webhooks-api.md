@@ -660,3 +660,10 @@ A `Set` in the process loses everything on restart and is not shared between ins
 :::
 
 Handle events by type once the payload is on your queue. Only `event` is guaranteed on every payload, so branch on it and ignore what you do not consume. New event types are added in EmailEngine releases, and a receiver that throws on an unrecognized type starts failing after an upgrade.
+
+## See Also
+
+- [Webhooks overview](/docs/webhooks/overview) - Setup, delivery, retries, and debugging
+- [Webhook routing](/docs/webhooks/webhook-routing) - Per-account and per-event targets
+- [Webhook events reference](/docs/reference/webhook-events) - Every event and its payload
+- [Pre-processing functions](/docs/advanced/pre-processing) - Filtering a payload before it is sent

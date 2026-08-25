@@ -474,6 +474,9 @@ curl -X POST "http://localhost:3000/v1/account/user@example.com/search?path=INBO
 | `messageId` | string | RFC 5322 Message-ID |
 | `inReplyTo` | string | Message-ID being replied to |
 | `text` | object | Text content metadata; the `text.plain` and `text.html` values are included when the `textType` parameter is requested |
+| `labels` | array | Gmail labels, on Gmail accounts |
+| `preview` | string | A short plaintext preview, on Gmail and MS Graph accounts |
+| `bounces` | array | Bounces recorded for a message this account sent |
 | `attachments` | array | Attachment metadata |
 
 ### Nested Structures
@@ -489,25 +492,33 @@ curl -X POST "http://localhost:3000/v1/account/user@example.com/search?path=INBO
 **Text Object:**
 ```json
 {
-  "id": "text_id_123",
-  "encodedSize": 1234,
+  "id": "AAAAAQAACnAWkeM",
+  "encodedSize": {
+    "plain": 1013,
+    "html": 3487
+  },
   "plain": "Message text content",
-  "html": "<p>Message HTML content</p>"
+  "html": "<p>Message HTML content</p>",
+  "hasMore": false
 }
 ```
+
+`encodedSize` reports the size of each MIME part separately, before decoding. `plain` and `html` are present only when `textType` asked for them, and `hasMore` says whether `maxBytes` truncated the result.
 
 **Attachment Object:**
 ```json
 {
-  "id": "attachment_789",
+  "id": "AAAAAQAACnAy",
   "contentType": "application/pdf",
-  "disposition": "attachment",
   "filename": "document.pdf",
   "encodedSize": 52341,
   "embedded": false,
-  "inline": false
+  "inline": false,
+  "contentId": "<part1.abc@example.com>"
 }
 ```
+
+`embedded` marks a part of a `multipart/related` body, `inline` a part meant to be shown in place rather than listed, and `contentId` is what a `cid:` URL in the HTML refers to.
 
 ## Filtering & Search
 

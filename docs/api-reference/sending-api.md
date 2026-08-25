@@ -543,3 +543,10 @@ See [Mail Merge](/docs/sending/mail-merge) for personalization, batching, and ho
 :::warning Sending limits still apply
 Mail merge submits through the account's own mail server, which enforces its own rate and volume limits. Gmail and Microsoft 365 in particular will start deferring or rejecting mail well before a bulk campaign finishes. For genuine bulk mail, send through a [gateway](/docs/sending/basic-sending) built for it.
 :::
+
+## See Also
+
+- [Basic sending](/docs/sending/basic-sending) - The same endpoint as a walkthrough
+- [Replies and forwards](/docs/sending/replies-forwards) - The reference block in practice
+- [Outbox queue](/docs/sending/outbox-queue) - What happens after the call returns
+- [messageSent and messageFailed](/docs/webhooks/messagesent) - How delivery is reported

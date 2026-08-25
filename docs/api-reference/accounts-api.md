@@ -756,3 +756,10 @@ For accounts stuck in error states:
 3. Test connection with manual reconnect
 4. Check mail server accessibility
 5. Review OAuth2 token expiration
+
+## See Also
+
+- [Managing accounts](/docs/accounts/managing-accounts) - The same operations as a guide
+- [Account types](/docs/accounts) - Choosing a backend before registering
+- [Hosted authentication](/docs/accounts/hosted-authentication) - Letting the user supply the credentials
+- [Account troubleshooting](/docs/accounts/troubleshooting) - When an account will not connect
