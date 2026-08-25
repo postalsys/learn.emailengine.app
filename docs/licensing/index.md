@@ -149,6 +149,14 @@ graph TB
 
 **You only pay for the subscription.**
 
+### What a Licensed Instance Sends Home
+
+A subscription license is validated against `postalsys.com` once a day. That request carries the license key, a stable instance ID, and an anonymized feature beacon: which features are on, coarse magnitude tiers rather than exact counts, the mail providers in use, and runtime facts such as the Node.js version. It never carries email content, addresses, URLs, or credentials.
+
+Set `EENGINE_BEACON_DISABLED=true` to drop the beacon from the request while keeping validation. A perpetual license is verified offline and makes no request at all.
+
+See [Compliance and data handling](/docs/deployment/compliance) for the full outbound picture, including the optional features that reach other services.
+
 ## Getting Started
 
 ### Step 1: Try for Free
@@ -475,6 +483,9 @@ Note: If automatic renewal fails on a regular plan, an invoice is generated for 
 
 A: EU customers are billed in euros, customers elsewhere in US dollars. See https://postalsys.com/plans for the price in your currency. Credit card payments auto-convert.
 
-## Need Help?
+## See Also
 
-For support options and contact information, see the [Support page](/docs/support).
+- [Support](/docs/support) - Support channels and what a subscription covers
+- [Compliance and data handling](/docs/deployment/compliance) - Everything an instance sends out
+- [Prepared license](/docs/configuration/prepared-settings/license) - Activating a key without touching the interface
+- [CLI reference](/docs/configuration/cli#license-management) - Importing and exporting keys from the command line

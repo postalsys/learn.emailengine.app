@@ -99,6 +99,7 @@ EmailEngine is a **self-hosted email API gateway** that provides REST API access
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
+| `PUT` | `/v1/account/{account}/messages` | Update flags or labels on every message matching a search |
 | `PUT` | `/v1/account/{account}/messages/move` | Move multiple messages |
 | `PUT` | `/v1/account/{account}/messages/delete` | Delete multiple messages |
 
@@ -118,6 +119,7 @@ EmailEngine is a **self-hosted email API gateway** that provides REST API access
 |--------|----------|-------------|
 | `GET` | `/v1/account/{account}/mailboxes` | List all mailboxes/folders |
 | `POST` | `/v1/account/{account}/mailbox` | Create mailbox |
+| `PUT` | `/v1/account/{account}/mailbox` | Rename mailbox |
 | `DELETE` | `/v1/account/{account}/mailbox` | Delete mailbox |
 
 ### Sending Emails
@@ -184,10 +186,11 @@ Webhook routes are read-only through the API - create and edit them in the Email
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/v1/tokens` | List all tokens (each includes `id`, the SHA-256 hash identifying the token) |
+| `GET` | `/v1/tokens` | List tokens, each with `id`, the SHA-256 hash identifying it. Add `?account={account}` to narrow it to one account |
 | `POST` | `/v1/tokens` | Create token |
+| `GET` | `/v1/tokens/{token}` | Get one token's metadata |
+| `GET` | `/v1/tokens/{token}/log` | Read the token's audit log, when the audit log is enabled |
 | `DELETE` | `/v1/tokens/{token}` | Delete token (accepts the token value or its `id` hash) |
-| `GET` | `/v1/tokens?account={account}` | List account tokens |
 
 ### Blocklists
 
@@ -206,6 +209,8 @@ Webhook routes are read-only through the API - create and edit them in the Email
 | `GET` | `/v1/logs/{account}` | Get account logs |
 | `GET` | `/v1/changes` | Get recent changes |
 | `GET` | `/v1/license` | Get license info |
+| `POST` | `/v1/license` | Register a license key |
+| `DELETE` | `/v1/license` | Remove the license key |
 | `GET` | `/v1/pubsub/status` | List Pub/Sub subscription status |
 
 ### Deliverability Testing

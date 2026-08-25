@@ -45,6 +45,14 @@ Standard support does not include:
 Before contacting support, check these resources:
 
 - **[Documentation](/docs)** - Guides and the API reference
-- **[Troubleshooting Guide](/docs/accounts/troubleshooting)** - Common issues and solutions
+- **[Troubleshooting](/docs/troubleshooting)** - Problems that are not account-specific
+- **[Account troubleshooting](/docs/accounts/troubleshooting)** - Connection, authentication, and sync failures
 - **[GitHub Issues](https://github.com/postalsys/emailengine/issues)** - Search existing issues
 - **[Changelog](https://github.com/postalsys/emailengine/releases)** - Recent updates and fixes
+
+## See Also
+
+- [Licensing and privacy](/docs/licensing) - What a subscription covers, and what leaves your server
+- [Security FAQ](/docs/support/security-faq) - Where credentials live and how they are protected
+- [Logging](/docs/advanced/logging) - Collecting the logs a bug report should carry
+- [Monitoring](/docs/advanced/monitoring) - Health checks worth running before reporting a problem
