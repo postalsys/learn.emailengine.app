@@ -21,6 +21,10 @@ The `messageDeleted` event fires when:
 
 The event is triggered after EmailEngine confirms the message is no longer present in the monitored folder.
 
+:::note Requires the full indexer
+On IMAP accounts, deletions are detected only under the full [indexer](/docs/accounts/imap-indexers), which is the default. The fast indexer tracks the highest UID it has seen and nothing else, so it never notices a message going away.
+:::
+
 ## Common Use Cases
 
 - **Database synchronization** - Remove or archive records when emails are deleted

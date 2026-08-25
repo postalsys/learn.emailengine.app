@@ -19,6 +19,10 @@ The `messageNew` event fires when:
 
 The event is triggered after EmailEngine has fetched and parsed the message metadata from the IMAP server.
 
+:::note The initial sync does not replay the mailbox
+A newly connected IMAP account only reports messages received after `notifyFrom`, which defaults to the moment the account was registered. The rest of the mailbox is indexed silently, and is reachable through the API without ever producing an event. Set `notifyFrom` to an earlier date, when [registering the account](/docs/api/post-v-1-account) or on a [flush](/docs/accounts/imap-indexers#changing-indexer-for-existing-account), to have older messages reported as well. Gmail API and MS Graph accounts ignore the field and never replay history.
+:::
+
 ## Common Use Cases
 
 - **Support ticket creation** - Automatically create tickets from incoming support emails
