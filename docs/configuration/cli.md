@@ -203,11 +203,14 @@ Run `emailengine --help` for the authoritative list. The full set:
 |--------|-------------|---------|
 | `--dbs.redis` | Redis connection URL | Required |
 | `--workers.imap` | Account worker threads | `4` |
+| `--workers.api` | API worker threads. Anything above 1 needs SO_REUSEPORT, so it falls back to 1 off Linux | `1` |
 | `--workers.webhooks` | Webhook worker threads | `1` |
+| `--workers.imapProxy` | IMAP proxy worker threads | `1` |
 | `--settings` | Pre-configured settings as a JSON string | None |
 | `--service.secret` | Key for encrypting stored credentials | None |
 | `--service.commandTimeout` | Maximum time for an IMAP command | `10s` |
 | `--service.setupDelay` | Delay between assigning connections to workers | `0ms` |
+| `--service.localAddresses` | Comma-separated local addresses to originate connections from | None |
 | `--log.level` | Logging level | `trace` |
 | `--log.raw` | Log raw IMAP traffic. Includes unmasked credentials | `false` |
 
@@ -236,6 +239,12 @@ Run `emailengine --help` for the authoritative list. The full set:
 | `--smtp.secret` | Shared SMTP password accepted for all accounts | None |
 | `--smtp.proxy` | Accept the HAProxy PROXY protocol | `false` |
 | `--smtp.maxMessageSize` | Maximum accepted email size | `25M` |
+
+**MCP**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--mcp.enabled` | Register the [MCP endpoint](/docs/mcp) routes. A deployment gate, not the on switch: the `mcpEnabled` setting still has to be turned on | `true` |
 
 **Document Store** (deprecated, removed from releases starting October 1, 2026)
 
@@ -376,10 +385,12 @@ emailengine tokens issue [options]
 
 | Option          | Short | Description           | Default  |
 | --------------- | ----- | --------------------- | -------- |
-| `--description` | `-d`  | Token description     | Required |
-| `--scope`       | `-s`  | Token scope           | `"*"`    |
-| `--account`     | `-a`  | Account ID (optional) | None     |
+| `--description` | `-d`  | Token description | `Generated at <timestamp>` |
+| `--scope`       | `-s`  | One of `*`, `api`, `metrics`, `smtp`, `imap-proxy`, `mcp`. Repeat the flag for several | `*` |
+| `--account`     | `-a`  | Bind the token to one account | None |
 | `--dbs.redis`   |       | Redis connection      | Required |
+
+An unknown scope is refused with the allowed list, rather than issuing a token that cannot be used.
 
 **Examples:**
 
@@ -499,22 +510,15 @@ Token was imported
 
 Manage EmailEngine licenses.
 
-### Show License
-
-Display current license information:
+### Show the License Text
 
 ```bash
 emailengine license
 ```
 
-**Output:**
+This prints the version on stdout and the EmailEngine license agreement on stderr, so `emailengine license 2>/dev/null` leaves you with just the version string. It reports the terms EmailEngine is distributed under, not the license key installed on an instance.
 
-```
-EmailEngine License Information
-Version: 1.0
-Licensed to: Company Name
-Valid until: 2025-12-31
-```
+For the installed key, read [`GET /v1/license`](/docs/api/get-v-1-license), which returns whether the license is `active`, its `type`, and the `details` of the key, or open the License page in the admin interface.
 
 ### Export License
 
@@ -654,7 +658,7 @@ emailengine export \
   --service.secret="my-encryption-secret"
 ```
 
-**Output:** JSON with full account data including encrypted credentials.
+**Output:** the account record as JSON, on stdout.
 
 **Use cases:**
 
@@ -663,7 +667,9 @@ emailengine export \
 - Disaster recovery
 - Account auditing
 
-**Security warning:** Exported data contains sensitive credentials. Store securely.
+:::danger The export is decrypted
+Passing `--service.secret` is what lets the command read the stored values, and what it writes is the decrypted result: the IMAP password or the OAuth2 refresh token in cleartext. Redirect it to a file only where that file is protected the way a credential store would be, and delete it when the migration is done.
+:::
 
 ---
 
@@ -993,21 +999,13 @@ echo "Exported: $EXPORTED"
 
 ### Pattern 3: Health Check
 
+`/health` needs no token, and it checks the things a token would not: that every IMAP worker is up and that Redis answers a write and a read.
+
 ```bash
 #!/bin/bash
 # check-emailengine.sh
 
-REDIS_URL="redis://localhost:6379/0"
-
-# Create temporary token
-TOKEN=$(emailengine tokens issue \
-  -d "Health check $(date +%s)" \
-  -s "api" \
-  --dbs.redis="$REDIS_URL")
-
-# Test API
-if curl -f -H "Authorization: Bearer $TOKEN" \
-  http://localhost:3000/v1/stats > /dev/null 2>&1; then
+if curl -fsS http://localhost:3000/health > /dev/null; then
   echo "EmailEngine is healthy"
   exit 0
 else
@@ -1015,6 +1013,8 @@ else
   exit 1
 fi
 ```
+
+Minting a token per check would work too, and would leave one behind on every run.
 
 ## See Also
 
