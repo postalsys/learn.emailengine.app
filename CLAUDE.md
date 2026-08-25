@@ -18,6 +18,24 @@ This repository contains the **unified Docusaurus documentation site** for Email
 - **~67,000 lines** of authored documentation
 - **Build status:** ✅ Passing (with minor non-critical anchor warnings)
 
+## Editorial Model: MDN
+
+**Treat this site as MDN Web Docs for EmailEngine.** MDN is the reference model for how these pages are written, maintained, and argued about. When a judgment call comes up that the rules below do not settle, decide it the way an MDN editor would.
+
+What that means in practice:
+
+- **Document what ships, not what is intended.** Every claim traces to the source, the OpenAPI spec, or an observed response. If you cannot verify it, do not write it. A guess that reads well is worse than a gap.
+- **Reference before narrative.** The primary job of a page is to let a reader look something up and get an exact answer: the parameter, its type, its default, what it does. Tutorials and guidance are welcome, but they never displace the reference material.
+- **Neutral, plain, present tense.** No marketing voice, no "simply", "easily", "just", "powerful", or "seamless". State behavior; let the reader judge it.
+- **Behavior notes carry versions.** When something changed, say which version changed it, the way MDN's compatibility notes do. Deprecated and removed features are labeled and kept until they are gone from supported releases, not quietly deleted.
+- **One canonical page per concept.** Link to it rather than restating it. Duplicated explanations drift apart, and the divergence is always discovered by a reader.
+- **Do not document bugs as features.** If the implementation is wrong, report it rather than writing the defect into the reference. Document the behavior a reader can rely on today.
+- **Fix what you touch.** An error noticed on a page being edited for another reason gets fixed in that edit, with the page read whole rather than patched at the point of the change.
+- **Examples are complete and correct.** Runnable as written, minimal, and free of placeholders that would fail if pasted.
+- **Write for someone who arrived from a search engine.** Assume no knowledge of the preceding page, and no reading of the section above.
+
+MDN's own guidance is the tiebreaker for anything not covered here: https://developer.mozilla.org/en-US/docs/MDN/Writing_guidelines
+
 ## Important Rules
 
 **CRITICAL - Read These First:**
@@ -696,6 +714,8 @@ When documenting EmailEngine features:
 - Redis is the primary data store - Lua scripts in `lib/lua/` for atomic operations
 
 ## Documentation Authoring Guidelines
+
+These are the mechanics. The editorial stance behind them is the MDN model described at the top of this file, which is what settles anything the mechanics do not cover.
 
 ### File Structure
 
