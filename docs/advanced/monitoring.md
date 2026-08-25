@@ -987,3 +987,10 @@ echo "OK: EmailEngine operational | queue_waiting=$QUEUE_WAITING queue_total=$QU
 exit 0
 ```
 
+## See Also
+
+- [Logging](/docs/advanced/logging) - The other half of observability, including per-account protocol logs
+- [Queue management](/docs/advanced/queue-management) - What the queue metrics are counting
+- [Performance tuning](/docs/advanced/performance-tuning) - Acting on what the metrics show
+- [Redis](/docs/configuration/redis) - The Redis figures behind the `redis_*` metrics
+- [Access tokens](/docs/api-reference/access-tokens) - Minting the `metrics`-scoped token the endpoint needs

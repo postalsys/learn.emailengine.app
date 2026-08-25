@@ -307,3 +307,10 @@ Properly distributed IPs can improve throughput:
 - Avoid per-IP rate limits
 - Parallel connections across IPs
 - Better load distribution
+
+## See Also
+
+- [Performance tuning](/docs/advanced/performance-tuning) - Spreading connections across addresses at scale
+- [Inbox placement testing](/docs/advanced/inbox-placement-testing) - Checking how a sending address is received
+- [Email authentication testing](/docs/advanced/email-authentication-testing) - SPF, DKIM, and DMARC for the addresses you send from
+- [Proxying connections](/docs/accounts/proxying-connections) - Routing through a proxy instead of a local address

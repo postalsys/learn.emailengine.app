@@ -436,7 +436,9 @@ payload.data.attachments; // [...]
 
 ## Execution Environment
 
-Pre-processing functions run in an isolated execution context (built on Node's `vm` module) with a restricted set of globals and an enforced timeout. Note that Node's `vm` is an isolation mechanism, not a hardened security boundary - only run pre-processing code you trust.
+Pre-processing functions run in an isolated execution context (built on Node's `vm` module) with a restricted set of globals and a 30 second execution limit. Note that Node's `vm` is an isolation mechanism, not a hardened security boundary - only run pre-processing code you trust.
+
+The limit interrupts synchronous execution. It does not bound `await`, so a function waiting on a slow `fetch` can outlive it: give any HTTP call you make its own timeout rather than relying on this one.
 
 The context exposes a limited set of capabilities:
 
@@ -734,3 +736,10 @@ form that is safe to inject into a web page, sanitizing the markup, inlining ima
 quoted thread history into a collapsible block.
 
 That is covered on its own page: [Web-Safe HTML](/docs/receiving/web-safe-html).
+
+## See Also
+
+- [Webhook routing](/docs/webhooks/webhook-routing) - Where a pre-processing function is attached
+- [Webhooks overview](/docs/webhooks/overview) - The payloads these functions receive
+- [Webhooks API](/docs/api-reference/webhooks-api) - Managing routes and their functions programmatically
+- [Templates](/docs/sending/templates) - The other place Handlebars-style rendering happens

@@ -598,3 +598,10 @@ EENGINE_NOTIFY_QC=4
 - Reduce Redis latency
 - Check IMAP server performance
 
+## See Also
+
+- [Monitoring](/docs/advanced/monitoring) - Measuring before and after a change
+- [Redis](/docs/configuration/redis) - Memory, persistence, and capacity planning
+- [Queue management](/docs/advanced/queue-management) - Concurrency for webhook and submission workers
+- [IMAP indexers](/docs/accounts/imap-indexers) - The cheapest lever on a large account count
+- [Environment variables](/docs/configuration/environment-variables#worker-threads) - Where the worker counts are set

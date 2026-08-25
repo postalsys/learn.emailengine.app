@@ -592,3 +592,10 @@ if (message.messageId) {
 - **Use `emailId`** for cross-folder tracking (if available)
 - **Use `messageId`** for external integration and deduplication
 - **Store all identifiers** in your database for maximum flexibility
+
+## See Also
+
+- [Message operations](/docs/receiving/message-operations) - Where each identifier appears in practice
+- [Threading](/docs/sending/threading) - What a `threadId` is for, and which providers assign one
+- [Searching messages](/docs/receiving/searching) - Searching by `emailId` and `threadId`
+- [Messages API](/docs/api-reference/messages-api) - The fields these identifiers occupy

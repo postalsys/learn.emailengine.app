@@ -717,3 +717,9 @@ logger.info({
 logger.info('Sent message <abc@example.com> from john@example.com');
 ```
 
+## See Also
+
+- [Monitoring](/docs/advanced/monitoring) - Metrics and health checks alongside the log stream
+- [Account troubleshooting](/docs/accounts/troubleshooting) - Reading a per-account log to diagnose a connection
+- [Environment variables](/docs/configuration/environment-variables#logging--monitoring) - Log level and raw protocol logging
+- [Compliance](/docs/deployment/compliance) - What the logs retain, and for how long
