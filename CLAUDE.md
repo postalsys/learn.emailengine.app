@@ -13,7 +13,7 @@ This repository contains the **unified Docusaurus documentation site** for Email
 
 **✅ Production Ready** - All documentation has been unified and cleaned up. The site is ready for deployment.
 
-- **139 unified documentation files** covering all EmailEngine features
+- **137 authored documentation files** covering all EmailEngine features
 - **81 auto-generated API docs** from OpenAPI spec, plus an overview page
 - **~67,000 lines** of authored documentation
 - **Build status:** ✅ Passing (with minor non-critical anchor warnings)
@@ -470,10 +470,11 @@ static/
    - `docusaurus.config.ts` has `blog: false`
    - Blog posts were merged into topic-based docs (e.g., OAuth2 setup, mail merge)
 
-2. **Auto-Generated Sidebars** - No manual `_category_.json` files
+2. **Auto-Generated Sidebars** - Structure comes from the file tree
 
    - Sidebar structure comes from file organization and frontmatter
    - `sidebar_position` in frontmatter controls order
+   - A subdirectory has no frontmatter of its own, so its label and position come from a `_category_.json`. Three exist for that reason; nothing else needs one
 
 3. **OpenAPI Integration** - API docs auto-generated from `sources/swagger.json`
 
@@ -717,6 +718,17 @@ When documenting EmailEngine features:
 
 These are the mechanics. The editorial stance behind them is the MDN model described at the top of this file, which is what settles anything the mechanics do not cover.
 
+### Conventions the whole site follows
+
+Settled during the site-wide review on 25 August 2026. Match them rather than reopening them:
+
+- **Host placeholder:** `https://emailengine.example.com` on any page addressing a running deployment. `http://localhost:3000` only where the reader has just started an instance locally, and never both in one page without a sentence saying why.
+- **Examples must run.** No pseudo-HTTP in a `javascript` fence, no `//` or `#` comments inside a `json` block, no `{account}` left in a curl URL, no `...` standing in for a value. NDJSON samples are fenced as `text`, because they are several documents rather than one.
+- **No prices, ours or anyone else's.** Ours goes through the `Price` component. A competitor's or a host's gets named as a model, with a link to their page and a date.
+- **No counts that drift.** Do not write "all 81 endpoints"; link to the reference instead.
+- **Every page ends with `## See Also`,** four or five links that each say what the reader would go there for.
+- **Verify before writing.** The spec in `sources/swagger.json` settles request and response shapes; `/Users/andris/Projects/emailengine` settles behavior. A plausible-sounding claim that neither supports does not go in.
+
 ### File Structure
 
 Every documentation file should have:
@@ -925,7 +937,7 @@ Every page should:
 - ❌ **Don't create duplicate documentation** - Enhance existing unified docs instead
 - ❌ **Don't edit `docs/api/` directly** - These are auto-generated from OpenAPI spec
 - ❌ **Don't re-enable the blog** - Blog content is now part of unified docs
-- ❌ **Don't add `_category_.json` files** - Sidebars are auto-generated
+- ❌ **Don't add `_category_.json` files for ordering pages** - Page order comes from `sidebar_position` in frontmatter. The three that exist (`docs/accounts/gmail/`, `docs/accounts/microsoft-365/`, `docs/sending/threading/`) label and position a *subdirectory*, which frontmatter cannot do. Add one only for that.
 - ❌ **Don't create separate "tutorial" or "guide" sections** - Merge into relevant topic docs
 - ❌ **Don't commit with broken builds** - Always run `npm run build` first
 - ❌ **Don't use emojis in documentation** - Use text instead (see Important Rules section)
