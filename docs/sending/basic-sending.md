@@ -16,7 +16,7 @@ EmailEngine simplifies sending emails through registered accounts' SMTP servers.
 
 ## Why It Matters
 
-When your SaaS needs to send email on behalf of a customer, direct SMTP is brittle: every provider has its own auth, rate limits, retries, and error codes. **EmailEngine** shields you from that complexity by exposing a single REST endpoint that proxies the customer's mailbox. You get consistent JSON responses and robust retry logic.
+When your application sends on behalf of a customer, talking SMTP directly means handling each provider's authentication, rate limits, retry rules, and error codes. EmailEngine puts one REST endpoint in front of the customer's mailbox instead, with the same JSON response shape whichever provider is behind it, and a queue that retries failed submissions.
 
 ## Step-by-Step Guide
 

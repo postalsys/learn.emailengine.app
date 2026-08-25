@@ -302,7 +302,7 @@ curl -XPOST "https://emailengine.example.com/v1/account/gmail/search?path=%5CAll
   "total": 127,
   "page": 0,
   "pages": 3,
-  "messages": [...]
+  "messages": []
 }
 ```
 

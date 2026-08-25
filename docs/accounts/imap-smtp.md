@@ -4,12 +4,6 @@ sidebar_position: 3
 description: Setting up email accounts using standard IMAP and SMTP protocols
 ---
 
-<!--
-Sources merged:
-- docs/getting-started/supported-account-types.md (basic information)
-- General IMAP/SMTP knowledge
--->
-
 # Generic IMAP/SMTP Accounts
 
 This guide covers setting up email accounts using standard IMAP and SMTP protocols. This method works with virtually any email provider that supports these protocols, including self-hosted mail servers, regional providers, and services not covered by specific OAuth2 integrations.
@@ -188,7 +182,7 @@ For providers requiring app passwords (Gmail, Yahoo, iCloud, AOL):
     "secure": true,
     "auth": {
       "user": "john@gmail.com",
-      "pass": "abcd efgh ijkl mnop" // App password
+      "pass": "abcd efgh ijkl mnop"
     }
   },
   "smtp": {
@@ -197,7 +191,7 @@ For providers requiring app passwords (Gmail, Yahoo, iCloud, AOL):
     "secure": false,
     "auth": {
       "user": "john@gmail.com",
-      "pass": "abcd efgh ijkl mnop" // Same app password
+      "pass": "abcd efgh ijkl mnop"
     }
   }
 }
@@ -246,7 +240,7 @@ Some providers use different credentials for IMAP and SMTP:
 {
   "imap": {
     "port": 143,
-    "secure": false // STARTTLS will be used
+    "secure": false
   }
 }
 ```
@@ -268,7 +262,7 @@ Some providers use different credentials for IMAP and SMTP:
 {
   "smtp": {
     "port": 587,
-    "secure": false // STARTTLS will be used
+    "secure": false
   }
 }
 ```

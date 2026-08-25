@@ -5,15 +5,9 @@ sidebar_position: 5
 description: Setting up Google Service Accounts with domain-wide delegation for Gmail access
 ---
 
-<!--
-Sources merged:
-- blog/2022-01-16-gmail-oauth-service-accounts.md (primary - detailed step-by-step)
-- docs/integrations/google-service-accounts.md (secondary - structured steps)
--->
-
 # Google Service Accounts
 
-Service accounts provide a powerful way for Google Workspace admins to grant EmailEngine access to any email account in the organization without requiring individual user consent. This guide shows you how to set up service accounts with domain-wide delegation.
+A service account lets a Google Workspace admin grant EmailEngine access to any mailbox in the organization without asking each user to consent. This guide covers setting one up with domain-wide delegation.
 
 :::tip Two authentication methods
 EmailEngine supports two ways to authenticate a service account:
@@ -99,7 +93,7 @@ For push notification setup, see [Setting Up Gmail API](/docs/accounts/gmail/gma
 
 - Access granted by admin once
 - No OAuth2 flow for each user
-- Seamless automated access
+- No interactive login for any mailbox in the domain
 
 **Centralized Management:**
 

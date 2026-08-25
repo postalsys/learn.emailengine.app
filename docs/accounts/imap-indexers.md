@@ -163,7 +163,12 @@ curl -X POST https://emailengine.example.com/v1/account \
     "account": "pipeline-account",
     "imapIndexer": "fast",
     "notifyFrom": "2024-01-01T00:00:00.000Z",
-    "imap": { ... }
+    "imap": {
+      "host": "imap.example.com",
+      "port": 993,
+      "secure": true,
+      "auth": { "user": "user@example.com", "pass": "password" }
+    }
   }'
 ```
 
@@ -179,7 +184,12 @@ curl -X POST https://emailengine.example.com/v1/account \
   -d '{
     "account": "crm-account",
     "imapIndexer": "full",
-    "imap": { ... }
+    "imap": {
+      "host": "imap.example.com",
+      "port": 993,
+      "secure": true,
+      "auth": { "user": "user@example.com", "pass": "password" }
+    }
   }'
 ```
 
@@ -213,7 +223,7 @@ The response includes the `imapIndexer` field showing the active strategy.
 
 ## See Also
 
-- [Managing Accounts](./index.md) - Account creation and management
+- [Managing accounts](/docs/accounts/managing-accounts) - Account creation, updates, and the account lifecycle
 - [Continuous Email Processing](/docs/receiving/continuous-processing) - Building email processing pipelines
 - [Webhooks](/docs/webhooks/overview) - Webhook event reference
 - [Flush API](/docs/api/put-v-1-account-account-flush) - API reference for flush operations

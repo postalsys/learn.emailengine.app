@@ -173,12 +173,7 @@ Include rich personalization data:
 ```json
 {
   "subject": "Your order #{{params.orderNumber}} has shipped",
-  "html": `
-    <h1>Hi {{params.firstName}},</h1>
-    <p>Your order <strong>{{params.orderNumber}}</strong> has shipped!</p>
-    <p>Tracking: <a href='{{params.trackingUrl}}'>{{params.trackingNumber}}</a></p>
-    <p>Total: ${{params.orderTotal}}</p>
-  `,
+  "html": "<h1>Hi {{params.firstName}},</h1><p>Your order <strong>{{params.orderNumber}}</strong> has shipped!</p><p>Tracking: <a href=\"{{params.trackingUrl}}\">{{params.trackingNumber}}</a></p><p>Total: ${{params.orderTotal}}</p>",
   "mailMerge": [
     {
       "to": { "address": "ada@example.com" },
@@ -536,7 +531,7 @@ app.post('/webhook', async (req, res) => {
 
 ```json
 {
-  "html": "Hello {{params.signature}}" // HTML in the value gets escaped
+  "html": "Hello {{params.signature}}"
 }
 ```
 
@@ -544,7 +539,7 @@ app.post('/webhook', async (req, res) => {
 
 ```json
 {
-  "html": "Hello {{{params.signature}}}" // Injects raw HTML
+  "html": "Hello {{{params.signature}}}"
 }
 ```
 
@@ -569,7 +564,7 @@ Plain-text fields (`subject`, `text`) are never HTML-escaped, so double braces a
 ```json
 {
   "copy": false,
-  "mailMerge": [...]
+  "mailMerge": [{ "to": { "address": "ada@example.com" } }]
 }
 ```
 
@@ -586,7 +581,7 @@ Plain-text fields (`subject`, `text`) are never HTML-escaped, so double braces a
     },
     {
       "to": { "address": "bob@example.com" },
-      "params": {} // Missing 'name'!
+      "params": {}
     }
   ]
 }

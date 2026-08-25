@@ -9,7 +9,7 @@ import TabItem from '@theme/TabItem';
 
 # Messages API
 
-The Messages API provides comprehensive access to email messages across all connected accounts. You can list, read, search, update, move, and delete messages programmatically.
+The Messages API reaches the mail in any connected account: list, read, search, update, move, and delete.
 
 ## Overview
 

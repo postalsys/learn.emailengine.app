@@ -20,7 +20,7 @@ Nothing needs to be registered first. A list ID you have not used before defines
 :::tip The whole feature is one field
 
 ```json
-{ "listId": "weekly-newsletter", "mailMerge": [ ... ] }
+{ "listId": "weekly-newsletter", "mailMerge": [{ "to": { "address": "subscriber@example.com" } }] }
 ```
 
 Everything on this page describes what that field turns on.
@@ -193,7 +193,7 @@ From these pages you can add or remove addresses, open a recipient's subscriptio
 
 The API calls it a blocklist, but it is the same store the unsubscribe flow writes to. Adding addresses yourself is how you feed hard bounces and spam complaints into a list. See [Blocklist Management](/docs/advanced/blocklists) for entry metadata and examples.
 
-Removing the last address on a list deletes the list itself. A later send with that list ID simply re-creates it.
+Removing the last address on a list deletes the list itself. A later send with that list ID re-creates it.
 
 ## Limits to plan around
 

@@ -6,7 +6,7 @@ sidebar_position: 2
 
 # Installing EmailEngine on Linux
 
-Complete guide for installing EmailEngine on Linux systems (Ubuntu, Debian, CentOS, RHEL).
+Three ways to run EmailEngine on Linux: the automated installer for a fresh Ubuntu or Debian server, the standalone binary on any distribution, or from source.
 
 ## Overview
 
@@ -94,7 +94,7 @@ Replace `example.com` with your domain name, or leave empty to auto-generate one
 
 **Install specific version:**
 ```bash
-./install.sh example.com 2.78.0
+./install.sh example.com 2.79.3
 ```
 
 #### 3. Wait for Completion
@@ -130,7 +130,7 @@ For servers installed with the automated installer:
 sudo /opt/upgrade-emailengine.sh
 
 # Or re-run installer for specific version
-sudo ./install.sh example.com 2.78.0
+sudo ./install.sh example.com 2.79.3
 ```
 
 The upgrade process:
@@ -197,8 +197,8 @@ sudo systemctl restart redis
 # Download latest binary
 wget https://go.emailengine.app/emailengine.tar.gz
 
-# Or download specific version (e.g., 2.78.0)
-wget https://go.emailengine.app/download/v2.78.0/emailengine.tar.gz
+# Or download specific version (e.g., 2.79.3)
+wget https://go.emailengine.app/download/v2.79.3/emailengine.tar.gz
 
 # Extract
 tar xzf emailengine.tar.gz
@@ -302,8 +302,8 @@ sudo systemctl status emailengine
 # Download latest
 wget https://go.emailengine.app/emailengine.tar.gz
 
-# Or download specific version (e.g., 2.78.0)
-wget https://go.emailengine.app/download/v2.78.0/emailengine.tar.gz
+# Or download specific version (e.g., 2.79.3)
+wget https://go.emailengine.app/download/v2.79.3/emailengine.tar.gz
 
 # Extract and replace
 tar xzf emailengine.tar.gz
@@ -662,3 +662,11 @@ redis-cli INFO stats
 # Prometheus metrics (available on API port with metrics token)
 curl http://localhost:3000/metrics -H "Authorization: Bearer YOUR_METRICS_TOKEN"
 ```
+
+## See Also
+
+- [SystemD service](/docs/deployment/systemd) - The production service unit in full
+- [Source installation](/docs/installation/source) - Running from source instead of the binary
+- [Nginx reverse proxy](/docs/deployment/nginx-proxy) - The proxy configuration on its own page
+- [Redis configuration](/docs/configuration/redis) - Persistence, memory policy, and connection URLs
+- [Security](/docs/deployment/security) - Hardening a production deployment

@@ -61,7 +61,7 @@ Never commit your Client ID and Client Secret to version control. Store them sec
 Register your Mail.ru OAuth2 application credentials:
 
 ```bash
-curl -XPOST "http://127.0.0.1:3000/v1/oauth2" \
+curl -XPOST "https://emailengine.example.com/v1/oauth2" \
   -H "Authorization: Bearer <your-token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -89,7 +89,7 @@ curl -XPOST "http://127.0.0.1:3000/v1/oauth2" \
 Generate an authentication link for users:
 
 ```bash
-curl -XPOST "http://127.0.0.1:3000/v1/authentication/form" \
+curl -XPOST "https://emailengine.example.com/v1/authentication/form" \
   -H "Authorization: Bearer <your-token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -121,7 +121,7 @@ Direct users to the returned URL. They will:
 If you already have OAuth2 tokens from Mail.ru, register the account directly:
 
 ```bash
-curl -XPOST "http://127.0.0.1:3000/v1/account" \
+curl -XPOST "https://emailengine.example.com/v1/account" \
   -H "Authorization: Bearer <your-token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -142,7 +142,7 @@ curl -XPOST "http://127.0.0.1:3000/v1/account" \
 Check that the account connected successfully:
 
 ```bash
-curl "http://127.0.0.1:3000/v1/account/mailru-user" \
+curl "https://emailengine.example.com/v1/account/mailru-user" \
   -H "Authorization: Bearer <your-token>"
 ```
 
@@ -171,7 +171,7 @@ EmailEngine automatically handles OAuth2 token refresh for Mail.ru accounts. You
 Retrieve the current OAuth2 access token for API integrations:
 
 ```bash
-curl "http://127.0.0.1:3000/v1/account/mailru-user/oauth-token" \
+curl "https://emailengine.example.com/v1/account/mailru-user/oauth-token" \
   -H "Authorization: Bearer <your-token>"
 ```
 
@@ -180,19 +180,28 @@ curl "http://127.0.0.1:3000/v1/account/mailru-user/oauth-token" \
 ```json
 {
   "account": "mailru-user",
+  "user": "user@mail.ru",
+  "provider": "mailRu",
+  "app": "AAABkQw...",
   "accessToken": "current-access-token",
-  "expires": "2024-01-15T12:00:00.000Z"
+  "registeredScopes": ["userinfo", "mail.imap"],
+  "expires": "2024-01-15T12:00:00.000Z",
+  "cached": true
 }
 ```
 
-### Force Token Refresh
+### Reconnect the Account
 
-If you need to force a token refresh:
+EmailEngine renews the access token on its own when it expires, so there is nothing to trigger by hand. What you can do is rebuild the connection, which discards the cached token along with it:
 
 ```bash
-curl -XPUT "http://127.0.0.1:3000/v1/account/mailru-user/reconnect" \
-  -H "Authorization: Bearer <your-token>"
+curl -XPUT "https://emailengine.example.com/v1/account/mailru-user/reconnect" \
+  -H "Authorization: Bearer <your-token>" \
+  -H "Content-Type: application/json" \
+  -d '{"reconnect": true}'
 ```
+
+The body is required. `reconnect` defaults to `false`, so a `PUT` with an empty body is accepted and does nothing.
 
 ## Troubleshooting
 

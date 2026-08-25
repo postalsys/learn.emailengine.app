@@ -1,7 +1,7 @@
 ---
 title: Account Troubleshooting
 sidebar_position: 13
-description: Comprehensive troubleshooting guide for common account issues in EmailEngine
+description: Diagnosing connection, authentication, and sync failures on connected accounts
 ---
 
 # Account Troubleshooting

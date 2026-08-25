@@ -16,7 +16,7 @@ Authenticate your IMAP and SMTP accounts using OAuth2 for secure access. Choose 
 
 ### [Gmail API](/docs/accounts/gmail/gmail-api)
 
-Utilize the Gmail API as the messaging backend for seamless and efficient email management with EmailEngine.
+Use the Gmail API as the messaging backend instead of IMAP and SMTP.
 
 ### [Google Service Accounts](/docs/accounts/gmail/google-service-accounts)
 

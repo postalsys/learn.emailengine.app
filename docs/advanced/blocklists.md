@@ -189,7 +189,7 @@ Then reference the `bounce-hard` list in your mail merge campaigns to automatica
 ```json
 {
   "listId": "bounce-hard",
-  "mailMerge": [...]
+  "mailMerge": [{ "to": { "address": "recipient@example.com" } }]
 }
 ```
 

@@ -19,7 +19,7 @@ This guide covers EmailEngine logging configuration, formats, and integration wi
 
 # Logging
 
-EmailEngine provides comprehensive structured logging using the Pino logging framework. Learn how to configure logging levels, formats, and integrate with log aggregation platforms.
+EmailEngine logs structured JSON through Pino. This page covers the levels, the output format, and shipping the stream to an aggregator.
 
 ## Overview
 
@@ -39,7 +39,7 @@ By default, EmailEngine logs all messages to **standard output** (stdout) in Pin
 
 Default log output:
 
-```json
+```text
 {"level":30,"time":1697123456789,"pid":12345,"hostname":"server-01","account":"john@example.com","msg":"Account connected"}
 {"level":30,"time":1697123457123,"pid":12345,"hostname":"server-01","msg":"Processing new message","messageId":"<abc@example.com>"}
 {"level":50,"time":1697123458456,"pid":12345,"hostname":"server-01","err":{"type":"Error","message":"Connection timeout"},"msg":"IMAP connection failed"}

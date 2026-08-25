@@ -1,7 +1,7 @@
 ---
 title: Receiving Emails
 sidebar_position: 1
-description: "Comprehensive guide to receiving and processing emails with EmailEngine - webhooks, real-time notifications, and mailbox operations"
+description: "Receiving and processing email with EmailEngine: webhooks, real-time notifications, and mailbox operations"
 keywords:
   - receiving emails
   - email webhooks
@@ -18,7 +18,7 @@ Source attribution:
 - Enhanced with webhook and processing patterns
 -->
 
-EmailEngine provides powerful capabilities for receiving and processing incoming emails in real-time. Whether you're building a support system, email analytics platform, or automated workflow, EmailEngine gives you the tools to monitor mailboxes and respond to new messages instantly.
+EmailEngine watches connected mailboxes and reports what arrives, so a support desk, an analytics pipeline, or an automated workflow can act on new mail as it lands rather than polling for it.
 
 ## Why EmailEngine for Receiving Emails?
 
@@ -33,7 +33,7 @@ EmailEngine provides powerful capabilities for receiving and processing incoming
 - Native Microsoft Graph API support with push notifications
 - Unified API regardless of the underlying protocol
 
-**Comprehensive Message Access**
+**Message Access**
 - Full message content (headers, body, attachments)
 - Message metadata (flags, labels, folder location)
 - Threading information (message IDs, references)

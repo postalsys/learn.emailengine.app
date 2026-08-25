@@ -4,12 +4,6 @@ sidebar_position: 10
 description: Delegate OAuth2 flows to an external authentication server for centralized token management
 ---
 
-<!--
-Sources merged:
-- blog/2025-09-01-using-an-authentication-server.md (primary - detailed guide)
-- docs/usage/hosted-authentication.md (reference to alternative approaches)
--->
-
 # Using an Authentication Server
 
 The authentication server feature allows you to manage OAuth2 tokens externally while still using EmailEngine for email operations. This is useful when you already have an OAuth2 integration in your application and don't want to ask users for permission twice.
@@ -197,7 +191,7 @@ https://www.googleapis.com/auth/gmail.modify
 
 #### For Password-Based Accounts
 
-For regular IMAP/SMTP accounts that use password authentication (not OAuth2), your authentication server simply returns the username and password. No OAuth2 setup is required.
+For regular IMAP/SMTP accounts that use password authentication (not OAuth2), your authentication server returns the username and password. No OAuth2 setup is required.
 
 This is useful for:
 - Self-hosted email servers

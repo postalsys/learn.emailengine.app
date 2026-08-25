@@ -5,13 +5,6 @@ sidebar_position: 1
 description: Complete guide to setting up Gmail accounts with OAuth2 authentication for IMAP and SMTP access
 ---
 
-<!--
-Sources merged:
-- blog/2024-05-09-setting-up-gmail-oauth2-for-imap-api.md (primary - detailed step-by-step)
-- docs/integrations/gmail-over-imap.md (secondary - structured steps)
-- blog/2024-07-01-emailengine-and-gmail.md (Gmail-specific notes and considerations)
--->
-
 # Setting Up Gmail with OAuth2 (IMAP/SMTP)
 
 This guide shows you how to set up a Gmail OAuth2 application for IMAP and SMTP access with EmailEngine. EmailEngine will use these credentials to access Gmail accounts and allow REST queries against these accounts.
@@ -114,7 +107,7 @@ OAuth2 provides the best experience for production applications:
 - Works with 2FA accounts
 - Automatic token refresh
 - Better security
-- Seamless user experience
+- Users authenticate once and are not asked again
 
 **Types of OAuth2 Apps:**
 

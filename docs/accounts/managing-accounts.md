@@ -654,9 +654,9 @@ curl https://emailengine.example.com/v1/account/user123 \
 ```json
 {
   "account": "user123",
-  "state": "connected",  // ← Current state
-  "syncTime": "2024-01-15T10:30:00.000Z",  // ← Last successful sync
-  "lastError": {  // ← Recent errors
+  "state": "connected",
+  "syncTime": "2024-01-15T10:30:00.000Z",
+  "lastError": {
     "response": "Connection timeout",
     "serverResponseCode": "TIMEOUT"
   }

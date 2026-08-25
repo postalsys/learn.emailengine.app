@@ -18,7 +18,7 @@ import Price from '@site/src/components/Price';
 
 # Email API for Application Integration
 
-EmailEngine provides a comprehensive **REST API for email integration**. Add email sending, receiving, and management to any application without dealing with IMAP/SMTP protocol complexity.
+EmailEngine exposes a **REST API for email integration**. Add sending, receiving, and mailbox management to an application without implementing IMAP or SMTP.
 
 ## Email API Features
 
@@ -26,83 +26,87 @@ EmailEngine provides a comprehensive **REST API for email integration**. Add ema
 
 Send emails through any provider with a single REST endpoint. EmailEngine handles SMTP connections, OAuth2 authentication, retries, and delivery tracking automatically.
 
-```javascript
-// Send an email with one API call
-POST /v1/account/{account}/submit
-{
-  "to": [{"address": "user@example.com", "name": "John Doe"}],
-  "subject": "Hello from EmailEngine",
-  "html": "<p>Your message content</p>",
-  "attachments": [
-    {
-      "filename": "report.pdf",
-      "content": "base64-encoded-content"
-    }
-  ]
-}
+```bash
+curl -X POST "https://emailengine.example.com/v1/account/user123/submit" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "to": [{ "address": "user@example.com", "name": "John Doe" }],
+    "subject": "Hello from EmailEngine",
+    "html": "<p>Your message content</p>",
+    "attachments": [
+      { "filename": "report.pdf", "content": "base64-encoded-content" }
+    ]
+  }'
 ```
 
 ### Receive Emails in Real-Time
 
 Get instant webhook notifications when emails arrive. No polling required - EmailEngine maintains persistent connections to mailboxes and pushes events to your application.
 
-```javascript
-// Webhook payload for new email
+```json
 {
+  "account": "support-inbox",
+  "path": "INBOX",
   "event": "messageNew",
   "data": {
     "id": "AAAAAQAACnA",
+    "uid": 1838,
+    "unseen": true,
     "subject": "Re: Your inquiry",
-    "from": {"address": "client@example.com", "name": "Jane Smith"},
-    "to": [{"address": "support@yourapp.com"}],
-    "text": {"plain": "Thanks for your quick response..."}
+    "from": { "name": "Jane Smith", "address": "client@example.com" },
+    "to": [{ "name": "Support", "address": "support@yourapp.com" }]
   }
 }
 ```
+
+See [messageNew](/docs/webhooks/messagenew) for every field the event carries.
 
 ### Manage Email Accounts
 
 Register and manage multiple email accounts through the API. Support for Gmail, Microsoft 365, and any IMAP/SMTP provider with automatic reconnection and error recovery.
 
-```javascript
-// Register an email account
-POST /v1/account
-{
-  "account": "support-inbox",
-  "email": "support@yourcompany.com",
-  "imap": {
-    "host": "imap.yourprovider.com",
-    "port": 993,
-    "auth": {
-      "user": "support@yourcompany.com",
-      "pass": "app-password"
+```bash
+curl -X POST "https://emailengine.example.com/v1/account" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "account": "support-inbox",
+    "email": "support@yourcompany.com",
+    "imap": {
+      "host": "imap.yourprovider.com",
+      "port": 993,
+      "secure": true,
+      "auth": { "user": "support@yourcompany.com", "pass": "app-password" }
+    },
+    "smtp": {
+      "host": "smtp.yourprovider.com",
+      "port": 465,
+      "secure": true,
+      "auth": { "user": "support@yourcompany.com", "pass": "app-password" }
     }
-  },
-  "smtp": {
-    "host": "smtp.yourprovider.com",
-    "port": 465,
-    "auth": {
-      "user": "support@yourcompany.com",
-      "pass": "app-password"
-    }
-  }
-}
+  }'
 ```
 
 ### Search and Organize
 
 Search messages, manage folders, update flags, and download attachments - all through simple REST API calls.
 
-```javascript
-// Search for emails (terms go in the request body)
-POST /v1/account/{account}/search?path=INBOX
-{ "search": { "subject": "invoice", "from": "billing@" } }
+```bash
+# Search a folder. The terms go in the request body, not the query string
+curl -X POST "https://emailengine.example.com/v1/account/user123/search?path=INBOX" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{ "search": { "subject": "invoice", "from": "billing@" } }'
 
-// List messages in a folder
-GET /v1/account/{account}/messages?path=INBOX&page=0&pageSize=20
+# List messages in a folder
+curl "https://emailengine.example.com/v1/account/user123/messages?path=INBOX&page=0&pageSize=20" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 
-// Download attachment
-GET /v1/account/{account}/attachment/{attachment}
+# Download an attachment
+curl "https://emailengine.example.com/v1/account/user123/attachment/AAAAAQAACnAy" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -o invoice.pdf
 ```
 
 ## Why Choose EmailEngine's Email API?
@@ -115,14 +119,7 @@ GET /v1/account/{account}/attachment/{attachment}
 | **Account Limits** | Unlimited | Based on plan |
 | **Setup** | Self-hosted | Managed service |
 
-### Cost Comparison
-
-With per-mailbox pricing (like Nylas at $1.50/mailbox/month):
-- 100 mailboxes = $150/month = $1,800/year
-- 500 mailboxes = $750/month = $9,000/year
-- 1000 mailboxes = $1,500/month = $18,000/year
-
-With EmailEngine's flat pricing, you pay one annual fee<Price /> regardless of mailbox count.
+The difference that matters at scale is the shape of the bill rather than its size: a per-mailbox service charges for each mailbox you connect, and EmailEngine charges one annual fee<Price /> whatever the count. Where the crossover falls depends on the current price of both, so check each vendor's own page.
 
 [Compare EmailEngine vs Nylas →](/docs/comparison/emailengine-vs-nylas)
 
@@ -159,6 +156,8 @@ EmailEngine works with any email service:
 
 ## Get Started
 
+The examples above address a deployed instance at `emailengine.example.com`. The walkthrough below runs one locally, so it calls `http://localhost:3000`.
+
 ### 1. Install EmailEngine
 
 ```bash
@@ -185,13 +184,13 @@ curl -X POST http://localhost:3000/v1/account \
     "account": "my-account",
     "email": "user@gmail.com",
     "oauth2": {
-      "provider": "gmail",
-      "auth": {"user": "user@gmail.com"}
+      "provider": "AAABlf_0iLgAAAAQ",
+      "auth": { "user": "user@gmail.com" }
     }
   }'
 ```
 
-[Account setup guide →](/docs/accounts/managing-accounts)
+`provider` is the ID of an OAuth2 application you registered in EmailEngine, not the name of the provider. The [account setup guide](/docs/accounts/managing-accounts) covers where the ID and the refresh token come from, and [hosted authentication](/docs/accounts/hosted-authentication) covers letting EmailEngine collect them for you.
 
 ### 3. Send Your First Email
 
@@ -251,8 +250,10 @@ Build email into your help desk. Manage support inboxes, track threads, and send
 Connect email to AI systems for summarization, classification, and automated responses.
 [AI integration guide →](/docs/integrations/ai-chatgpt)
 
-## Try EmailEngine Free
+## See Also
 
-Start with a 14-day free trial - full functionality, no credit card required.
-
-[Start Free Trial](https://postalsys.com/plans) | [View Pricing](https://postalsys.com/plans) | [GitHub](https://github.com/postalsys/emailengine)
+- [Introduction](/docs/getting-started/introduction) - What EmailEngine is and how it fits an application
+- [Quick Start](/docs/getting-started/quick-start) - The same four steps with the responses shown
+- [API Reference](/docs/api-reference) - Authentication, conventions, and error handling
+- [IMAP API](/docs/imap-api) - The same API described from the IMAP side
+- [Licensing](/docs/licensing) - Trial terms and what a production license covers

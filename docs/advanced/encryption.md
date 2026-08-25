@@ -55,7 +55,7 @@ EmailEngine offers **field-level encryption** that encrypts all sensitive fields
 ## Important Considerations
 
 :::warning
-To fully encrypt all existing credentials, you must run the encryption migration tool. Simply enabling `EENGINE_SECRET` without migration leaves existing credentials unencrypted.
+To encrypt credentials that are already stored, run the encryption migration tool. Setting `EENGINE_SECRET` on its own only affects values written after that point, so existing credentials stay in cleartext.
 :::
 
 ### How Encryption Works with Existing Data

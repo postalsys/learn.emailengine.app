@@ -5,14 +5,6 @@ sidebar_position: 1
 description: Complete guide to setting up Outlook.com and Microsoft 365 accounts with OAuth2 authentication
 ---
 
-<!--
-Sources merged:
-- blog/2025-09-07-setting-up-oauth2-with-outlook.md (primary - detailed step-by-step)
-- docs/integrations/outlook-and-ms-365.md (secondary - structured steps)
-- blog/2023-05-19-shared-ms365-mailboxes-with-emailengine.md (shared mailboxes)
-- docs/integrations/shared-mailboxes-in-ms-365.md (shared mailboxes details)
--->
-
 # Setting Up Outlook and Microsoft 365 (Delegated Access)
 
 This guide shows you how to set up Outlook OAuth2 authentication with EmailEngine using **delegated access**, where each user signs in interactively through Microsoft's OAuth2 consent flow. This works with Outlook.com, Hotmail.com, and Microsoft 365 accounts. You can use either IMAP/SMTP or Microsoft Graph API as the email backend.
@@ -66,7 +58,7 @@ MS Graph API has **significantly more limited search capabilities** compared to 
 
 **Recommendation:**
 
-- Use **IMAP/SMTP** for simple setups, compatibility, and when you need powerful search capabilities
+- Use **IMAP/SMTP** for simple setups, for compatibility, and when you need IMAP's search
 - Use **MS Graph API** for shared mailboxes and Microsoft 365 enterprise features (but be aware of search limitations)
 
 ## Step 1: Create Azure AD Application

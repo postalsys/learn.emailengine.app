@@ -6,7 +6,7 @@ sidebar_position: 1
 
 # Troubleshooting EmailEngine
 
-Comprehensive troubleshooting guide for common issues and diagnostic procedures.
+What to check when EmailEngine, an account, a webhook, or a submission is not behaving.
 
 :::tip Quick Diagnostic
 
@@ -432,16 +432,13 @@ journalctl -u emailengine | grep -i webhook
 
 3. **Webhook timeout**
 
-   **Solution:**
+   Each delivery attempt is capped at 30 seconds. A receiver that needs longer than that has to acknowledge first and do the work afterwards. If the endpoint is genuinely slow and you cannot change it, raise the cap at startup:
 
-   ```json
-   {
-     "webhooks": {
-       "timeout": 30000,  # Increase to 30s
-       "retry": 5
-     }
-   }
+   ```bash
+   EENGINE_WEBHOOK_TIMEOUT=60s
    ```
+
+   The retry policy itself is fixed: 10 attempts with exponential backoff. It is not configurable.
 
 4. **SSL certificate issues**
 

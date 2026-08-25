@@ -413,7 +413,7 @@ Limit the number of API requests a token can make within a time window:
 
 **Example configurations:**
 
-```json
+```javascript
 // 20 requests per 2 seconds (burst protection)
 { "maxRequests": 20, "timeWindow": 2 }
 

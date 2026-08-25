@@ -35,7 +35,7 @@ Every EmailEngine instance includes a **14-day free trial** with **full function
 **How to activate:**
 
 ```bash
-# Simply start EmailEngine without license key
+# Start EmailEngine without a license key
 emailengine
 ```
 

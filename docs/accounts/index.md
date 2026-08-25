@@ -4,11 +4,6 @@ sidebar_position: 1
 description: Add and manage email accounts in EmailEngine
 ---
 
-<!--
-Sources merged:
-- docs-unified/accounts/index.md (primary comprehensive guide)
--->
-
 # Account Management
 
 EmailEngine connects to email accounts via IMAP/SMTP or native APIs (Gmail API, Microsoft Graph). This section covers everything you need to know about adding, configuring, and managing accounts.
@@ -206,34 +201,22 @@ If you lose the `EENGINE_SECRET`, encrypted credentials cannot be recovered and 
 
 ```mermaid
 graph TD
-    Start[What email provider?]
-    Start --> Gmail[Gmail / Google Workspace]
-    Start --> M365[Microsoft 365 / Outlook]
-    Start --> Yahoo[Yahoo / AOL / Verizon]
-    Start --> iCloud[iCloud]
-    Start --> Other[Other / Self-hosted]
+    Start{Which provider?}
+    Start -->|Gmail or Google Workspace| G1{Own mailbox,<br/>or your users'?}
+    Start -->|Microsoft 365 or Outlook| M1{Interactive login<br/>possible?}
+    Start -->|Yahoo, AOL, Verizon| YahooIMAP[IMAP and SMTP<br/>with an app password]
+    Start -->|iCloud| iCloudIMAP[IMAP and SMTP<br/>with an app-specific password]
+    Start -->|Anything else| OtherIMAP[IMAP and SMTP<br/>with the account password]
 
-    Gmail --> GmailPerf{Need maximum performance?}
-    Gmail --> GmailOAuth{Connecting user accounts?}
-    Gmail --> GmailVerify{Can verify OAuth app?}
-    Gmail --> GmailTest{Quick testing?}
-    GmailPerf -->|Yes| GmailAPI[Gmail API]
-    GmailOAuth -->|Yes| GmailOAuth2[Gmail OAuth2 IMAP]
-    GmailVerify -->|No| GmailIMAPApp[IMAP with app password]
-    GmailTest -->|Yes| GmailIMAPApp2[IMAP with app password]
+    G1 -->|Own mailbox| GmailIMAPApp[IMAP with an app password]
+    G1 -->|Users' mailboxes| G2{Can Google verify<br/>your OAuth app for<br/>the full mail scope?}
+    G2 -->|Yes| GmailOAuth2[Gmail OAuth2 over IMAP]
+    G2 -->|No, only narrow scopes| GmailAPI[Gmail API]
 
-    M365 --> M365AppAccess{App-level access<br/>without user login?}
-    M365AppAccess -->|Yes| AppAccess[Application Access<br/>Client Credentials]
-    M365AppAccess -->|No| M365Shared{Need shared mailboxes?}
-    M365 --> M365Enterprise{Enterprise features?}
-    M365 --> M365OAuth{Connecting user accounts?}
-    M365Shared -->|Yes| GraphAPI[Microsoft Graph API]
-    M365Enterprise -->|Yes| GraphAPI2[Microsoft Graph API]
-    M365OAuth -->|Yes| OutlookOAuth2[Outlook OAuth2 IMAP]
-
-    Yahoo --> YahooIMAP[IMAP/SMTP with app password]
-    iCloud --> iCloudIMAP[IMAP/SMTP with app-specific password]
-    Other --> OtherIMAP[IMAP/SMTP with credentials]
+    M1 -->|No, unattended service| AppAccess[Application access<br/>client credentials]
+    M1 -->|Yes| M2{Shared mailboxes or<br/>Microsoft-only features?}
+    M2 -->|Yes| GraphAPI[Microsoft Graph API]
+    M2 -->|No| OutlookOAuth2[Outlook OAuth2 over IMAP]
 ```
 
 ## Account Management Tasks
@@ -653,3 +636,11 @@ When EmailEngine needs to authenticate, it calls your server at `GET {authServer
 - [PUT /v1/account/\{account\}/reconnect - Reconnect](/docs/api/put-v-1-account-account-reconnect)
 - [POST /v1/verifyaccount - Verify Account](/docs/api/post-v-1-verifyaccount)
 - [GET /v1/account/\{account\}/oauth-token - Get OAuth Token](/docs/api/get-v-1-account-account-oauthtoken)
+
+## See Also
+
+- [Managing accounts](/docs/accounts/managing-accounts) - The lifecycle: update, pause, reconnect, delete
+- [Hosted authentication](/docs/accounts/hosted-authentication) - Letting EmailEngine collect the credentials
+- [IMAP indexers](/docs/accounts/imap-indexers) - What each indexing strategy detects
+- [Troubleshooting accounts](/docs/accounts/troubleshooting) - Connection and authentication failures
+- [Webhooks overview](/docs/webhooks/overview) - The events an account emits once it is connected

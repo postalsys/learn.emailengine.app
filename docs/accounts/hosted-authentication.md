@@ -4,14 +4,6 @@ sidebar_position: 9
 description: Use EmailEngine's hosted authentication forms to let users connect their email accounts via OAuth2
 ---
 
-<!--
-Sources merged:
-- docs/accounts/managing-accounts.md (hosted authentication form section)
-- docs/accounts/gmail-imap.md (authentication examples)
-- docs/accounts/outlook-365.md (authentication examples)
-- Common patterns across account setup guides
--->
-
 # Hosted Authentication
 
 EmailEngine's hosted authentication feature provides a user-friendly web interface for connecting email accounts via OAuth2. Instead of manually handling OAuth2 flows in your application, you can redirect users to EmailEngine's authentication forms where they complete the setup process.
@@ -126,7 +118,13 @@ Direct the user to this URL to begin authentication.
 | `expectedEmail` | No | Restrict the form to a single address - setup is rejected if the user authenticates as someone else |
 | `name` | No | Pre-fill display name on form |
 | `type` | No | Pre-select account type (skips selection screen) |
+| `delegated` | No | Register the account as a shared mailbox. Microsoft 365 OAuth2 only |
+| `notifyFrom` | No | Only emit webhooks for messages received after this date. Defaults to the moment the account is created. IMAP only |
+| `subconnections` | No | Folders to watch on their own connection, for immediate notifications |
+| `path` | No | Restrict which folders the account syncs at all |
 | `redirectUrl` | Yes | Where to send user after completion |
+
+`notifyFrom`, `subconnections`, and `path` are applied to the account the form creates, which saves an update call after the redirect.
 
 ### Skipping Account Type Selection
 
@@ -395,7 +393,7 @@ curl -X POST https://emailengine.example.com/v1/authentication/form \
   -H "Content-Type: application/json" \
   -d '{
     "account": "user123",
-    "email": "john@gmail.com",  # Pre-filled
+    "email": "john@gmail.com",
     "redirectUrl": "https://myapp.com/settings"
   }'
 ```
@@ -461,7 +459,7 @@ curl -X POST https://emailengine.example.com/v1/authentication/form \
   -d '{
     "account": "user123",
     "email": "john@gmail.com",
-    "name": "John Doe",  # Pre-filled
+    "name": "John Doe",
     "redirectUrl": "https://myapp.com/settings"
   }'
 ```
@@ -481,7 +479,7 @@ curl -X POST https://emailengine.example.com/v1/authentication/form \
   -d '{
     "account": "shared-support",
     "email": "support@company.com",
-    "delegated": true,  # Important for shared mailboxes
+    "delegated": true,
     "redirectUrl": "https://myapp.com/settings"
   }'
 ```
@@ -581,3 +579,10 @@ Since EmailEngine v2.73.0 the hosted pages are framework-free: plain HTML styled
 - App logo
 - Privacy policy and terms of service links
 
+## See Also
+
+- [OAuth2 setup](/docs/accounts/oauth2-setup) - Registering the provider applications the form uses
+- [Managing accounts](/docs/accounts/managing-accounts) - Registering accounts directly instead
+- [Authentication server](/docs/accounts/authentication-server) - Keeping token management in your own application
+- [Translations](/docs/advanced/translations) - Languages the hosted pages are available in
+- [accountAdded webhook](/docs/webhooks/accountadded) - Knowing when a form completed

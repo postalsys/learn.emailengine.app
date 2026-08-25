@@ -9,7 +9,7 @@ import TabItem from '@theme/TabItem';
 
 # EmailEngine API Reference
 
-The EmailEngine API provides a comprehensive RESTful interface for managing email accounts, sending and receiving messages, and configuring webhooks. This API allows you to integrate email functionality into your applications without dealing with IMAP/SMTP protocols directly.
+The EmailEngine API is a REST interface for managing email accounts, sending and receiving messages, and configuring webhooks, so an application never has to speak IMAP or SMTP itself.
 
 ## Overview
 
@@ -376,9 +376,7 @@ Paginated responses include navigation metadata:
   "total": 523,
   "page": 0,
   "pages": 11,
-  "messages": [
-    /* message objects */
-  ]
+  "messages": []
 }
 ```
 

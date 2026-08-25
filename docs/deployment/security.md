@@ -6,7 +6,7 @@ sidebar_position: 6
 
 # Production Security Guide
 
-Comprehensive security practices for deploying EmailEngine in production environments.
+What to lock down before an EmailEngine instance faces the network.
 
 :::warning Security First
 EmailEngine handles sensitive data including email credentials, OAuth tokens, and message content. Proper security configuration is critical.

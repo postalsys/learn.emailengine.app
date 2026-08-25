@@ -5,12 +5,6 @@ sidebar_position: 2
 description: Configure EmailEngine to use Gmail REST API as the email backend with Cloud Pub/Sub webhooks
 ---
 
-<!--
-Sources merged:
-- blog/2025-09-08-setting-up-gmail-api-access.md (primary - detailed step-by-step)
-- blog/2024-07-08-gmail-api-support-in-emailengine.md (Gmail API benefits and considerations)
--->
-
 # Setting Up Gmail API
 
 This guide shows you how to configure EmailEngine to use Gmail REST API as the email backend instead of IMAP/SMTP. With this setup, EmailEngine uses direct Gmail API calls for all operations and receives change notifications via Google Cloud Pub/Sub.

@@ -333,8 +333,8 @@ redis-cli -h localhost -p 6379 ping
 EmailEngine uses JSON logging (pino). Log levels: `60`=FATAL, `50`=ERROR, `40`=WARN, `30`=INFO, `20`=DEBUG, `10`=TRACE.
 
 **Successful connection:**
-```json
-{"level":30,"time":1762176419767,"pid":93728,"msg":"EmailEngine starting up","version":"2.78.0"}
+```text
+{"level":30,"time":1762176419767,"pid":93728,"msg":"EmailEngine starting up","version":"2.79.3"}
 {"level":20,"time":1762176421071,"pid":93728,"msg":"Started API server thread","port":3000,"host":"127.0.0.1"}
 ```
 
@@ -356,7 +356,7 @@ Connection refused:
 ```
 
 Invalid hostname:
-```json
+```text
 {"level":60,"msg":false,"err":{"message":"getaddrinfo ENOTFOUND invalid-host","code":"ENOTFOUND"}}
 {"level":10,"msg":"Connection retry","times":1,"delay":1000}
 ```

@@ -36,8 +36,9 @@ EmailEngine handles all of this complexity, exposing IMAP functionality through 
 
 Get all folders/mailboxes in an account:
 
-```http
-GET /v1/account/{account}/mailboxes?counters=true
+```bash
+curl "https://emailengine.example.com/v1/account/user123/mailboxes?counters=true" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
 
 Response:
@@ -57,8 +58,9 @@ Message counts come from `status`, and only when `counters=true` is set. Without
 
 Retrieve messages from a mailbox:
 
-```http
-GET /v1/account/{account}/messages?path=INBOX&page=0&pageSize=20
+```bash
+curl "https://emailengine.example.com/v1/account/user123/messages?path=INBOX&page=0&pageSize=20" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
 
 Response:
@@ -82,10 +84,11 @@ Response:
 
 ### Get Message Content
 
-Fetch full message with body and attachments:
+Fetch a message with its body and attachment list. Body content is left out unless `textType` asks for it, because fetching it costs a round trip to the mail server:
 
-```http
-GET /v1/account/{account}/message/{messageId}
+```bash
+curl "https://emailengine.example.com/v1/account/user123/message/AAAAAQAACnA?textType=*" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
 
 Response:
@@ -102,10 +105,10 @@ Response:
   },
   "attachments": [
     {
-      "id": "ATT001",
+      "id": "AAAAAQAACnAy",
       "filename": "agenda.pdf",
       "contentType": "application/pdf",
-      "size": 45231
+      "encodedSize": 45231
     }
   ]
 }
@@ -115,67 +118,59 @@ Response:
 
 Search using IMAP search criteria. The search terms go in the request body, so this is a POST:
 
-```http
-POST /v1/account/{account}/search?path=INBOX
-Content-Type: application/json
-
-{
-  "search": { "from": "john@example.com", "subject": "invoice" }
-}
+```bash
+curl -X POST "https://emailengine.example.com/v1/account/user123/search?path=INBOX" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{ "search": { "from": "john@example.com", "subject": "invoice" } }'
 ```
 
 Or search the message body:
 
-```http
-POST /v1/account/{account}/search?path=INBOX
-Content-Type: application/json
-
-{
-  "search": { "body": "quarterly report" }
-}
+```bash
+curl -X POST "https://emailengine.example.com/v1/account/user123/search?path=INBOX" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{ "search": { "body": "quarterly report" } }'
 ```
 
 ### Move/Copy Messages
 
 Move a message to another folder:
 
-```http
-PUT /v1/account/{account}/message/{messageId}/move
-Content-Type: application/json
-
-{
-  "path": "Archive"
-}
+```bash
+curl -X PUT "https://emailengine.example.com/v1/account/user123/message/AAAAAQAACnA/move" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{ "path": "Archive" }'
 ```
 
 ### Update Flags
 
 Mark messages as read, flagged, etc:
 
-```http
-PUT /v1/account/{account}/message/{messageId}
-Content-Type: application/json
-
-{
-  "flags": {
-    "add": ["\\Seen"],
-    "delete": ["\\Flagged"]
-  }
-}
+```bash
+curl -X PUT "https://emailengine.example.com/v1/account/user123/message/AAAAAQAACnA" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{ "flags": { "add": ["\\Seen"], "delete": ["\\Flagged"] } }'
 ```
 
 ### Delete Messages
 
 Move to trash or permanently delete:
 
-```http
-DELETE /v1/account/{account}/message/{messageId}
+```bash
+curl -X DELETE "https://emailengine.example.com/v1/account/user123/message/AAAAAQAACnA" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
 
 ### Download Attachments
 
-```http
-GET /v1/account/{account}/attachment/{attachmentId}
+```bash
+curl "https://emailengine.example.com/v1/account/user123/attachment/AAAAAQAACnAy" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -o agenda.pdf
 ```
 
 ## Real-Time Updates via Webhooks
@@ -209,7 +204,7 @@ EmailEngine maintains IMAP IDLE connections and sends webhooks when changes occu
     "changes": {
       "flags": {
         "added": ["\\Seen"],
-        "deleted": []
+        "value": ["\\Seen"]
       }
     }
   }
@@ -276,12 +271,14 @@ This means:
 
 ### Connection Handling
 
-- One IMAP connection per registered account
+- One IMAP connection per registered account, plus one for each configured [sub-connection](/docs/accounts/managing-accounts#enable-sub-connections)
 - Automatic IDLE for real-time updates
 - Reconnection on network issues
 - Connection pooling for SMTP
 
 ## Get Started with IMAP API
+
+The examples above address a deployed instance at `emailengine.example.com`. The walkthrough below runs one locally, so it calls `http://localhost:3000`.
 
 ### 1. Install EmailEngine
 
@@ -354,8 +351,10 @@ These provide additional features like native threading and can be faster for so
 
 [Gmail API setup →](/docs/accounts/gmail/gmail-api) | [Microsoft Graph setup →](/docs/accounts/microsoft-365/outlook-365)
 
-## Try EmailEngine Free
+## See Also
 
-Start with a 14-day free trial - access any IMAP mailbox via REST API.
-
-[Start Free Trial](https://postalsys.com/plans) | [View Documentation](/docs/api-reference) | [GitHub](https://github.com/postalsys/emailengine)
+- [IMAP and SMTP accounts](/docs/accounts/imap-smtp) - Every connection setting, including TLS and autodiscovery
+- [Messages API](/docs/api-reference/messages-api) - The full read and modify surface
+- [Searching messages](/docs/receiving/searching) - What the search terms mean and which ones the server runs
+- [Email API](/docs/email-api) - The same API described from the application side
+- [Licensing](/docs/licensing) - Trial terms and what a production license covers

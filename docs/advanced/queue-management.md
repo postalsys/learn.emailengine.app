@@ -99,7 +99,7 @@ Bull Board provides a web interface for:
   "account": "example",
   "date": "2025-10-18T08:00:00.000Z",
   "event": "messageNew",
-  "data": { ... }
+  "data": {}
 }
 ```
 

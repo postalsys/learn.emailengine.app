@@ -6,7 +6,7 @@ description: Overview of EmailEngine's email sending capabilities including SMTP
 
 # Sending Emails
 
-EmailEngine provides powerful email sending capabilities that shield you from the complexity of direct SMTP integration. Send emails through registered accounts' SMTP servers or external sending services with a unified REST API.
+Send through a registered account's own SMTP server, or through an external sending service, with the same REST call either way.
 
 ## Why Use EmailEngine for Sending
 
@@ -14,7 +14,7 @@ When your application needs to send email on behalf of users, direct SMTP integr
 
 - **Provider diversity**: Every email provider has different authentication mechanisms, rate limits, and error codes
 - **Credential management**: Securely handling user SMTP credentials is challenging
-- **Retry logic**: Building robust retry mechanisms for transient failures
+- **Retry logic**: Deciding which failures are worth retrying, and when
 - **Queue management**: Handling message queues and delivery tracking
 - **OAuth complexity**: Modern providers require OAuth2 authentication
 

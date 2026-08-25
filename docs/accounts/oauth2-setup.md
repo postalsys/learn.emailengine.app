@@ -4,13 +4,6 @@ sidebar_position: 7
 description: Understanding OAuth2 authentication and setting up OAuth2 applications with EmailEngine
 ---
 
-<!--
-Sources merged:
-- docs/configuration/oauth2-configuration.md (structure)
-- General OAuth2 concepts
-- Common patterns from Gmail and Outlook guides
--->
-
 # OAuth2 Setup Guide
 
 This guide explains OAuth2 authentication concepts and how to set up OAuth2 applications with EmailEngine. For provider-specific instructions, see the dedicated guides for [Gmail](./gmail/gmail-imap), [Outlook](./microsoft-365/outlook-365), [Mail.ru](./mail-ru), or [Google Service Accounts](./gmail/google-service-accounts).
@@ -209,8 +202,7 @@ Both Google and Microsoft allow downloading credentials as JSON files:
   "web": {
     "client_id": "123456789.apps.googleusercontent.com",
     "client_secret": "abcdef123456",
-    "redirect_uris": ["http://localhost:3000/oauth"],
-    ...
+    "redirect_uris": ["http://localhost:3000/oauth"]
   }
 }
 ```

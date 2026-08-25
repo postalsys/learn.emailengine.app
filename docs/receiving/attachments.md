@@ -21,7 +21,7 @@ Source attribution:
 - Attachment handling patterns
 -->
 
-Email attachments are files sent with email messages. EmailEngine provides comprehensive APIs for [downloading attachments](/docs/api/get-v-1-account-account-attachment-attachment), handling inline images, and working with attachment metadata.
+Attachments are listed with the message and fetched on demand. This page covers [downloading them](/docs/api/get-v-1-account-account-attachment-attachment), the inline images an HTML body references, and the metadata that comes with each one.
 
 ## Understanding Attachments
 

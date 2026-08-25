@@ -4,11 +4,6 @@ sidebar_position: 12
 description: Use EmailEngine's IMAP proxy to access OAuth2 accounts without native OAuth2 support in your IMAP client
 ---
 
-<!--
-Sources merged:
-- blog/2023-12-19-proxying-oauth2-imap-connections-for-outlook-and-gmail.md (primary detailed guide)
--->
-
 # Proxying IMAP Connections
 
 EmailEngine provides a built-in IMAP proxy interface that allows you to connect to OAuth2-protected accounts using standard IMAP clients that don't support OAuth2. This is particularly useful for scripts, legacy applications, and standard email clients.

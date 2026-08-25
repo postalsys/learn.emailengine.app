@@ -19,7 +19,7 @@ Source attribution:
 - Common search patterns
 -->
 
-EmailEngine provides powerful [search capabilities](/docs/api/post-v-1-account-account-search) to find messages across your email accounts. Search queries use IMAP SEARCH syntax under the hood, making them compatible with virtually any email server.
+The [search endpoint](/docs/api/post-v-1-account-account-search) finds messages in a connected account. For IMAP accounts the terms are translated into IMAP SEARCH, which every standards-compliant server implements.
 
 ## Why Use Search?
 
@@ -277,7 +277,7 @@ const results = await searchByDateRange(
 { search: { gmailRaw: 'from:boss@company.com has:attachment' } }
 ```
 
-This allows using Gmail's powerful search operators directly. See [Gmail search operators](https://support.google.com/mail/answer/7190).
+This passes Gmail's own search operators through untouched. See [Gmail search operators](https://support.google.com/mail/answer/7190).
 
 ### Label and Category Filtering
 

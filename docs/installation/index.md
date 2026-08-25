@@ -1,6 +1,6 @@
 ---
 title: Install EmailEngine - Setup Guide for All Platforms
-description: Install EmailEngine on Linux, macOS, Windows, or Docker in under 10 minutes. Self-hosted email API setup with one-click cloud deployments available.
+description: Install EmailEngine on Linux, macOS, Windows, or Docker, with one-click cloud deployments for Render, DigitalOcean, CapRover, and Heroku.
 sidebar_position: 1
 keywords:
   - install EmailEngine
@@ -38,8 +38,6 @@ node server.js
 ## Installation Methods
 
 ### By Operating System
-
-<div class="installation-grid">
 
 #### [Linux Installation](/docs/installation/linux)
 
@@ -87,11 +85,8 @@ Install on Windows 10+ (native or WSL2).
 
 [View Windows guide →](/docs/installation/windows)
 
-</div>
 
 ### By Deployment Type
-
-<div class="installation-grid">
 
 #### [Docker Installation](/docs/installation/docker)
 
@@ -116,7 +111,6 @@ Run from source code (Node.js 20+ required, 24+ recommended).
 
 [View source guide →](/docs/installation/source)
 
-</div>
 
 ## System Requirements
 
@@ -164,7 +158,7 @@ Deploy via One-Click Apps in CapRover dashboard. Search for "EmailEngine".
 
 [![Deploy to Heroku](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/postalsys/emailengine)
 
-**Note:** Requires 4 GB RAM minimum due to Heroku's connection limits.
+**Note:** Pick a dyno with at least 4 GB of memory. EmailEngine holds one connection per account, and the smaller dynos run out of memory before they run out of connections.
 
 [View all deployment guides →](/docs/deployment)
 
@@ -219,4 +213,11 @@ If you encounter issues during installation:
 3. **Check GitHub issues** for known problems
 4. **Contact support** for assistance
 
-[Support page →](/docs/licensing)
+[Support page →](/docs/support)
+
+## See Also
+
+- [Quick Start](/docs/getting-started/quick-start) - What to do once it is running
+- [Configuration](/docs/configuration) - Environment variables, Redis, and prepared settings
+- [Deployment](/docs/deployment) - Reverse proxies, SystemD, Kubernetes, and hardening
+- [Troubleshooting](/docs/troubleshooting) - Common install and startup problems

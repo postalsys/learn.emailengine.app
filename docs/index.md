@@ -28,52 +28,59 @@ import Price from '@site/src/components/Price';
 
 Send emails through any email provider with a single API endpoint. EmailEngine handles SMTP connections, OAuth2 authentication, retries, and delivery tracking.
 
-```javascript
-// Send an email with one API call
-POST /v1/account/{account}/submit
-{
-  "to": [{"address": "user@example.com"}],
-  "subject": "Hello from EmailEngine",
-  "html": "<p>Your message here</p>"
-}
+```bash
+curl -X POST "https://emailengine.example.com/v1/account/user123/submit" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "to": [{ "address": "user@example.com" }],
+    "subject": "Hello from EmailEngine",
+    "html": "<p>Your message here</p>"
+  }'
 ```
 
 ### Receive Emails in Real-Time
 
 Get instant webhook notifications when new emails arrive, no polling required.
 
-```javascript
-// Webhook payload for new email
+```json
 {
+  "account": "user123",
+  "path": "INBOX",
   "event": "messageNew",
   "data": {
     "id": "AAAAAQAACnA",
+    "uid": 1838,
+    "unseen": true,
     "subject": "Re: Meeting tomorrow",
-    "from": {"address": "client@example.com"},
-    "text": {"plain": "Thanks for scheduling..."}
+    "from": { "name": "Ann Client", "address": "client@example.com" },
+    "messageId": "<abc123@mail.example.com>"
   }
 }
 ```
+
+[The full payload](/docs/webhooks/messagenew) carries the envelope, the headers, the attachment list, and a reference for fetching the body.
 
 ### Manage Email Accounts
 
 Register and manage multiple email accounts with automatic connection handling.
 
-```javascript
-// Register an email account with OAuth2
-POST /v1/account
-{
-  "account": "user123",
-  "email": "user@gmail.com",
-  "oauth2": {
-    "provider": "AAABlf_0iLgAAAAQ",  // OAuth2 app ID from EmailEngine (base64url encoded)
-    "refreshToken": "1//0gF...",       // Refresh token from OAuth2 flow
-    "auth": {
-      "user": "user@gmail.com"         // Email address (required)
+```bash
+curl -X POST "https://emailengine.example.com/v1/account" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "account": "user123",
+    "email": "user@gmail.com",
+    "oauth2": {
+      "provider": "AAABlf_0iLgAAAAQ",
+      "refreshToken": "1//0gF...",
+      "auth": { "user": "user@gmail.com" }
     }
-  }
-}
+  }'
 ```
+
+`provider` is the ID of an [OAuth2 application](/docs/accounts/oauth2-setup) registered in EmailEngine, and `refreshToken` comes from that application's authorization flow. EmailEngine can also [run the flow for you](/docs/accounts/hosted-authentication), in which case neither value is yours to supply.
 
 ### Search and Organize
 
@@ -105,16 +112,16 @@ claude mcp add --transport http emailengine https://emailengine.example.com/mcp 
 - **Webhooks** - Real-time notifications for all email events
 - **Queue management** - Automatic retries and delivery tracking
 
-### Production-Ready
+### Running It Yourself
 
-- **Self-hosted** - Full control over your data and privacy
-- **Scalable** - Vertical scaling with performance tuning
-- **Reliable** - Automatic reconnection and error recovery
-- **Performant** - Efficient connection pooling and caching
+- **Self-hosted** - The mail and the credentials stay on your infrastructure
+- **Tunable** - Worker counts, connection limits, and Redis sit under your control
+- **Self-healing** - Dropped connections are re-established and failed jobs retried
+- **Pooled** - Connections are reused across requests rather than opened per call
 
 ## Quick Start
 
-Get your first email working in 10 minutes:
+Four steps from an empty install to a message in your webhook endpoint:
 
 1. **[Install EmailEngine](/docs/installation)** - Set up with Docker, npm, or on platforms like Render.com
 2. **[Add Your First Account](/docs/getting-started/quick-start)** - Register an email account via API
@@ -178,35 +185,27 @@ EmailEngine works as a middleware between your application and email providers:
 - **Webhooks**: Email providers send updates → EmailEngine processes → Your app receives webhook notifications
 - **Data storage**: EmailEngine stores metadata and queues in Redis (email content is not stored, only fetched on demand)
 
-**Key features:**
-
-- **Unified API** for all email providers (IMAP, SMTP, Gmail API, Microsoft Graph API)
-- **OAuth2 authentication** support for Gmail, Google Workspace, and Microsoft 365
-- **Real-time webhooks** for instant email notifications
-- **Automatic reconnection** and error recovery
-- **Queue management** with automatic retries
-
 ## API Reference
 
-EmailEngine provides a comprehensive REST API:
+The REST API is documented in four parts, plus the generated endpoint reference:
 
 - **[API Overview](/docs/api-reference)** - Authentication, conventions, error handling
 - **[Account Management](/docs/api-reference/accounts-api)** - Register and manage accounts
 - **[Sending Emails](/docs/api-reference/sending-api)** - Submit endpoint and options
 - **[Message Operations](/docs/api-reference/messages-api)** - List, search, and manage emails
-- **[Complete API Docs](/docs/api-reference)** - All 72 endpoints with schemas
+- **[Full endpoint reference](/docs/api/emailengine-api)** - Every endpoint with its request and response schema
 
 ## Get Help
 
 - **[Troubleshooting Guide](/docs/troubleshooting)** - Common issues and solutions
 - **[GitHub Issues](https://github.com/postalsys/emailengine/issues)** - Report bugs and request features
-- **[Support](/docs/licensing)** - Get professional support
+- **[Support](/docs/support)** - Support channels and what a subscription covers
 
 ## System Requirements
 
-- **Node.js** 20.x or higher
-- **Redis** Any version (or Redis-compatible service like Upstash)
-- **Memory** Minimum 2GB RAM (4GB+ recommended for production)
+- **Node.js** 20 or newer, and only when running from source. The packaged builds carry their own runtime
+- **Redis** 6.0 or newer, or a Redis-compatible service such as Upstash
+- **Memory** 2 GB to evaluate, 4 to 8 GB for production
 - **OS** Linux, macOS, or Windows
 
 ## License

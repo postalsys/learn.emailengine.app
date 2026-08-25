@@ -342,8 +342,7 @@ Response includes message IDs:
     {
       "id": "AAAADQAABl0",
       "uid": 1234,
-      "subject": "Original message",
-      ...
+      "subject": "Original message"
     }
   ]
 }
@@ -358,8 +357,7 @@ When EmailEngine syncs new mail, it sends `messageNew` webhooks containing the m
   "event": "messageNew",
   "data": {
     "id": "AAAADQAABl0",
-    "subject": "New message",
-    ...
+    "subject": "New message"
   }
 }
 ```
@@ -442,7 +440,7 @@ curl -XPOST "https://emailengine.example.com/v1/account/example/search?path=INBO
 ```json
 {
   "reference": {
-    "message": "1234" // IMAP UID - WRONG
+    "message": "1234"
   }
 }
 ```
@@ -452,7 +450,7 @@ curl -XPOST "https://emailengine.example.com/v1/account/example/search?path=INBO
 ```json
 {
   "reference": {
-    "message": "AAAADQAABl0" // EmailEngine ID - CORRECT
+    "message": "AAAADQAABl0"
   }
 }
 ```
@@ -471,7 +469,7 @@ Use the base64-encoded ID from EmailEngine, not the numeric IMAP UID.
     "message": "AAAADQAABl0",
     "action": "reply"
   },
-  "subject": "Completely different subject" // Breaks threading!
+  "subject": "Completely different subject"
 }
 ```
 
@@ -551,8 +549,7 @@ Look for `\Answered` in the `flags` array:
 ```json
 {
   "id": "AAAADQAABl0",
-  "flags": ["\\Seen", "\\Answered"],
-  ...
+  "flags": ["\\Seen", "\\Answered"]
 }
 ```
 

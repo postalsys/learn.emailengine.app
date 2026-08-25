@@ -11,7 +11,7 @@ Learn how to integrate EmailEngine with low-code platforms and automation tools 
 
 ## Overview
 
-EmailEngine makes it possible to integrate with any service that accepts webhooks. This enables powerful automation without writing complex code.
+Anything that can receive a webhook and make an HTTP request can drive EmailEngine, which covers most low-code platforms without writing any code.
 
 ### Integration Options
 
@@ -476,7 +476,7 @@ Webhook → IF (check conditions) → Multiple outputs:
   └─→ Call API endpoint
 ```
 
-n8n provides visual workflow building with powerful logic.
+n8n builds workflows visually and can branch on arbitrary expressions.
 
 ## Testing Webhook Routes
 

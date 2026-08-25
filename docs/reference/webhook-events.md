@@ -8,8 +8,6 @@ sidebar_position: 1
 
 Complete reference for all webhook event types in EmailEngine. Each event includes detailed payload structure, field types, conditional fields, and provider-specific features.
 
-<!-- Sources: sources/website-md/webhooks.md, docs/reference/webhook-events.md -->
-
 ## Event Structure
 
 All webhook events follow this common structure:
@@ -20,9 +18,7 @@ All webhook events follow this common structure:
   "event": "eventName",
   "account": "account-id",
   "date": "2025-01-15T10:30:00.000Z",
-  "data": {
-    /* event-specific payload */
-  }
+  "data": {}
 }
 ```
 

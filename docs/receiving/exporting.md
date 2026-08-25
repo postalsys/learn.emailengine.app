@@ -138,7 +138,7 @@ curl "https://emailengine.example.com/v1/account/{account}/export/{exportId}/dow
 
 The response is a gzip-compressed NDJSON file. Each line contains one message as a JSON object:
 
-```json
+```text
 {"id":"AAAAAQAACnA","uid":12345,"folder":"INBOX","subject":"Hello","from":{"name":"Sender","address":"sender@example.com"},"date":"2024-01-15T10:30:00.000Z","text":{"plain":"Message content..."},"attachments":[]}
 {"id":"AAAAAQAACnB","uid":12346,"folder":"INBOX","subject":"Re: Hello","from":{"name":"Reply","address":"reply@example.com"},"date":"2024-01-15T11:00:00.000Z","text":{"plain":"Reply content..."},"attachments":[]}
 ```

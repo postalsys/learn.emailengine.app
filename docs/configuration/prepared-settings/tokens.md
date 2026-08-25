@@ -16,7 +16,7 @@ This guide covers the CLI-based token management workflow for:
 - CI/CD pipelines
 - Automated testing environments
 
-For comprehensive token documentation including web UI management, API creation methods, security best practices, and authentication details, see [Access Tokens](/docs/api-reference/access-tokens).
+For the rest of the token surface, the admin interface, the API, scopes, and how requests authenticate, see [Access Tokens](/docs/api-reference/access-tokens).
 
 ## Why Prepared Tokens
 

@@ -18,9 +18,7 @@ All EmailEngine API errors follow this structure:
   "error": "Bad Request",
   "message": "Human-readable error message",
   "code": "ERROR_CODE",
-  "details": {
-    /* optional additional context */
-  }
+  "details": {}
 }
 ```
 

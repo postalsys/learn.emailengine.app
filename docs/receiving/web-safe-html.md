@@ -37,7 +37,7 @@ Add `webSafeHtml=true` to the [get message endpoint](/docs/api/get-v-1-account-a
 | `preProcessHtml` | `true` | Sanitize and repair the HTML |
 | `embedAttachedImages` | `true` | Replace `cid:` references with data URIs |
 
-`webSafeHtml=true` is the option to reach for when the goal is simply "give me something I can display".
+`webSafeHtml=true` is the option to reach for when the goal is "give me something I can display".
 
 An explicit `embedAttachedImages=false` alongside it is honored: you get the sanitized, repaired HTML with the `cid:` references left as they are, which is what you want when the consumer reads the body rather than renders it - EmailEngine's own [MCP tools](/docs/mcp/tools#message-bodies) request exactly that combination. Only `embedAttachedImages` works this way; `textType` and `preProcessHtml` are pinned by the shorthand.
 

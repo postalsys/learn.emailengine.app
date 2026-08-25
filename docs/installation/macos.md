@@ -6,7 +6,7 @@ sidebar_position: 3
 
 # Installing EmailEngine on macOS
 
-Complete guide for installing EmailEngine on macOS systems (Apple Silicon and Intel).
+Two ways to run EmailEngine on macOS: the signed PKG installer, or from source. Both work on Apple Silicon and Intel.
 
 ## Overview
 
@@ -29,7 +29,7 @@ EmailEngine can be installed on macOS using two methods:
 
 ### Required Software
 
-- **Redis** (any version, install via Homebrew)
+- **Redis 6.0+** (install via Homebrew)
 - **Node.js 20+** (only for source installation)
 - **Homebrew** (recommended for Redis installation)
 
@@ -55,8 +55,8 @@ The easiest way to install EmailEngine on macOS.
 # Download latest version
 curl -LO https://go.emailengine.app/emailengine-arm.pkg
 
-# Or download specific version (e.g., 2.78.0)
-curl -LO https://go.emailengine.app/download/v2.78.0/emailengine-arm.pkg
+# Or download specific version (e.g., 2.79.3)
+curl -LO https://go.emailengine.app/download/v2.79.3/emailengine-arm.pkg
 ```
 
 **For Intel Macs:**
@@ -64,8 +64,8 @@ curl -LO https://go.emailengine.app/download/v2.78.0/emailengine-arm.pkg
 # Download latest version
 curl -LO https://go.emailengine.app/emailengine.pkg
 
-# Or download specific version (e.g., 2.78.0)
-curl -LO https://go.emailengine.app/download/v2.78.0/emailengine.pkg
+# Or download specific version (e.g., 2.79.3)
+curl -LO https://go.emailengine.app/download/v2.79.3/emailengine.pkg
 ```
 
 ### Install
@@ -167,6 +167,8 @@ Create `~/Library/LaunchAgents/com.emailengine.plist`:
 </plist>
 ```
 
+On Apple Silicon, Homebrew lives under `/opt/homebrew` rather than `/usr/local`, and `/usr/local/var/log` may not exist. Point `StandardOutPath` and `StandardErrorPath` at a directory that does, for example `~/Library/Logs/emailengine.log`.
+
 Load and start:
 ```bash
 launchctl load ~/Library/LaunchAgents/com.emailengine.plist
@@ -185,3 +187,9 @@ Running from source is recommended for production as it uses less memory than th
 
 For complete source installation instructions, including Node.js setup, Launch Agent configuration, and upgrade procedures, see the dedicated **[Source Installation Guide](/docs/installation/source)**.
 
+## See Also
+
+- [Source installation](/docs/installation/source) - Running from source on any platform
+- [Configuration](/docs/configuration) - Environment variables and prepared settings
+- [Quick Start](/docs/getting-started/quick-start) - Connecting the first account
+- [Troubleshooting](/docs/troubleshooting) - Common startup problems

@@ -317,9 +317,7 @@ All webhooks follow this structure:
   "path": "INBOX",
   "specialUse": "\\Inbox",
   "event": "messageNew",
-  "data": {
-    /* event-specific data */
-  }
+  "data": {}
 }
 ```
 

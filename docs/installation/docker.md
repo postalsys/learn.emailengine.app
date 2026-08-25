@@ -6,7 +6,7 @@ sidebar_position: 5
 
 # Running EmailEngine in Docker
 
-Complete guide for running EmailEngine in Docker containers.
+Running EmailEngine and its Redis from containers, with a single `docker run` or with Compose.
 
 ## Overview
 
@@ -124,8 +124,6 @@ If you prefer to create your own configuration:
 Create `docker-compose.yml`:
 
 ```yaml
-version: "3.8"
-
 services:
   redis:
     image: redis:7-alpine
@@ -230,7 +228,7 @@ EENGINE_SECRET=your-generated-secret-here
 REDIS_PASSWORD=your-secure-redis-password
 
 # Version pinning for stability
-EMAILENGINE_VERSION=v2.78.0
+EMAILENGINE_VERSION=v2.79.3
 
 # Bind to all interfaces (if behind reverse proxy)
 EMAILENGINE_API_BIND=0.0.0.0
@@ -248,18 +246,16 @@ RESTART_POLICY=unless-stopped
 ### Security Recommendations
 
 1. **Use Redis password:** Set `REDIS_PASSWORD` for production
-2. **Pin versions:** Specify exact versions (e.g., `EMAILENGINE_VERSION=v2.78.0`)
+2. **Pin versions:** Specify exact versions (e.g., `EMAILENGINE_VERSION=v2.79.3`)
 3. **Bind to localhost:** If using reverse proxy, keep default `127.0.0.1` binding
 4. **Restrict access:** Use firewall rules to limit port access
 5. **Enable TLS:** Use reverse proxy (Nginx/Caddy) with HTTPS
 
 ### Resource Requirements
 
-For production deployments:
+The [general figures](/docs/installation#system-requirements) apply here too: 2 GB of memory to evaluate, 4 to 8 GB for production, and more once the account count climbs. Redis in the same compose file competes for the same memory, so size for both.
 
-- **Minimum:** 8GB RAM, 4 CPU cores
-- **Recommended:** 16GB+ RAM, 8+ CPU cores
-- Monitor memory usage: `docker stats emailengine`
+Watch what the container actually uses before deciding: `docker stats emailengine`
 
 ### Volumes and Persistence
 
@@ -381,8 +377,8 @@ Every release publishes four tags, and master publishes one:
 
 | Tag | Points at | Use it when |
 |-----|-----------|-------------|
-| `v2.78.0` | One exact release | You want the image to change only when you change it. The safest choice for production |
-| `v2.78` | Newest patch of that minor | You want patch fixes automatically, without minor upgrades |
+| `v2.79.3` | One exact release | You want the image to change only when you change it. The safest choice for production |
+| `v2.79` | Newest patch of that minor | You want patch fixes automatically, without minor upgrades |
 | `v2` | Newest release of the v2 line | You want releases automatically. There is no v3, so this is currently the newest stable build |
 | `latest` | Newest release, same build as `v2` today | Convenience. It will follow a future major version, so avoid pinning production to it |
 | `edge` | Latest commit on master | Testing unreleased changes. Not for production |
@@ -397,7 +393,7 @@ Every release publishes four tags, and master publishes one:
 
 ```bash
 docker pull postalsys/emailengine:v2
-docker pull postalsys/emailengine:v2.78.0
+docker pull postalsys/emailengine:v2.79.3
 ```
 
 **GitHub Container Registry (alternative):**
@@ -455,7 +451,7 @@ docker images
 docker pull postalsys/emailengine:v2
 
 # Pull specific version
-docker pull postalsys/emailengine:v2.78.0
+docker pull postalsys/emailengine:v2.79.3
 
 # Remove image
 docker rmi postalsys/emailengine:v2
@@ -518,12 +514,12 @@ docker run -d \
 
 ```bash
 # Use specific version tag
-docker pull postalsys/emailengine:v2.78.0
+docker pull postalsys/emailengine:v2.79.3
 
 # In docker-compose.yml
 services:
   emailengine:
-    image: postalsys/emailengine:v2.78.0
+    image: postalsys/emailengine:v2.79.3
 ```
 
 ## Environment Variables
@@ -577,3 +573,11 @@ docker run --rm -v emailengine_redis-data:/data -v $(pwd):/backup alpine tar czf
 # Restore volume
 docker run --rm -v emailengine_redis-data:/data -v $(pwd):/backup alpine tar xzf /backup/redis-backup.tar.gz -C /
 ```
+
+## See Also
+
+- [Installation overview](/docs/installation) - Every other way to run EmailEngine
+- [Kubernetes](/docs/deployment/kubernetes) - Running the same image under an orchestrator
+- [Redis configuration](/docs/configuration/redis) - Persistence, memory policy, and connection URLs
+- [Environment variables](/docs/configuration/environment-variables) - Everything configurable at startup
+- [Security](/docs/deployment/security) - Hardening a production deployment

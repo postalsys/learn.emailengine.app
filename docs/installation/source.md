@@ -6,7 +6,7 @@ sidebar_position: 6
 
 # Installing EmailEngine from Source
 
-Complete guide for running EmailEngine from source code - the recommended method for production deployments.
+Running EmailEngine from the source distribution, which is what we recommend in production because it holds less memory than the packaged binary.
 
 ## Why Install from Source?
 
@@ -16,11 +16,6 @@ Running EmailEngine from source provides several advantages over binary distribu
 
 **Lower Memory Usage:**
 The pre-built binary uses a virtual filesystem where all application files are loaded into memory at startup. When running from source, files remain on disk and are only loaded when needed, resulting in lower base memory consumption.
-
-**Better Performance:**
-- Native Node.js execution without packaging overhead
-- Faster startup times
-- More efficient resource utilization
 
 **Enhanced Control:**
 - Full access to source code for debugging
@@ -128,8 +123,8 @@ cd /opt/emailengine
 # Download latest source distribution
 sudo wget https://go.emailengine.app/source-dist.tar.gz
 
-# Or download specific version (e.g., 2.78.0)
-sudo wget https://go.emailengine.app/download/v2.78.0/source-dist.tar.gz
+# Or download specific version (e.g., 2.79.3)
+sudo wget https://go.emailengine.app/download/v2.79.3/source-dist.tar.gz
 
 # Extract to app directory (includes node_modules)
 sudo tar xzf source-dist.tar.gz -C app --strip-components=1
@@ -303,6 +298,8 @@ Create `~/Library/LaunchAgents/com.emailengine.plist`:
 </plist>
 ```
 
+On Apple Silicon, Homebrew installs Node under `/opt/homebrew/bin/node` and `/usr/local/var/log` may not exist. Run `which node` and adjust both the interpreter path and the log paths before loading the agent.
+
 Load and start:
 ```bash
 launchctl load ~/Library/LaunchAgents/com.emailengine.plist
@@ -337,7 +334,7 @@ module.exports = {
     script: './app/server.js',
     cwd: '/opt/emailengine',
     instances: 1,
-    exec_mode: 'cluster',
+    exec_mode: 'fork',
     watch: false,
     env: {
       NODE_ENV: 'production'
@@ -353,7 +350,7 @@ module.exports = {
 };
 ```
 
-**Note:** Environment variables are loaded from `/opt/emailengine/.env` automatically.
+**Note:** EmailEngine reads a `.env` file from its working directory on startup, so `cwd: '/opt/emailengine'` is what makes `/opt/emailengine/.env` apply. PM2 runs one process here rather than a cluster: EmailEngine starts its own worker threads, and a second copy of the process would compete with the first for the same Redis state.
 
 #### Start with PM2
 
@@ -422,8 +419,8 @@ sudo mkdir -p app
 # Download new version (latest)
 sudo wget https://go.emailengine.app/source-dist.tar.gz
 
-# Or download specific version (e.g., 2.78.0)
-sudo wget https://go.emailengine.app/download/v2.78.0/source-dist.tar.gz
+# Or download specific version (e.g., 2.79.3)
+sudo wget https://go.emailengine.app/download/v2.79.3/source-dist.tar.gz
 
 # Extract to app directory
 sudo tar xzf source-dist.tar.gz -C app --strip-components=1
@@ -458,8 +455,8 @@ sudo mkdir -p app
 # Download new version (latest)
 sudo wget https://go.emailengine.app/source-dist.tar.gz
 
-# Or download specific version (e.g., 2.78.0)
-sudo wget https://go.emailengine.app/download/v2.78.0/source-dist.tar.gz
+# Or download specific version (e.g., 2.79.3)
+sudo wget https://go.emailengine.app/download/v2.79.3/source-dist.tar.gz
 
 # Extract to app directory
 sudo tar xzf source-dist.tar.gz -C app --strip-components=1
@@ -571,3 +568,11 @@ tail -f /var/log/emailengine/*.log
 8. **Monitor logs** for suspicious activity
 
 See [Security Best Practices](/docs/deployment/security) for detailed guidance.
+
+## See Also
+
+- [Linux installation](/docs/installation/linux) - Redis setup and the binary alternative
+- [SystemD service](/docs/deployment/systemd) - The service unit and hardening options in full
+- [Configuration](/docs/configuration) - Every environment variable and prepared settings
+- [Performance tuning](/docs/advanced/performance-tuning) - Worker counts and connection limits
+- [Monitoring](/docs/advanced/monitoring) - Prometheus metrics and what to alert on

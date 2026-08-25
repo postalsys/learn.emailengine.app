@@ -23,7 +23,7 @@ Monitor EmailEngine health, performance, and activity with built-in health check
 
 ## Overview
 
-EmailEngine provides comprehensive monitoring capabilities:
+EmailEngine exposes three things worth monitoring:
 
 - **Health Check Endpoints** - Simple HTTP endpoints for uptime monitoring
 - **Prometheus Metrics** - Detailed metrics for Prometheus/Grafana stack
@@ -261,7 +261,7 @@ Note: Memory usage, CPU usage, and uptime metrics are available through standard
 
 ### Complete Prometheus Metrics Reference
 
-The following tables provide a comprehensive reference of all Prometheus metrics exposed by EmailEngine:
+Every Prometheus metric EmailEngine exposes:
 
 #### Worker and Thread Metrics
 
@@ -364,7 +364,7 @@ The following tables provide a comprehensive reference of all Prometheus metrics
 
 ## Grafana Dashboard
 
-EmailEngine provides a pre-built Grafana dashboard for comprehensive monitoring. The dashboard is available in the EmailEngine repository and can be imported directly into your Grafana instance.
+EmailEngine ships a Grafana dashboard covering the metrics above. It lives in the EmailEngine repository and imports into Grafana as is.
 
 ![EmailEngine Grafana Dashboard](/img/grafana-dashboard.png)
 *EmailEngine monitoring dashboard showing system overview, worker threads, memory, and CPU usage*
@@ -924,11 +924,11 @@ echo "EmailEngine is healthy"
 exit 0
 ```
 
-### Comprehensive Check
+### Full Check
 
 ```bash
 #!/bin/bash
-# comprehensive-health-check.sh
+# full-health-check.sh
 
 TOKEN="$1"
 HOST="${2:-localhost:3000}"

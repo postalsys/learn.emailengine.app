@@ -6,7 +6,7 @@ sidebar_position: 4
 
 # Installing EmailEngine on Windows
 
-Complete guide for installing EmailEngine on Windows systems.
+Two ways to run EmailEngine on Windows: the native executable with a Redis-compatible server, or a Linux install inside WSL2.
 
 ## Overview
 
@@ -95,8 +95,8 @@ Open PowerShell and download the Windows executable:
 # Download latest version
 Invoke-WebRequest -Uri "https://go.emailengine.app/emailengine.exe" -OutFile "emailengine.exe"
 
-# Or for specific version (e.g., 2.78.0)
-Invoke-WebRequest -Uri "https://go.emailengine.app/download/v2.78.0/emailengine.exe" -OutFile "emailengine.exe"
+# Or for specific version (e.g., 2.79.3)
+Invoke-WebRequest -Uri "https://go.emailengine.app/download/v2.79.3/emailengine.exe" -OutFile "emailengine.exe"
 ```
 
 **Alternative: Browser download**
@@ -268,8 +268,10 @@ Create a Windows startup script to launch EmailEngine in WSL2.
 ```batch
 @echo off
 wsl sudo service redis-server start
-wsl sudo service emailengine start
+wsl sudo systemctl start emailengine
 ```
+
+The second line assumes EmailEngine is installed as a service inside WSL2. The automated installer above creates it; a manual binary install does not, so create the [SystemD unit](/docs/deployment/systemd) first or start the binary directly.
 
 **Add to Windows startup:**
 
@@ -277,13 +279,11 @@ wsl sudo service emailengine start
 2. Type `shell:startup` and press Enter
 3. Create a shortcut to `start-emailengine.bat`
 
-### Advantages of WSL2
+### Why WSL2
 
-- Full Linux compatibility
-- Better performance than native Windows
-- Access to all Linux tools and packages
-- Easier updates and maintenance
-- Production-ready environment
+- Runs the Linux build, which is the one that gets the most testing
+- Redis runs natively rather than through a compatible reimplementation
+- The Linux installation guide, the SystemD unit, and the upgrade script all apply unchanged
 
 ## Configuration Options
 
@@ -294,7 +294,7 @@ Create `.env` file in the same directory as `emailengine.exe`:
 ```bash
 # Required
 EENGINE_REDIS=redis://127.0.0.1:6379/8
-EENGINE_SECRET=your-secret-key-at-least-64-chars
+EENGINE_SECRET=your-secret-key-at-least-32-chars
 
 # Optional
 EENGINE_WORKERS=4
@@ -311,7 +311,7 @@ You can also use `config.toml` in the same directory as `emailengine.exe`:
 
 ```toml
 [service]
-secret = "your-secret-key-at-least-64-chars"
+secret = "your-secret-key-at-least-32-chars"
 
 [dbs]
 redis = "redis://127.0.0.1:6379/8"
@@ -333,4 +333,11 @@ Run with config file:
 .\emailengine.exe --config="C:\Program Files\EmailEngine\config.toml"
 ```
 
-**Note:** TOML config files are loaded using the `NODE_CONFIG_PATH` environment variable. They can include all settings including `service.secret`, so you don't need separate environment variables or CLI arguments.
+**Note:** The same file can be named by the `NODE_CONFIG_PATH` environment variable instead of `--config`; both fill the same slot. A TOML file can carry every setting, `service.secret` included, so nothing else has to be passed on the command line.
+
+## See Also
+
+- [Linux installation](/docs/installation/linux) - What the WSL2 path follows
+- [Configuration](/docs/configuration) - Environment variables, TOML files, and prepared settings
+- [SystemD service](/docs/deployment/systemd) - Running as a service inside WSL2
+- [Troubleshooting](/docs/troubleshooting) - Common startup problems

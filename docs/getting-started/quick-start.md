@@ -1,12 +1,12 @@
 ---
 title: Quick Start Guide
 sidebar_position: 1
-description: Get your first email working with EmailEngine in 10 minutes - from installation to sending and receiving
+description: From an empty install to a sent message and a webhook, one step at a time
 ---
 
 # Quick Start Guide
 
-Get EmailEngine up and running in 10 minutes. This guide walks you through installing EmailEngine, adding your first email account, sending an email, and receiving webhook notifications.
+This guide installs EmailEngine, connects an email account to it, sends a message, and shows the webhooks that arrive. Every command runs against a local instance.
 
 ## Step 1: Install EmailEngine
 
@@ -14,22 +14,22 @@ Get EmailEngine up and running in 10 minutes. This guide walks you through insta
 
 ```bash
 # Download latest release
-$ wget https://go.emailengine.app/emailengine.tar.gz
-$ tar xzf emailengine.tar.gz
-$ chmod +x emailengine
+wget https://go.emailengine.app/emailengine.tar.gz
+tar xzf emailengine.tar.gz
+chmod +x emailengine
 
 # Start EmailEngine (default Redis database is 8)
-$ ./emailengine --dbs.redis="redis://127.0.0.1:6379/8"
+./emailengine --dbs.redis="redis://127.0.0.1:6379/8"
 ```
 
 ### Option B: Using Docker
 
 ```bash
 # Pull the latest version
-$ docker pull postalsys/emailengine:v2
+docker pull postalsys/emailengine:v2
 
 # Run EmailEngine
-$ docker run -p 3000:3000 \
+docker run -p 3000:3000 \
   --env EENGINE_REDIS="redis://host.docker.internal:6379/8" \
   postalsys/emailengine:v2
 ```
@@ -73,14 +73,14 @@ You need an access token to authenticate API requests.
 Use the EmailEngine CLI to generate a full-access token:
 
 ```bash
-$ emailengine tokens issue -d "Development" -s "*" --dbs.redis="redis://127.0.0.1:6379/8"
+emailengine tokens issue -d "Development" -s "*" --dbs.redis="redis://127.0.0.1:6379/8"
 8bf639ec7c051c3963498c6757b6813bd331afeb677886d4473190fae66c9fab
 ```
 
 Save your token as an environment variable:
 
 ```bash
-$ export EMAILENGINE_TOKEN="8bf639ec7c051c3963498c6757b6813bd331afeb677886d4473190fae66c9fab"
+export EMAILENGINE_TOKEN="8bf639ec7c051c3963498c6757b6813bd331afeb677886d4473190fae66c9fab"
 ```
 
 **Benefits of CLI tokens:**
@@ -99,8 +99,8 @@ $ export EMAILENGINE_TOKEN="8bf639ec7c051c3963498c6757b6813bd331afeb677886d44731
 5. Click **Generate a token**
 6. Copy the token immediately - it's shown only once
 
-:::info Account-Scoped Tokens
-The [Create Access Token API](/docs/api/post-v-1-tokens) generates account-scoped tokens that are limited to specific email accounts. For full system access, use the CLI or web interface.
+:::info What the API can mint
+The [Create Access Token API](/docs/api/post-v-1-tokens) needs either an `account`, which binds the token to that one mailbox, or a `permissions` record naming what the token may do. It will not mint an unrestricted token, so the CLI and the admin interface remain the way to get one. See [Access Tokens](/docs/api-reference/access-tokens).
 :::
 
 ## Step 4: Add Your First Email Account
@@ -123,7 +123,7 @@ The easiest way to add accounts is using EmailEngine's built-in hosted authentic
 1. Your application generates an authentication form URL via the API:
 
    ```bash
-   curl -XPOST "http://127.0.0.1:3000/v1/authentication/form" \
+   curl -XPOST "http://localhost:3000/v1/authentication/form" \
      -H "Authorization: Bearer ${EMAILENGINE_TOKEN}" \
      -H "Content-Type: application/json" \
      -d '{
@@ -186,7 +186,7 @@ For programmatic control or special requirements, register accounts directly via
 **Prerequisites:** You need to set up OAuth2 credentials in Google Cloud Console. [See detailed guide →](/docs/accounts/gmail/gmail-imap)
 
 ```bash
-$ curl -XPOST "http://127.0.0.1:3000/v1/account" \
+curl -XPOST "http://localhost:3000/v1/account" \
   -H "Authorization: Bearer ${EMAILENGINE_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{
@@ -212,7 +212,7 @@ The `provider` value should be your OAuth2 application ID from EmailEngine, whic
 **Prerequisites:** You need to register an app in Azure AD. [See detailed guide →](/docs/accounts/microsoft-365/outlook-365)
 
 ```bash
-$ curl -XPOST "http://127.0.0.1:3000/v1/account" \
+curl -XPOST "http://localhost:3000/v1/account" \
   -H "Authorization: Bearer ${EMAILENGINE_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{
@@ -234,7 +234,7 @@ $ curl -XPOST "http://127.0.0.1:3000/v1/account" \
 This works with any email provider that supports IMAP and SMTP:
 
 ```bash
-$ curl -XPOST "http://127.0.0.1:3000/v1/account" \
+curl -XPOST "http://localhost:3000/v1/account" \
   -H "Authorization: Bearer ${EMAILENGINE_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{
@@ -280,6 +280,35 @@ $ curl -XPOST "http://127.0.0.1:3000/v1/account" \
 }
 ```
 
+### Provider-Specific Notes
+
+#### Gmail
+
+- **Account passwords disabled:** Gmail has completely disabled account password authentication
+- **App passwords required:** Must enable 2FA and generate an app-specific password
+- **OAuth2 recommended:** OAuth2 provides the best experience (automatic token refresh)
+- **OAuth2 verification:** Public OAuth2 apps require verification if sending to many users
+- [Complete Gmail setup →](/docs/accounts/gmail/gmail-imap)
+
+#### Outlook/Microsoft 365
+
+- **OAuth2 required:** Password authentication is deprecated for personal accounts
+- **Azure AD setup:** Requires app registration in Azure portal
+- **Permissions:** Need both IMAP and SMTP permissions or use Graph API
+- [Complete Outlook setup →](/docs/accounts/microsoft-365/outlook-365)
+
+#### Yahoo Mail
+
+- **App password required:** Generate at account.yahoo.com
+- **IMAP/SMTP settings:** Same as table above
+- **Rate limits:** Yahoo has aggressive rate limiting
+
+#### ProtonMail
+
+- **Bridge required:** ProtonMail requires the ProtonMail Bridge app
+- **Local server:** Bridge runs on localhost with custom ports
+- **Security:** Bridge handles encryption/decryption
+
 ## Step 5: Wait for Initial Sync
 
 EmailEngine performs an initial sync of your mailbox before it's ready to use.
@@ -312,7 +341,7 @@ Alternatively, poll the [get account API](/docs/api/get-v-1-account-account) unt
 
 ```bash
 # Check account status
-$ curl "http://127.0.0.1:3000/v1/account/my-account" \
+curl "http://localhost:3000/v1/account/my-account" \
   -H "Authorization: Bearer ${EMAILENGINE_TOKEN}"
 ```
 
@@ -346,7 +375,7 @@ Sync time depends on:
 Once the account is connected, send a test email using the [submit API](/docs/api/post-v-1-account-account-submit):
 
 ```bash
-$ curl -XPOST "http://127.0.0.1:3000/v1/account/my-account/submit" \
+curl -XPOST "http://localhost:3000/v1/account/my-account/submit" \
   -H "Authorization: Bearer ${EMAILENGINE_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{
@@ -398,7 +427,7 @@ _Webhooks configuration page in EmailEngine settings_
 Use the [update settings API](/docs/api/post-v-1-settings):
 
 ```bash
-$ curl -XPOST "http://127.0.0.1:3000/v1/settings" \
+curl -XPOST "http://localhost:3000/v1/settings" \
   -H "Authorization: Bearer ${EMAILENGINE_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{
@@ -475,7 +504,7 @@ For testing, use [webhook.site](https://webhook.site) to see webhook payloads:
 Retrieve messages from the mailbox using the [list messages API](/docs/api/get-v-1-account-account-messages):
 
 ```bash
-$ curl "http://127.0.0.1:3000/v1/account/my-account/messages?path=INBOX&pageSize=10" \
+curl "http://localhost:3000/v1/account/my-account/messages?path=INBOX&pageSize=10" \
   -H "Authorization: Bearer ${EMAILENGINE_TOKEN}"
 ```
 
@@ -505,10 +534,10 @@ $ curl "http://127.0.0.1:3000/v1/account/my-account/messages?path=INBOX&pageSize
 
 ## Step 9: Read a Specific Message
 
-Get full message content including body and attachments using the [get message API](/docs/api/get-v-1-account-account-message-message):
+Read a message with the [get message API](/docs/api/get-v-1-account-account-message-message). Body content is left out unless `textType` asks for it, because fetching it costs a round trip to the mail server:
 
 ```bash
-$ curl "http://127.0.0.1:3000/v1/account/my-account/message/AAAAAQAACnA" \
+curl "http://localhost:3000/v1/account/my-account/message/AAAAAQAACnA?textType=*" \
   -H "Authorization: Bearer ${EMAILENGINE_TOKEN}"
 ```
 
@@ -517,7 +546,7 @@ $ curl "http://127.0.0.1:3000/v1/account/my-account/message/AAAAAQAACnA" \
 Search for messages matching specific criteria using the [search messages API](/docs/api/post-v-1-account-account-search):
 
 ```bash
-$ curl -XPOST "http://127.0.0.1:3000/v1/account/my-account/search" \
+curl -XPOST "http://localhost:3000/v1/account/my-account/search?path=INBOX" \
   -H "Authorization: Bearer ${EMAILENGINE_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{
@@ -527,6 +556,8 @@ $ curl -XPOST "http://127.0.0.1:3000/v1/account/my-account/search" \
     }
   }'
 ```
+
+## Next Steps
 
 ### Set Up OAuth2
 
@@ -547,38 +578,10 @@ $ curl -XPOST "http://127.0.0.1:3000/v1/account/my-account/search" \
 - **[AI/ChatGPT Integration](/docs/integrations/ai-chatgpt)** - Email summaries and analysis
 - **[PHP Integration](/docs/integrations/php)** - Using the PHP library
 
-## Get Help
+## See Also
 
-- **[Documentation](/docs)** - Complete guides and API reference
-- **[Troubleshooting Guide](/docs/troubleshooting)** - Common issues and solutions
-- **[GitHub Issues](https://github.com/postalsys/emailengine/issues)** - Report bugs
-- **[Support](/docs/licensing)** - Get professional help
-
-## Common Provider-Specific Notes
-
-### Gmail
-
-- **Account passwords disabled:** Gmail has completely disabled account password authentication
-- **App passwords required:** Must enable 2FA and generate an app-specific password
-- **OAuth2 recommended:** OAuth2 provides the best experience (automatic token refresh)
-- **OAuth2 verification:** Public OAuth2 apps require verification if sending to many users
-- [Complete Gmail setup →](/docs/accounts/gmail/gmail-imap)
-
-### Outlook/Microsoft 365
-
-- **OAuth2 required:** Password authentication is deprecated for personal accounts
-- **Azure AD setup:** Requires app registration in Azure portal
-- **Permissions:** Need both IMAP and SMTP permissions or use Graph API
-- [Complete Outlook setup →](/docs/accounts/microsoft-365/outlook-365)
-
-### Yahoo Mail
-
-- **App password required:** Generate at account.yahoo.com
-- **IMAP/SMTP settings:** Same as table above
-- **Rate limits:** Yahoo has aggressive rate limiting
-
-### ProtonMail
-
-- **Bridge required:** ProtonMail requires the ProtonMail Bridge app
-- **Local server:** Bridge runs on localhost with custom ports
-- **Security:** Bridge handles encryption/decryption
+- [Managing accounts](/docs/accounts/managing-accounts) - The full account lifecycle beyond the first one
+- [Webhooks overview](/docs/webhooks/overview) - Every event, and how delivery and retries work
+- [API Reference](/docs/api-reference) - Authentication, conventions, and error handling
+- [Troubleshooting](/docs/troubleshooting) - What to check when an account will not connect
+- [Support](/docs/support) - Support channels and what a subscription covers

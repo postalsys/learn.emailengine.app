@@ -6,7 +6,7 @@ sidebar_position: 3
 
 # Configuration Reference
 
-Comprehensive reference for all EmailEngine configuration options.
+Every EmailEngine configuration option, whether it is set at startup or through the settings API.
 
 :::info Configuration Methods
 EmailEngine can be configured via:

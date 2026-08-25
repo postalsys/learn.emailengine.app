@@ -44,7 +44,7 @@ Standard support does not include:
 
 Before contacting support, check these resources:
 
-- **[Documentation](/docs)** - Comprehensive guides and API reference
+- **[Documentation](/docs)** - Guides and the API reference
 - **[Troubleshooting Guide](/docs/accounts/troubleshooting)** - Common issues and solutions
 - **[GitHub Issues](https://github.com/postalsys/emailengine/issues)** - Search existing issues
 - **[Changelog](https://github.com/postalsys/emailengine/releases)** - Recent updates and fixes

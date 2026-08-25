@@ -56,7 +56,7 @@ For delegated access setup, see [Setting Up Outlook and Microsoft 365](./outlook
 
 - Access granted by admin once for the entire organization
 - No OAuth2 login flow for each user
-- Seamless automated access to any mailbox
+- No interactive login for any mailbox in the tenant
 
 **Centralized Management:**
 
@@ -316,7 +316,7 @@ The account should show `"state": "connected"` when successfully linked.
 
 ## Shared Mailboxes
 
-Application access is particularly well-suited for shared mailboxes. Simply use the shared mailbox email address as the `auth.user` value:
+Application access suits shared mailboxes: use the shared mailbox address as the `auth.user` value.
 
 ```bash
 curl -X POST https://emailengine.example.com/v1/account \

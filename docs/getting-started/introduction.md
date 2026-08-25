@@ -16,7 +16,7 @@ import Price from '@site/src/components/Price';
 
 **EmailEngine** is a self-hosted email gateway that allows you to access email accounts over REST API. It provides a unified interface to interact with IMAP and SMTP protocols, as well as native integrations with Gmail API and Microsoft Graph API.
 
-EmailEngine streamlines email integration for your app or service with a unified REST API that seamlessly connects with:
+One REST API covers every account type it supports:
 
 - **IMAP** - Standard email protocol
 - **SMTP** - Standard email sending protocol
@@ -111,12 +111,23 @@ Get started with EmailEngine in just a few steps:
 
 ## System Requirements
 
-- **Redis** 6.0+ (or a Redis-compatible service like Upstash)
-- **Memory** Minimum 4GB RAM for development, 8GB+ for production (16GB+ recommended for larger deployments)
+- **Node.js** 20 or newer, and only when running from source. The packaged builds carry their own runtime
+- **Redis** 6.0 or newer, or a Redis-compatible service such as Upstash
+- **Memory** 2 GB to evaluate, 4 to 8 GB for production
 - **OS** Linux, macOS, or Windows
+
+See [Installation](/docs/installation) for the per-platform figures and what drives them.
 
 ## License
 
 EmailEngine includes a **14-day free trial** with full functionality and no limitations. No credit card required - just click "Activate Trial" in the dashboard to begin.
 
 For production use, [get a license key](https://postalsys.com/plans) from postalsys.com<Price />.
+
+## See Also
+
+- [Quick Start](/docs/getting-started/quick-start) - Install, connect an account, send a message
+- [Installation](/docs/installation) - Every supported way to run EmailEngine
+- [API Reference](/docs/api-reference) - Authentication, conventions, and error handling
+- [Comparison with Nylas](/docs/comparison/emailengine-vs-nylas) - How a self-hosted gateway differs from a managed service
+- [Licensing and privacy](/docs/licensing) - Trial terms, license options, and what leaves your server

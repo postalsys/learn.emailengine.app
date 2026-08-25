@@ -37,14 +37,14 @@ Webhooks are the primary mechanism for receiving real-time notifications from Em
 - Reduces API calls and server load
 - Lower latency for time-sensitive operations
 
-**Comprehensive Event Coverage**
+**Event Coverage**
 - Message lifecycle (new, updated, deleted)
 - Delivery status (sent, failed, bounced)
 - Account status (connected, disconnected, errors)
 - User interactions (opens, clicks, unsubscribes)
 
 **Scalable**
-- Handle high message volumes effortlessly
+- Absorb bursts without dropping events
 - Process events asynchronously
 - Built on BullMQ for reliability
 

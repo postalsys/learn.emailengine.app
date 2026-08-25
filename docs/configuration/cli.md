@@ -6,7 +6,7 @@ sidebar_position: 10
 
 # EmailEngine CLI
 
-The EmailEngine command line interface (CLI) provides powerful administration tools for managing tokens, licenses, passwords, accounts, and encryption. The CLI can be run from anywhere with access to the Redis database.
+The EmailEngine command line interface manages tokens, licenses, passwords, accounts, and encryption. It talks to Redis directly, so it can run anywhere that can reach the database, whether or not the server is running.
 
 ## Overview
 

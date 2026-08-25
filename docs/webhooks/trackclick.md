@@ -292,7 +292,7 @@ When an automated request is detected, the event is logged but no webhook is sen
 
 ## Best Practices
 
-1. **Use with open tracking** - Combine click and open tracking for comprehensive engagement insights
+1. **Use with open tracking** - Opens and clicks answer different questions; enable both to tell a read from an act
 2. **Handle multiple clicks** - The same link may be clicked multiple times; decide how to count them
 3. **Respect privacy** - Be transparent with recipients about tracking and comply with privacy regulations (GDPR, CAN-SPAM)
 4. **Secure your tracking** - Configure a service secret to prevent tracking URL tampering

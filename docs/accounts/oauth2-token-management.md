@@ -4,11 +4,6 @@ sidebar_position: 8
 description: Using EmailEngine to manage OAuth2 tokens and access provider APIs
 ---
 
-<!--
-Sources merged:
-- blog/2022-08-02-using-emailengine-to-manage-oauth2-tokens.md (primary - detailed examples)
--->
-
 # OAuth2 Token Management
 
 EmailEngine automatically manages OAuth2 tokens for registered accounts, refreshing access tokens when they expire. You can also retrieve these tokens to use with other Google or Microsoft APIs directly.

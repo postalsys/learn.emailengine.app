@@ -1,12 +1,12 @@
 ---
 title: CRM Integration
 sidebar_position: 9
-description: Complete guide for integrating email functionality with CRM systems using EmailEngine
+description: Connecting EmailEngine to a CRM: syncing mail into contact records, tracking activity, and sending from the user mailbox
 ---
 
 # CRM Integration Guide
 
-Learn how to integrate EmailEngine with CRM systems to provide seamless email synchronization, contact activity tracking, and direct email sending capabilities.
+How to connect EmailEngine to a CRM: syncing mail into contact records, tracking activity, and sending from the user's own mailbox.
 
 
 ## Overview
