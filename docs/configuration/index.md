@@ -407,7 +407,7 @@ Job queue retention and cleanup configuration.
 
 OAuth2 provider credentials and configuration.
 
-[View details →](./oauth2-configuration.md)
+[View details →](/docs/accounts/oauth2-setup)
 
 ### TLS Configuration
 

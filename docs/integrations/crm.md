@@ -1,7 +1,7 @@
 ---
 title: CRM Integration
 sidebar_position: 9
-description: Connecting EmailEngine to a CRM: syncing mail into contact records, tracking activity, and sending from the user mailbox
+description: "Connecting EmailEngine to a CRM: syncing mail into contact records, tracking activity, and sending from the user mailbox"
 ---
 
 # CRM Integration Guide

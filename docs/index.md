@@ -269,3 +269,11 @@ Yes. EmailEngine includes an [MCP server](/docs/mcp), so any Model Context Proto
 ### Where is my email data stored?
 
 EmailEngine stores only metadata (message IDs, flags, folder structure) in Redis. Email content is fetched on-demand from the original mailbox and is not copied to third-party servers. Your data stays on your infrastructure.
+
+## See Also
+
+- [Introduction](/docs/getting-started/introduction) - What EmailEngine is, and what it is not
+- [Quick Start](/docs/getting-started/quick-start) - Install, connect an account, send a message
+- [API Reference](/docs/api-reference) - Authentication, conventions, and error handling
+- [Webhooks overview](/docs/webhooks/overview) - Receiving events instead of polling
+- [Licensing and privacy](/docs/licensing) - Trial terms, and what leaves your server
