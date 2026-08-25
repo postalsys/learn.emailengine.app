@@ -908,3 +908,9 @@ Some IMAP servers have limitations:
 
 Always test searches with your specific provider.
 
+## See Also
+
+- [Message operations](/docs/receiving/message-operations) - Acting on the messages a search returns
+- [Searching threads](/docs/sending/threading/searching-threads) - Retrieving a whole conversation
+- [Message IDs](/docs/advanced/ids-explained) - The identifiers a search result carries
+- [Search API](/docs/api/post-v-1-account-account-search) - The endpoint reference

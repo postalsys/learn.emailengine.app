@@ -154,6 +154,7 @@ curl -X POST "https://emailengine.example.com/v1/settings" \
   -d '{
     "webhooks": "https://your-app.com/webhooks",
     "webhooksEnabled": true,
+    "webhookEvents": ["*"],
     "notifyWebSafeHtml": true
   }'
 ```
@@ -230,8 +231,7 @@ async function downloadAttachment(accountId, attachmentId) {
     }
   );
 
-  const buffer = await response.buffer();
-  return buffer;
+  return Buffer.from(await response.arrayBuffer());
 }
 ```
 
@@ -250,3 +250,9 @@ This section covers all aspects of receiving and processing emails:
 9. **[Continuous Processing](/docs/receiving/continuous-processing)** - Building real-time email processing pipelines
 10. **[Exporting Messages](/docs/receiving/exporting)** - Bulk export with concurrency tuning
 
+## See Also
+
+- [Webhooks overview](/docs/webhooks/overview) - Delivery, retries, and the full event list
+- [messageNew](/docs/webhooks/messagenew) - The event most receiving pipelines are built on
+- [IMAP indexers](/docs/accounts/imap-indexers) - Which changes get detected at all
+- [Messages API](/docs/api-reference/messages-api) - Reading and modifying what arrives

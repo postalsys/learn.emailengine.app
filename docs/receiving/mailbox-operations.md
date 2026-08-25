@@ -597,3 +597,10 @@ async function getSpecialUseFolders(accountId) {
 //   archive: "[Gmail]/All Mail"
 // }
 ```
+
+## See Also
+
+- [Message operations](/docs/receiving/message-operations) - Working with what is inside a folder
+- [Custom special folder paths](/docs/accounts/imap-smtp#custom-special-folder-paths) - Overriding a folder EmailEngine guessed wrong
+- [mailboxNew and mailboxDeleted](/docs/webhooks/mailboxnew) - Being told when the folder tree changes
+- [Mailbox API](/docs/api/get-v-1-account-account-mailboxes) - The endpoint reference

@@ -571,3 +571,9 @@ await db.messages.createIndex({ status: 1, deletedAt: 1 });
 await db.deletionLog.createIndex({ accountId: 1, deletedAt: -1 });
 ```
 
+## See Also
+
+- [IMAP indexers](/docs/accounts/imap-indexers) - The fast indexer does not detect deletions at all
+- [messageDeleted](/docs/webhooks/messagedeleted) - The event and its payload
+- [Message operations](/docs/receiving/message-operations) - Deleting a message yourself
+- [mailboxReset](/docs/webhooks/mailboxreset) - When the server invalidates the index rather than the message

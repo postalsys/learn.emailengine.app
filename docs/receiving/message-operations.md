@@ -858,3 +858,10 @@ async function syncMessageFlags(accountId, folderPath, db) {
 }
 ```
 
+## See Also
+
+- [Searching messages](/docs/receiving/searching) - Finding the messages to operate on
+- [Attachments](/docs/receiving/attachments) - Downloading what a message carries
+- [Web-safe HTML](/docs/receiving/web-safe-html) - Rendering a body in your own UI
+- [Message IDs](/docs/advanced/ids-explained) - Which identifier survives a move, and which does not
+- [Messages API](/docs/api-reference/messages-api) - The endpoint reference

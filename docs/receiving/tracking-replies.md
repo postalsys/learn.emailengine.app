@@ -543,3 +543,9 @@ async function handleReply(original, reply) {
 }
 ```
 
+## See Also
+
+- [Threading](/docs/sending/threading) - The headers that make a reply a reply
+- [messageNew](/docs/webhooks/messagenew) - The event a reply arrives on
+- [Replies and forwards](/docs/sending/replies-forwards) - Answering from your own application
+- [Searching messages](/docs/receiving/searching) - Finding the original a reply refers to

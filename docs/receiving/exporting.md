@@ -37,7 +37,7 @@ The export feature:
 Create a new export job using the [Create Export API endpoint](/docs/api/post-v-1-account-account-export):
 
 ```bash
-curl -X POST "https://emailengine.example.com/v1/account/{account}/export" \
+curl -X POST "https://emailengine.example.com/v1/account/user123/export" \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -76,7 +76,7 @@ curl -X POST "https://emailengine.example.com/v1/account/{account}/export" \
 Check export status using the [Get Export Status API endpoint](/docs/api/get-v-1-account-account-export-exportid):
 
 ```bash
-curl "https://emailengine.example.com/v1/account/{account}/export/{exportId}" \
+curl "https://emailengine.example.com/v1/account/user123/export/exp_abc123def456abc123def456" \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
 
@@ -131,7 +131,7 @@ The response also includes a top-level `truncated` field (boolean) that indicate
 Download a completed export using the [Download Export API endpoint](/docs/api/get-v-1-account-account-export-exportid-download):
 
 ```bash
-curl "https://emailengine.example.com/v1/account/{account}/export/{exportId}/download" \
+curl "https://emailengine.example.com/v1/account/user123/export/exp_abc123def456abc123def456/download" \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -o export.ndjson.gz
 ```
@@ -319,7 +319,7 @@ Example webhook payload for `exportCompleted`:
 Get all exports for an account using the [List Exports API endpoint](/docs/api/get-v-1-account-account-exports):
 
 ```bash
-curl "https://emailengine.example.com/v1/account/{account}/exports" \
+curl "https://emailengine.example.com/v1/account/user123/exports" \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
 
@@ -346,7 +346,7 @@ Response:
 Cancel a pending export or delete a completed export file using the [Delete Export API endpoint](/docs/api/delete-v-1-account-account-export-exportid):
 
 ```bash
-curl -X DELETE "https://emailengine.example.com/v1/account/{account}/export/{exportId}" \
+curl -X DELETE "https://emailengine.example.com/v1/account/user123/export/exp_abc123def456abc123def456" \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
 
@@ -397,3 +397,10 @@ rl.on('line', (line) => {
   console.log(`Processing: ${message.subject}`);
 });
 ```
+
+## See Also
+
+- [exportCompleted and exportFailed](/docs/webhooks/exportcompleted) - Knowing when an export finished
+- [Continuous processing](/docs/receiving/continuous-processing) - Keeping up with new mail once history is exported
+- [Performance tuning](/docs/advanced/performance-tuning) - What a large export costs the instance
+- [Export API](/docs/api/post-v-1-account-account-export) - The endpoint reference

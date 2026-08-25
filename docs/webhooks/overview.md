@@ -50,7 +50,7 @@ Set your webhook endpoint URL in EmailEngine:
 1. Navigate to **Configuration → Webhooks**
 2. Check **Enable webhooks**
 3. Enter your **Webhook URL**: `https://your-app.com/webhooks/emailengine`
-4. Select which events to receive
+4. Select which events to receive. Selecting none means no webhooks are sent
 5. Click **Update Settings**
 
 ![Webhooks configuration page](/img/screenshots/05-webhooks-config.png)
@@ -67,12 +67,19 @@ curl -X POST "https://emailengine.example.com/v1/settings" \
   -d '{
     "webhooks": "https://your-app.com/webhooks/emailengine",
     "webhooksEnabled": true,
+    "webhookEvents": ["*"],
     "notifyHeaders": ["List-ID", "X-Priority"],
     "notifyTextSize": 65536,
     "notifyWebSafeHtml": true,
     "notifyCalendarEvents": true
   }'
 ```
+
+:::warning `webhookEvents` is an allowlist with no default
+Nothing is delivered unless the event is named in `webhookEvents`, and an unset `webhookEvents` names nothing. `["*"]` allows every event; a list of names allows exactly those. This is the first thing to check when a correctly configured URL receives nothing.
+
+The allowlist applies to the default webhook target above. [Webhook routes](/docs/webhooks/webhook-routing) carry their own filters and are not affected by it.
+:::
 
 :::tip Advanced: Webhook Routes
 For more advanced scenarios, you can configure multiple webhook routes to send different events to different endpoints based on account, event type, or custom filtering logic. Webhook routes also support pre-processing functions to filter or transform payloads before delivery.

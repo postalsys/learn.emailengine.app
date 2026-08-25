@@ -669,11 +669,11 @@ journalctl -u emailengine | grep -i "sync\|idle"
 
 ```bash
 # Permanently delete a single message (expunge)
-curl -X DELETE "http://localhost:3000/v1/account/{account}/message/{message}?force=true" \
+curl -X DELETE "http://localhost:3000/v1/account/user123/message/AAAAAQAACnA?force=true" \
   -H "Authorization: Bearer TOKEN"
 
 # Check Trash folder
-curl http://localhost:3000/v1/account/{account}/mailboxes \
+curl http://localhost:3000/v1/account/user123/mailboxes \
   -H "Authorization: Bearer TOKEN" | jq '.[] | select(.specialUse=="\\Trash")'
 ```
 

@@ -172,7 +172,7 @@ async function downloadAttachment(accountId, messageId, attachmentId, outputPath
     throw new Error(`Download failed: ${response.statusText}`);
   }
 
-  const buffer = await response.buffer();
+  const buffer = Buffer.from(await response.arrayBuffer());
   fs.writeFileSync(outputPath, buffer);
 
   return {
@@ -308,7 +308,7 @@ async function downloadToMemory(accountId, messageId, attachmentId) {
     throw new Error(`Download failed: ${response.statusText}`);
   }
 
-  const buffer = await response.buffer();
+  const buffer = Buffer.from(await response.arrayBuffer());
   const contentType = response.headers.get('content-type');
 
   return {
@@ -720,3 +720,10 @@ function getFileExtension(contentType) {
   return mimeMap[contentType] || 'bin';
 }
 ```
+
+## See Also
+
+- [Message operations](/docs/receiving/message-operations) - Where the attachment list comes from
+- [Web-safe HTML](/docs/receiving/web-safe-html) - Inline images, and when to leave them out
+- [Basic sending](/docs/sending/basic-sending) - Attaching files to an outgoing message
+- [Attachment API](/docs/api/get-v-1-account-account-attachment-attachment) - The endpoint reference
