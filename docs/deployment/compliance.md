@@ -242,8 +242,19 @@ For compliance audits, EmailEngine provides:
 - **API access logs** - Track all API operations
 - **Webhook delivery logs** - Record of all notifications sent
 - **Account activity** - Connection states and sync history
+- **Dependency inventory** - An SPDX software bill of materials for the running build
 
 Configure log retention and forwarding in [Logging](/docs/advanced/logging).
+
+The bill of materials names every package the instance runs and the version of each, which is what a vulnerability review asks for. It is served at `/sbom.json`, outside the versioned API and outside the OpenAPI spec:
+
+```bash
+curl "https://emailengine.example.com/sbom.json" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -o sbom.json
+```
+
+The inventory is instance-wide rather than tied to an account, so the request needs an [access token](/docs/api-reference/access-tokens) with the full `api` scope. Account-bound and permission-restricted tokens are refused.
 
 ## See Also
 

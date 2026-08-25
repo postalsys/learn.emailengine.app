@@ -62,7 +62,7 @@ curl -XPOST "https://emailengine.example.com/v1/account/example/submit" \
 **What EmailEngine does automatically:**
 
 - Sets `from` to your account email
-- Sets `to` to the original sender
+- Sets `to` to the referenced message's `Reply-To` address, or to its sender when it names none, unless you supply `to` yourself
 - Adds `Re:` prefix to subject (if not already present)
 - Sets `In-Reply-To` header to original Message-ID
 - Builds `References` header with the thread history
@@ -88,9 +88,12 @@ curl -XPOST "https://emailengine.example.com/v1/account/example/submit" \
 
 EmailEngine automatically:
 
-- Includes all original recipients in `to` and `cc` fields
-- Excludes your own email from recipients
-- Preserves the recipient structure
+- Puts the referenced message's `To` recipients in `to`, next to the address a plain reply would go to
+- Puts its `Cc` recipients in `cc`
+- Drops your own address, and any address that would otherwise appear twice
+- Leaves its `Bcc` out. Those recipients are invisible to everyone else on the thread, and the header only survived filing. A `bcc` you set yourself is still sent
+
+Recipients you supply are added to the derived ones rather than replacing them.
 
 ### Reference Options for Replies
 

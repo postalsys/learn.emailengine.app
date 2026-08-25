@@ -339,14 +339,15 @@ When updating fields within nested objects (like `imap`, `smtp`, or `oauth2`), y
 
 | State | Description | Actions Available |
 |-------|-------------|-------------------|
-| `init` | Being initialized | Wait |
-| `syncing` | Performing initial mailbox sync | Wait for sync to complete |
-| `connecting` | Establishing connection | Wait |
-| `connected` | Active and syncing | All operations available |
-| `authenticationError` | Invalid credentials | Update credentials |
-| `connectError` | Cannot reach server | Check connectivity, retry |
-| `unset` | OAuth2 authentication not complete | Complete OAuth2 flow |
-| `disconnected` | Manually disconnected or paused | Re-enable account |
+| `init` | The account was just registered and has not connected yet | Wait |
+| `connecting` | Connecting to the mail server or authorizing with the provider | Wait |
+| `syncing` | Performing the initial or a periodic mailbox sync | Wait for the sync to complete |
+| `connected` | Connected and watching for changes | All operations available |
+| `disconnected` | The connection dropped and EmailEngine is retrying with backoff | Wait for the retry |
+| `authenticationError` | The credentials were rejected | Update credentials or re-authorize |
+| `connectError` | The server could not be reached or the TLS handshake failed | Check connectivity, retry |
+| `paused` | Syncing was paused through the API | Resume syncing |
+| `unset` | No usable IMAP or OAuth2 configuration, or syncing is [disabled](/docs/accounts/managing-accounts#disabling-and-enabling-accounts) for the account | Finish the setup, or re-enable the account |
 
 ### Reconnecting Accounts
 

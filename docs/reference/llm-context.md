@@ -293,9 +293,9 @@ Replies and forwards go through the `reference` block on `send_message` and `cre
 | `accountAdded` | Account registered | `account` |
 | `accountDeleted` | Account removed | `account` |
 | `accountInitialized` | Account ready | `account`, `state` |
-| `authenticationError` | Auth failed | `account`, `data.error` |
+| `authenticationError` | Auth failed | `account`, `data.response` |
 | `authenticationSuccess` | Auth succeeded | `account` |
-| `connectError` | Connection failed | `account`, `data.error` |
+| `connectError` | Connection failed | `account`, `data.response` |
 
 ### Mailbox Events
 
@@ -572,13 +572,14 @@ curl -X POST "https://emailengine.example.com/v1/authentication/form" \
 | State | Description | Next Steps |
 |-------|-------------|------------|
 | `init` | Being initialized | Wait |
-| `syncing` | Initial sync in progress | Wait |
 | `connecting` | Establishing connection | Wait |
+| `syncing` | Initial or periodic sync in progress | Wait |
 | `connected` | Active and operational | Ready for API calls |
 | `disconnected` | Connection lost | Will auto-reconnect |
-| `authenticationError` | Invalid credentials | Update credentials |
+| `authenticationError` | Credentials rejected | Update credentials or re-authorize |
 | `connectError` | Network/server error | Check connectivity |
-| `unset` | OAuth2 not completed | Complete OAuth2 flow |
+| `paused` | Syncing paused through the API | Resume syncing |
+| `unset` | No usable IMAP or OAuth2 configuration, or `imap.disabled` is set | Finish setup, or clear `imap.disabled` |
 
 ## Error Handling
 
@@ -591,7 +592,6 @@ curl -X POST "https://emailengine.example.com/v1/authentication/form" \
 | `401` | Unauthorized | Verify API token |
 | `403` | Forbidden | Check token permissions |
 | `404` | Not Found | Verify account/message ID |
-| `409` | Conflict | Duplicate account ID |
 | `429` | Rate Limited | Retry with backoff |
 | `500` | Server Error | Retry after delay |
 | `503` | Unavailable | Service restarting, retry |
@@ -600,11 +600,14 @@ curl -X POST "https://emailengine.example.com/v1/authentication/form" \
 
 ```json
 {
-  "error": "Human-readable message",
-  "code": "ErrorCode",
-  "statusCode": 400
+  "statusCode": 400,
+  "error": "Bad Request",
+  "message": "Human-readable message",
+  "code": "ErrorCode"
 }
 ```
+
+`error` carries the HTTP status phrase, not the explanation. Read `message`.
 
 ### Common Error Codes
 

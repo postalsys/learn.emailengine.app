@@ -154,7 +154,7 @@ Email protocol timeouts and limits.
 | `EENGINE_IMAP_SOCKET_TIMEOUT` | ms | none | Custom socket timeout for IMAP connections | `60000` |
 | `EENGINE_CONNECTION_SETUP_DELAY` | ms | `0` | Delay before setting up account connections | `5000` |
 | `EENGINE_CHUNK_SIZE` | bytes | `1000000` | Download chunk size for streaming attachments (1 MB) | `5000000` |
-| `EENGINE_MAX_IMAP_AUTH_FAILURE_TIME` | ms | `259200000` | Max time to wait before disabling IMAP on auth failures (3 days) | `86400000` |
+| `EENGINE_MAX_IMAP_AUTH_FAILURE_TIME` | ms | `259200000` | Stop retrying an account after this long of continuous authentication failures (3 days) | `86400000` |
 
 **Examples:**
 

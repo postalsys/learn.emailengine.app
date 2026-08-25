@@ -624,6 +624,10 @@ No action needed from you. If issues persist, check logs for specific errors.
    - App deleted in Google Cloud Console / Azure AD
    - **Solution:** Recreate app or update settings
 
+:::info Accounts stop retrying after three days
+Whatever the cause, an account that keeps failing authentication is [parked](/docs/reference/configuration-options#max-imap-auth-failure-time) once the failures have run for `EENGINE_MAX_IMAP_AUTH_FAILURE_TIME`, so a dead grant is not retried against the provider forever. Check `imap.disabled` on the account before assuming a re-authorization has not been done yet.
+:::
+
 ### "redirect_uri_mismatch" Error
 
 **Google Error Message:** "The redirect URI in the request does not match..."

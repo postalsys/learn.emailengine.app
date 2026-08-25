@@ -16,14 +16,15 @@ Every account in EmailEngine has a state that indicates its current status:
 
 | State | Description | Can Send/Receive | Actions |
 |-------|-------------|------------------|---------|
-| `init` | Being initialized | No | Wait |
-| `connecting` | Establishing connection | Limited | Wait for connection |
-| `syncing` | Performing mailbox sync | Yes | Operations allowed |
-| `connected` | Active and operational | Yes | All operations available |
-| `authenticationError` | Invalid or expired credentials | No | Update credentials or reconnect |
-| `connectError` | Cannot reach mail server | No | Check network, server status |
-| `unset` | OAuth2 authentication not complete | No | Complete OAuth2 flow |
-| `disconnected` | Manually disconnected or paused | No | Re-enable account |
+| `init` | The account was just registered and has not connected yet | No | Wait |
+| `connecting` | Connecting to the mail server or authorizing with the provider | Limited | Wait for connection |
+| `syncing` | Performing the initial or a periodic mailbox sync | Yes | Operations allowed |
+| `connected` | Connected and watching for changes | Yes | All operations available |
+| `disconnected` | The connection dropped and EmailEngine is retrying with backoff | No | Wait for the retry |
+| `authenticationError` | The credentials were rejected | No | Update credentials or re-authorize |
+| `connectError` | The server could not be reached or the TLS handshake failed | No | Check network, server status |
+| `paused` | Syncing was paused through the API | No | Resume syncing |
+| `unset` | No usable IMAP or OAuth2 configuration, or syncing is [disabled](#disabling-and-enabling-accounts) for the account | No | Finish the setup, or re-enable the account |
 
 ### State Transitions
 
@@ -482,14 +483,17 @@ curl -X PUT https://emailengine.example.com/v1/account/user123/reconnect \
 
 ### Disable Account
 
-Temporarily stop syncing without deleting:
+Temporarily stop syncing without deleting the account. The switch is `imap.disabled`, and `partial: true` keeps the rest of the IMAP configuration:
 
 ```bash
 curl -X PUT https://emailengine.example.com/v1/account/user123 \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "disabled": true
+    "imap": {
+      "partial": true,
+      "disabled": true
+    }
   }'
 ```
 
@@ -505,6 +509,12 @@ curl -X PUT https://emailengine.example.com/v1/account/user123 \
 - User subscription expired
 - Testing without deleting
 
+:::warning Always set `partial` when updating `imap` or `smtp`
+Without it, the object you send **replaces** the stored one. A body of `{"imap": {"disabled": true}}` therefore discards the host, port, and credentials, and the account stops working.
+:::
+
+The same flag applies to accounts that connect through the Gmail API or the Microsoft Graph API, even though they have no other IMAP settings. In the admin interface it is the "Disable IMAP" checkbox on the account edit page, which is shown for accounts that connect over IMAP.
+
 ### Enable Account
 
 Re-enable a disabled account:
@@ -514,11 +524,19 @@ curl -X PUT https://emailengine.example.com/v1/account/user123 \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "disabled": false
+    "imap": {
+      "partial": true,
+      "disabled": false
+    }
   }'
 ```
 
-Account will reconnect and resume syncing.
+The account keeps its credentials and folder state throughout, so resuming does not re-download the mailbox. Request a [reconnect](#reconnecting-accounts) if it does not pick up on its own.
+
+:::info EmailEngine sets this flag too
+An account that fails authentication for [three days running](/docs/reference/configuration-options#max-imap-auth-failure-time) is parked with the same flag, so a disabled account is not always one somebody disabled. Working credentials have to be in place before re-enabling it, or the account is parked again once the window passes.
+:::
+
 
 ## Deleting Accounts
 
@@ -754,23 +772,6 @@ done
 ```
 
 ## Common Account Management Patterns
-
-### Pausing an Account
-
-To stop syncing an account without deleting it, disable its IMAP connection. Send `partial: true` so the rest of the IMAP configuration survives the update:
-
-```bash
-curl -X PUT "https://emailengine.example.com/v1/account/user123" \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{ "imap": { "partial": true, "disabled": true } }'
-```
-
-Send `"disabled": false` the same way to resume. The account keeps its credentials and folder state throughout, so resuming does not re-download the mailbox.
-
-:::warning Always set `partial` when updating `imap` or `smtp`
-Without it, the object you send **replaces** the stored one. A body of `{"imap": {"disabled": true}}` therefore discards the host, port, and credentials, and the account stops working.
-:::
 
 ### Automatic Reconnection
 

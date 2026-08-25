@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "name": "EmailEngine",
   "description": "Self-hosted email API gateway providing REST API access to email accounts via IMAP, SMTP, Gmail API, and Microsoft Graph API",
-  "version": "2.79.1",
+  "version": "2.79.3",
   "documentationUrl": "https://learn.emailengine.app/",
   "openApiSpec": "https://go.emailengine.app/swagger.json",
   "authentication": {
@@ -304,7 +304,8 @@
     {"state": "disconnected", "description": "Connection lost (will auto-reconnect)", "operational": false},
     {"state": "authenticationError", "description": "Invalid credentials", "operational": false},
     {"state": "connectError", "description": "Network/server error", "operational": false},
-    {"state": "unset", "description": "OAuth2 flow not completed", "operational": false}
+    {"state": "paused", "description": "Syncing paused through the API", "operational": false},
+    {"state": "unset", "description": "No usable IMAP or OAuth2 configuration, or syncing disabled for the account (imap.disabled)", "operational": false}
   ],
   "errorCodes": [
     {"code": "AccountNotFound", "status": 404, "retryable": false, "description": "Account doesn't exist"},

@@ -859,17 +859,33 @@ EENGINE_IMAP_SOCKET_TIMEOUT=300000
 **Environment:** `EENGINE_MAX_IMAP_AUTH_FAILURE_TIME`
 **Default:** `3d` (3 days)
 
-How long an account may keep failing authentication before EmailEngine stops retrying it. Once the first authentication error is older than this window, EmailEngine sets `imap.disabled` on the account, records the reason in the account's last error state, and closes the connection. This keeps a mailbox with a changed or revoked password from hammering the mail server indefinitely.
+How long an account may keep failing authentication before EmailEngine stops retrying it. Once the first authentication error is older than this window, EmailEngine sets `imap.disabled` on the account, records the reason in the account's last error state, closes the connection, and sends an [`authenticationError`](/docs/webhooks/authenticationerror) webhook. This keeps a mailbox with a changed password, or an OAuth2 grant the user has revoked, from hammering the mail server or the provider's token endpoint indefinitely.
 
 ```bash
 EENGINE_MAX_IMAP_AUTH_FAILURE_TIME=1d
 ```
 
-:::warning The account stays disabled until you re-enable it
-Nothing re-enables the account automatically, not even fixing the password. Clear the "Disable IMAP" checkbox on the account page, or send `imap.disabled: false` with [Update Account](/docs/api/put-v-1-account-account). Watch for [`authenticationError`](/docs/webhooks/authenticationerror) webhooks if you need to react before an account is parked.
+The threshold covers every account type. Gmail API and Outlook API accounts have no IMAP configuration of their own, so EmailEngine writes the flag for them, and both clients check it before attempting a token refresh. Before 2.79.3 the check was gated on stored IMAP settings, which OAuth2 accounts do not have, so their revoked grants were retried indefinitely. Upgrading an instance that has collected such accounts parks every one already past the threshold on its next failed refresh, so expect a burst of `authenticationError` webhooks. Raise this value before upgrading to stage that.
+
+:::warning A parked account stays parked
+Nothing lifts the flag on its own, because a parked account is never retried. `imap.disabled` in the [Get Account](/docs/api/get-v-1-account-account) response is what tells a parked account apart from one that is merely failing, including for OAuth2 accounts that carry no other IMAP settings.
 :::
 
-This applies to accounts that authenticate with a password. Accounts whose connection settings come from an OAuth2 provider, including the Gmail and Outlook API account types, are not parked this way.
+For a password account, saving its IMAP settings again clears the flag: the `imap` object you send replaces the stored one, whether it comes from the account edit page in the admin interface or from [Update Account](/docs/api/put-v-1-account-account). Otherwise clear the flag on its own and ask for a reconnect:
+
+```bash
+curl -X PUT "https://emailengine.example.com/v1/account/user123" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"imap": {"partial": true, "disabled": false}}'
+
+curl -X PUT "https://emailengine.example.com/v1/account/user123/reconnect" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"reconnect": true}'
+```
+
+`partial: true` is what keeps this from being destructive - see [Disabling and enabling accounts](/docs/accounts/managing-accounts#disabling-and-enabling-accounts). Fix the credentials first, or the account is parked again once the window passes.
 
 ### IMAP ID Extension
 

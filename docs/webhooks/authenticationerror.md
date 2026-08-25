@@ -17,7 +17,7 @@ The `authenticationError` event fires when:
 - OAuth2 API request returns an authentication error (Gmail API, Microsoft Graph API)
 - The email server rejects the login attempt
 
-EmailEngine uses intelligent error tracking to avoid spamming your webhook endpoint. The event is only sent on the **first occurrence** of an authentication error for an account. Subsequent identical errors are suppressed until the account successfully authenticates again or the error state changes.
+EmailEngine uses intelligent error tracking to avoid spamming your webhook endpoint. The event is only sent on the **first occurrence** of an authentication error for an account. Subsequent identical errors are suppressed until the account successfully authenticates again or the error state changes. The exception is the failure that [parks the account](#parked-after-repeated-failures), which is always reported.
 
 ## Common Use Cases
 
@@ -220,31 +220,46 @@ async function handleAuthenticationError(event) {
 
 ## Error Recovery
 
-### Automatic IMAP Disabling
+### Parked After Repeated Failures
 
-EmailEngine has built-in protection against repeated authentication failures. If an account continues to fail authentication over an extended period (default: 3 days), EmailEngine will automatically disable IMAP for that account to prevent:
+An account that keeps failing authentication is eventually stopped rather than retried forever. Once the first error in the current run is older than `EENGINE_MAX_IMAP_AUTH_FAILURE_TIME` (3 days by default), EmailEngine sets `imap.disabled` on the account, records the reason as its last error, and closes the connection. That protects the mail server from a pointless login loop, and the provider's token endpoint from a refresh loop for a grant that has been revoked.
 
-- Continued failed login attempts that may trigger account lockouts
-- Unnecessary load on the mail server
-- Repeated webhook spam
+This covers every account type, including Gmail API and Outlook API accounts, which carry no other IMAP settings. Before EmailEngine 2.79.3 it only reached accounts with stored IMAP settings.
 
-When this happens, the account's IMAP configuration will be marked as `disabled: true`. To re-enable:
+EmailEngine sends a webhook for it even though the error itself has not changed, so a second `authenticationError` arriving for an account that has been failing for days is the account going offline. The payload is the same error as before, with nothing in it to mark the difference. The account is what changed: [Get Account](/docs/api/get-v-1-account-account) now returns `imap.disabled: true`, and its `lastError.description` reads "IMAP was disabled for the account due to exceeding the authentication error threshold".
 
-1. Fix the underlying credential issue
-2. Update the account credentials via API
-3. The account will attempt to reconnect automatically
+```javascript
+async function handleAuthenticationError(event) {
+  const { account, data } = event;
+
+  const accountData = await ee(`/v1/account/${account}`);
+  if (accountData.imap?.disabled) {
+    // Parked. Nothing reconnects it until someone re-authenticates.
+    await escalate(account, data.response);
+    return;
+  }
+
+  await notifyUser(account, data);
+}
+```
+
+A parked account reports state `unset`, the same as an account whose setup was never finished, which is the other reason to look at `imap.disabled` rather than at the state.
 
 ### Re-authenticating an Account
 
-If you need to update credentials after an authentication error:
+Supply working credentials, then clear the flag if it was set.
+
+For a password account, saving the IMAP settings again does both, because the `imap` object you send replaces the stored one:
 
 ```bash
-# Update IMAP credentials
 curl -X PUT "https://emailengine.example.com/v1/account/user123" \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "imap": {
+      "host": "imap.example.com",
+      "port": 993,
+      "secure": true,
       "auth": {
         "user": "user@example.com",
         "pass": "new-password"
@@ -253,7 +268,16 @@ curl -X PUT "https://emailengine.example.com/v1/account/user123" \
   }'
 ```
 
-For OAuth2 accounts, the user typically needs to go through the authentication flow again to obtain new tokens.
+For an OAuth2 account, the user has to authorize again, which is what the [hosted authentication form](/docs/accounts/hosted-authentication) is for. Clear the flag separately if the account was parked:
+
+```bash
+curl -X PUT "https://emailengine.example.com/v1/account/user123" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"imap": {"partial": true, "disabled": false}}'
+```
+
+See [Disabling and enabling accounts](/docs/accounts/managing-accounts#disabling-and-enabling-accounts) for why `partial` matters here.
 
 ## Webhook Deduplication
 
@@ -261,16 +285,15 @@ EmailEngine tracks error states to prevent webhook flooding. Key behaviors:
 
 1. **First occurrence** - Webhook is sent immediately when authentication first fails
 2. **Repeated failures** - Subsequent identical errors do NOT trigger new webhooks
-3. **State change** - A new webhook is sent only when:
-   - The account successfully authenticates (triggers `authenticationSuccess`)
-   - The error message or code changes
-   - The account is reconnected after being disabled
+3. **A different error** - A changed error message or server response code counts as a new failure and is reported
+4. **Success** - A successful authentication triggers [`authenticationSuccess`](/docs/webhooks/authenticationsuccess) and clears the stored error, so the next failure is a first occurrence again
+5. **Parking** - The failure that [parks the account](#parked-after-repeated-failures) is reported even though the error is unchanged
 
-This means you can rely on receiving exactly one `authenticationError` webhook per failure episode, making it safe to trigger alerts without rate limiting on your end.
+So a run of failures produces one webhook, and a second one only if the account is still failing three days later. That makes it safe to alert on without rate limiting on your end.
 
 ## Related Events
 
-- [authenticationSuccess](/docs/webhooks/authenticationsuccess) - Triggered when authentication succeeds (if documented)
+- [authenticationSuccess](/docs/webhooks/authenticationsuccess) - Triggered when authentication succeeds
 - [connectError](/docs/webhooks/connecterror) - Triggered when connection fails (network-level, not authentication)
 - [accountAdded](/docs/webhooks/accountadded) - Triggered when a new account is registered
 - [accountDeleted](/docs/webhooks/accountdeleted) - Triggered when an account is removed
