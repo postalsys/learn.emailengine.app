@@ -147,8 +147,8 @@ const config: Config = {
               sidebarCollapsible: true,
             },
             hideSendButton: true, // Disable "Send API Request" button
-            version: "2.57.0",
-            label: "v2.57.0",
+            version: "2.79.3",
+            label: "v2.79.3",
             baseUrl: "/docs/api",
             versions: {},
           } satisfies any,
@@ -240,6 +240,10 @@ const config: Config = {
           {
             from: '/docs/configuration/feature-flags',
             to: '/docs/configuration/environment-variables',
+          },
+          {
+            from: '/docs/configuration/oauth2-configuration',
+            to: '/docs/accounts/oauth2-setup',
           },
         ],
       },

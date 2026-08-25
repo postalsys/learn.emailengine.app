@@ -437,14 +437,14 @@ If you need to support more accounts than a single instance can handle, you can 
 ```bash
 # Instance A - Accounts 0-999
 EENGINE_REDIS_PREFIX=ee-shard-a
-REDIS_URL=redis://redis-a:6379
+EENGINE_REDIS=redis://redis-a:6379
 EENGINE_PORT=3000
 # Service URL must be unique per instance
 EENGINE_SETTINGS='{"serviceUrl":"https://ee-a.example.com"}'
 
 # Instance B - Accounts 1000-1999
 EENGINE_REDIS_PREFIX=ee-shard-b
-REDIS_URL=redis://redis-b:6379
+EENGINE_REDIS=redis://redis-b:6379
 EENGINE_PORT=3001
 EENGINE_SETTINGS='{"serviceUrl":"https://ee-b.example.com"}'
 ```

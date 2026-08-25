@@ -75,15 +75,16 @@ emailengine
 **Docker Compose:**
 
 ```yaml
-version: "3.8"
 services:
   emailengine:
     image: postalsys/emailengine:v2
     environment:
       - EENGINE_HOST=0.0.0.0
       - EENGINE_PORT=3000
-      - REDIS_URL=redis://redis:6379
+      - EENGINE_REDIS=redis://redis:6379
 ```
+
+`REDIS_URL` is accepted as a fallback when `EENGINE_REDIS` is unset, which is what makes EmailEngine work unchanged on platforms that inject that variable.
 
 :::tip Interchangeable Configuration
 Environment variables and CLI arguments can be used together. Environment variables take precedence over CLI arguments. See the [mapping table](/docs/configuration/environment-variables#environment-variable-to-cli-mapping) for equivalents.
@@ -210,7 +211,7 @@ emailengine --config=config.toml --api.port=4000
 environment:
   - EENGINE_HOST=0.0.0.0
   - EENGINE_PORT=3000
-  - REDIS_URL=redis://redis:6379
+  - EENGINE_REDIS=redis://redis:6379
   - EENGINE_PREPARED_PASSWORD=${ADMIN_PASSWORD_HASH}
   - EENGINE_PREPARED_LICENSE=${LICENSE_KEY}
 ```
@@ -235,7 +236,7 @@ emailengine password -p "your-password" --hash
 # .env.example (commit this)
 EENGINE_HOST=0.0.0.0
 EENGINE_PORT=3000
-REDIS_URL=redis://localhost:6379
+EENGINE_REDIS=redis://localhost:6379
 # Generate hash: emailengine password -p "your-password" --hash
 EENGINE_PREPARED_PASSWORD=JHBia2RmMi1zaGE1MTIk...
 ```
@@ -256,7 +257,7 @@ emailengine \
 ```bash
 # .env (don't commit)
 EENGINE_PORT=3001
-REDIS_URL=redis://localhost:6379/8
+EENGINE_REDIS=redis://localhost:6379/8
 EENGINE_LOG_LEVEL=trace
 ```
 
@@ -271,7 +272,7 @@ services:
     env_file:
       - .env.production
     environment:
-      - REDIS_URL=redis://redis:6379
+      - EENGINE_REDIS=redis://redis:6379
 ```
 
 **Multi-environment setup:**
@@ -295,7 +296,7 @@ metadata:
 data:
   EENGINE_HOST: "0.0.0.0"
   EENGINE_PORT: "3000"
-  REDIS_URL: "redis://redis-service:6379"
+  EENGINE_REDIS: "redis://redis-service:6379"
 
 ---
 # Secret
@@ -305,7 +306,7 @@ metadata:
   name: emailengine-secrets
 type: Opaque
 stringData:
-  EENGINE_PREPARED_PASSWORD: "your-admin-password"
+  EENGINE_PREPARED_PASSWORD: "JHBia2RmMi1zaGE1MTIk..."
   EENGINE_PREPARED_LICENSE: "your-license-key"
 
 ---
@@ -335,14 +336,14 @@ spec:
 
 | Setting     | Environment Variable | Description              |
 | ----------- | -------------------- | ------------------------ |
-| Redis URL   | `REDIS_URL`          | Redis connection string  |
+| Redis URL   | `EENGINE_REDIS`      | Redis connection string  |
 | Server Host | `EENGINE_HOST`       | Listen address (default: 127.0.0.1) |
 | Server Port | `EENGINE_PORT`       | HTTP port (default 3000) |
 
 **Example:**
 
 ```bash
-REDIS_URL=redis://localhost:6379
+EENGINE_REDIS=redis://localhost:6379
 EENGINE_HOST=0.0.0.0
 EENGINE_PORT=3000
 ```
@@ -359,7 +360,7 @@ EENGINE_PORT=3000
 **With Redis Key Prefix:**
 
 ```bash
-REDIS_URL=redis://localhost:6379/8
+EENGINE_REDIS=redis://localhost:6379/8
 EENGINE_REDIS_PREFIX=ee-prod
 ```
 
@@ -460,7 +461,7 @@ Error: listen EADDRINUSE: address already in use :::3000
 Error: connect ECONNREFUSED 127.0.0.1:6379
 ```
 
-**Solution:** Verify `REDIS_URL` is correct and Redis is running.
+**Solution:** Verify `EENGINE_REDIS` is correct and Redis is running.
 
 **Encrypted data cannot be decrypted:**
 
@@ -502,3 +503,11 @@ When upgrading EmailEngine:
 - Update environment variable names (see changelog)
 - Migrate runtime settings via Settings API
 - Update OAuth2 configuration format
+
+## See Also
+
+- [Environment variables](/docs/configuration/environment-variables) - Every startup variable and its CLI equivalent
+- [CLI reference](/docs/configuration/cli) - Commands, arguments, and TOML files
+- [Prepared settings](/docs/configuration/prepared-settings) - Provisioning runtime settings at first start
+- [Redis](/docs/configuration/redis) - Connection URLs, persistence, and memory policy
+- [Settings API](/docs/api/post-v-1-settings) - Changing runtime settings on a live instance

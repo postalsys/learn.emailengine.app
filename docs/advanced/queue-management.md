@@ -537,7 +537,7 @@ BullMQ depends on Redis performance:
 # Configure Redis URL
 EENGINE_REDIS=redis://localhost:6379
 
-# Alternative: Use REDIS_URL
+# REDIS_URL is accepted as a fallback when EENGINE_REDIS is unset
 REDIS_URL=redis://localhost:6379
 ```
 
