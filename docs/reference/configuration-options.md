@@ -1016,9 +1016,10 @@ EENGINE_SMTP_SECRET=your-smtp-password
 ### SMTP PROXY Protocol
 
 **Environment:** `EENGINE_SMTP_PROXY`
+**Setting:** `smtpServerProxy`
 **Default:** `false`
 
-Enable PROXY protocol for SMTP proxy server.
+Accept the HAProxy PROXY protocol on the SMTP server, so the client address EmailEngine sees is the original caller rather than the load balancer. Only enable it when something in front actually speaks the protocol: a plain SMTP client connecting to a listener expecting a PROXY header is rejected.
 
 ```bash
 EENGINE_SMTP_PROXY=true
@@ -1104,6 +1105,35 @@ EENGINE_ENABLE_OAUTH_TOKENS_API=true
 :::warning Security
 Only enable if you need to access raw OAuth tokens. This exposes sensitive credentials.
 :::
+
+## Access Token Audit Log
+
+**Setting:** `tokenAuditLog`
+**Default:** `false`
+
+Records every request each access token makes, allowed and denied alike, readable with [`GET /v1/tokens/{token}/log`](/docs/api-reference/access-tokens#audit-log). Entries exist only from the moment it is switched on, so turning it on after an incident recovers nothing.
+
+```bash
+curl -X POST "https://emailengine.example.com/v1/settings" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"tokenAuditLog": true}'
+```
+
+Retention per token is bounded by `EENGINE_TOKEN_LOG_ENTRIES` (1000) and `EENGINE_TOKEN_LOG_AGE` (7 days). The log lives in Redis, so both cost memory.
+
+## Behind a Reverse Proxy
+
+**Setting:** `enableApiProxy`
+**Default:** `false`
+
+Trust `X-Forwarded-*` headers, so the client address EmailEngine records and checks against token IP restrictions is the real caller rather than the proxy.
+
+Pair it with `EENGINE_API_PROXY_ADDRESSES`, a comma-separated list of the proxy addresses the headers may be trusted from. Without that list, `X-Forwarded-For` is honored from anywhere, which lets a caller state any address it likes.
+
+```bash
+EENGINE_API_PROXY_ADDRESSES=10.0.0.5,10.0.0.6
+```
 
 ## MCP Endpoint
 

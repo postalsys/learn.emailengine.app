@@ -715,7 +715,7 @@ Triggered when a mailbox (folder) is deleted.
 
 ### mailboxReset
 
-Triggered when the UIDVALIDITY of a folder changes. This indicates the folder was deleted and recreated, or the server reset its UID namespace.
+Triggered when the message IDs stored for a folder stop being usable, either because the server reports a different UIDVALIDITY (`reason: "uidValidityChange"`) or because EmailEngine's own index for the folder had to be rebuilt (`reason: "syncStateLost"`).
 
 **Important:** All previous UIDs for this folder are now invalid. You should refetch all messages.
 
@@ -731,7 +731,8 @@ Triggered when the UIDVALIDITY of a folder changes. This indicates the folder wa
     "name": "INBOX",
     "specialUse": "\\Inbox",
     "uidValidity": "1234567899",
-    "prevUidValidity": "1234567890"
+    "prevUidValidity": "1234567890",
+    "reason": "uidValidityChange"
   }
 }
 ```
@@ -742,6 +743,7 @@ Triggered when the UIDVALIDITY of a folder changes. This indicates the folder wa
 - `data.specialUse` (string or `false`) - Special-use flag of the folder, or `false` when it has no special use
 - `data.uidValidity` (string) - New UIDVALIDITY value (sent as a string)
 - `data.prevUidValidity` (string) - Previous UIDVALIDITY value (sent as a string)
+- `data.reason` (string) - `uidValidityChange` or `syncStateLost`
 
 **Use Cases:**
 - Invalidate cached message UIDs
@@ -1372,11 +1374,13 @@ Quick reference table of all events:
 | `listSubscribe` | List | Resubscribed | Add to list |
 | `mailboxNew` | Mailbox | Folder created | Sync folders |
 | `mailboxDeleted` | Mailbox | Folder deleted | Update UI |
-| `mailboxReset` | Mailbox | UIDVALIDITY changed | Resync folder |
+| `mailboxReset` | Mailbox | Stored UIDs no longer valid | Resync folder |
 | `exportCompleted` | Export | Export job completed | Download export |
 | `exportFailed` | Export | Export job failed | Retry/alert |
 
 ## Event Filtering
+
+`webhookEvents` is an allowlist with no default. An event is delivered only if the list contains it or `"*"`, so leaving the list unset delivers nothing at all.
 
 Subscribe to specific events when configuring webhooks:
 
@@ -1860,3 +1864,10 @@ https://abc123.ngrok.io/webhook
 **Test trackClick**: Enable tracking, send email with link, click it
 
 **Test listUnsubscribe**: Add List-Unsubscribe header, click unsubscribe
+
+## See Also
+
+- [Webhooks overview](/docs/webhooks/overview) - Setup, delivery, retries, and debugging
+- [Webhook routing](/docs/webhooks/webhook-routing) - Different events to different endpoints
+- [Pre-processing functions](/docs/advanced/pre-processing) - Filtering and reshaping payloads
+- [Webhooks API](/docs/api-reference/webhooks-api) - Managing routes programmatically
