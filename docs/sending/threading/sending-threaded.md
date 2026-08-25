@@ -19,7 +19,7 @@ Email clients rely on RFC 5322 `Message-ID` and `References` headers to decide w
 Send the first message with a custom Message-ID using the [Submit Email API endpoint](/docs/api/post-v-1-account-account-submit):
 
 ```bash
-curl -XPOST "http://127.0.0.1:3000/v1/account/demo/submit" \
+curl -XPOST "https://emailengine.example.com/v1/account/demo/submit" \
   -H "Authorization: Bearer $EE_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -48,7 +48,7 @@ curl -XPOST "http://127.0.0.1:3000/v1/account/demo/submit" \
 Send a follow-up with the original Message-ID in the References header:
 
 ```bash
-curl -XPOST "http://127.0.0.1:3000/v1/account/demo/submit" \
+curl -XPOST "https://emailengine.example.com/v1/account/demo/submit" \
   -H "Authorization: Bearer $EE_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -74,7 +74,7 @@ curl -XPOST "http://127.0.0.1:3000/v1/account/demo/submit" \
 Each subsequent message appends all previous Message-IDs to the References header:
 
 ```bash
-curl -XPOST "http://127.0.0.1:3000/v1/account/demo/submit" \
+curl -XPOST "https://emailengine.example.com/v1/account/demo/submit" \
   -H "Authorization: Bearer $EE_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -101,7 +101,7 @@ curl -XPOST "http://127.0.0.1:3000/v1/account/demo/submit" \
 For replies and forwards, EmailEngine can handle threading automatically using the `reference` parameter:
 
 ```bash
-curl -XPOST "http://127.0.0.1:3000/v1/account/example/submit" \
+curl -XPOST "https://emailengine.example.com/v1/account/example/submit" \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{

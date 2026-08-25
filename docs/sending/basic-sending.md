@@ -21,7 +21,7 @@ Before sending, register an email account in EmailEngine using the [account regi
 **Endpoint:** `POST /v1/account`
 
 ```bash
-curl -XPOST "http://127.0.0.1:3000/v1/account" \
+curl -XPOST "https://emailengine.example.com/v1/account" \
   -H "Authorization: Bearer <your-token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -59,7 +59,7 @@ curl -XPOST "http://127.0.0.1:3000/v1/account" \
 Before sending, ensure the account is connected. Poll the account status:
 
 ```bash
-curl "http://127.0.0.1:3000/v1/account/example" \
+curl "https://emailengine.example.com/v1/account/example" \
   -H "Authorization: Bearer <your-token>"
 ```
 
@@ -70,7 +70,7 @@ Wait until `state` becomes `"connected"`. Submission is rejected while EmailEngi
 **Endpoint:** `POST /v1/account/:id/submit`
 
 ```bash
-curl -XPOST "http://127.0.0.1:3000/v1/account/example/submit" \
+curl -XPOST "https://emailengine.example.com/v1/account/example/submit" \
   -H "Authorization: Bearer <your-token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -134,7 +134,7 @@ Always provide both plain text and HTML versions for best compatibility:
 
 #### HTML Only
 
-If you only provide HTML, EmailEngine can auto-generate a plain text version:
+An `html` body with no `text` is sent as HTML only. EmailEngine does not derive a plaintext alternative from it, so supply `text` yourself for clients and filters that prefer one:
 
 ```json
 {
@@ -208,9 +208,10 @@ Add custom email headers:
 Common custom headers:
 
 - `X-Custom-*` - Your custom headers
-- `Reply-To` - Set reply address
 - `List-Unsubscribe` - Unsubscribe link for bulk email
 - `X-Priority` - Set message priority (1-5)
+
+Reply-To has a field of its own, `replyTo`, described below. Use that rather than a header.
 
 ### Sender Information
 
@@ -403,7 +404,7 @@ Override the default retry count for this message:
 }
 ```
 
-Default is usually 10 attempts. Use higher values for critical emails.
+The default is 10, and the instance-wide default is settable under **Configuration** > **Email Processing**. A higher value keeps a message retrying for longer rather than making it more likely to arrive, so raise it only where a late delivery still has value.
 
 #### SMTP Gateway
 
@@ -446,7 +447,7 @@ Prevent duplicate message submission with idempotency keys:
 **Request:**
 
 ```bash
-curl -XPOST "http://127.0.0.1:3000/v1/account/example/submit" \
+curl -XPOST "https://emailengine.example.com/v1/account/example/submit" \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: unique-key-12345" \
@@ -470,7 +471,7 @@ The idempotency key can be any string (0-1024 characters). Use UUIDs or request-
 Send a draft that already exists in the mailbox by referencing its message ID:
 
 ```bash
-curl -XPOST "http://127.0.0.1:3000/v1/account/example/message/AAAAAQAACnA/submit" \
+curl -XPOST "https://emailengine.example.com/v1/account/example/message/AAAAAQAACnA/submit" \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{}'
@@ -517,7 +518,7 @@ Emitted **after every failed delivery attempt**. EmailEngine retries automatical
 
 ```json
 {
-  "serviceUrl": "http://127.0.0.1:3000",
+  "serviceUrl": "https://emailengine.example.com",
   "account": "example",
   "date": "2025-05-14T15:07:35.832Z",
   "event": "messageDeliveryError",
@@ -576,7 +577,7 @@ For testing, use [Ethereal Email](https://ethereal.email/) to create temporary t
 
 ```bash
 # Send to your Ethereal test address
-curl -XPOST "http://127.0.0.1:3000/v1/account/example/submit" \
+curl -XPOST "https://emailengine.example.com/v1/account/example/submit" \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -591,7 +592,7 @@ curl -XPOST "http://127.0.0.1:3000/v1/account/example/submit" \
 Verify the email was saved to the Sent folder:
 
 ```bash
-curl "http://127.0.0.1:3000/v1/account/example/messages?path=Sent" \
+curl "https://emailengine.example.com/v1/account/example/messages?path=Sent" \
   -H "Authorization: Bearer <token>"
 ```
 
@@ -600,7 +601,7 @@ curl "http://127.0.0.1:3000/v1/account/example/messages?path=Sent" \
 Check the outbox queue status. The outbox is a single global queue (it is not scoped per account):
 
 ```bash
-curl "http://127.0.0.1:3000/v1/outbox" \
+curl "https://emailengine.example.com/v1/outbox" \
   -H "Authorization: Bearer <token>"
 ```
 
@@ -694,3 +695,11 @@ Handle webhooks asynchronously:
 - Return 200 OK quickly from webhook endpoint
 - Process delivery status in background jobs
 - Implement webhook retry logic
+
+## See Also
+
+- [Replies and forwards](/docs/sending/replies-forwards) - Answering a stored message rather than composing one
+- [Templates](/docs/sending/templates) - Reusing a subject and body across sends
+- [Outbox queue](/docs/sending/outbox-queue) - Watching, retrying, and cancelling a queued message
+- [Sending API](/docs/api-reference/sending-api) - The endpoint reference for every field on this page
+- [messageSent](/docs/webhooks/messagesent) - The event that confirms the handoff to the server

@@ -648,7 +648,7 @@ Whatever the cause, an account that keeps failing authentication is [parked](/do
 **Example mismatch:**
 - Provider: `https://ee.company.com/oauth`
 - EmailEngine: `https://ee.company.com:3000/oauth`
-- [NO] Port mismatch!
+The port differs, so the provider rejects the redirect.
 
 ### Insufficient Permissions
 

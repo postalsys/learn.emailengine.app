@@ -1131,7 +1131,7 @@ EENGINE_MCP_ENABLED=false
 The runtime switch. While it is off, every request to `/mcp` answers `404`.
 
 ```bash
-curl -X POST "http://127.0.0.1:3000/v1/settings" \
+curl -X POST "https://emailengine.example.com/v1/settings" \
   -H "Authorization: Bearer $EE_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"mcpEnabled": true}'
@@ -1146,7 +1146,7 @@ curl -X POST "http://127.0.0.1:3000/v1/settings" \
 Runs the built-in OAuth 2.1 authorization server used by MCP clients that cannot be configured with a static access token, such as web connectors. Requires `mcpEnabled` and a configured Service URL; without both, the OAuth discovery endpoints answer `404`.
 
 ```bash
-curl -X POST "http://127.0.0.1:3000/v1/settings" \
+curl -X POST "https://emailengine.example.com/v1/settings" \
   -H "Authorization: Bearer $EE_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"mcpOAuthEnabled": true, "serviceUrl": "https://emailengine.example.com"}'

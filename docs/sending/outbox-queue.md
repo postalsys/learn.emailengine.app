@@ -37,7 +37,7 @@ EmailEngine uses [BullMQ](https://docs.bullmq.io/) for queue management, backed 
 
 ## Queue Types
 
-EmailEngine maintains three queue types:
+EmailEngine maintains four queues, of which the first one carries outbound mail:
 
 ### 1. Submit Queue
 
@@ -62,6 +62,14 @@ Handles document indexing jobs.
 - **Purpose**: Index emails for search functionality
 - **Jobs**: Document indexing tasks
 - **Used when**: Document Store/Elasticsearch integration is enabled
+
+### 4. Export Queue
+
+Handles [mailbox exports](/docs/receiving/exporting).
+
+- **Purpose**: Write an account's messages out to a downloadable file
+- **Jobs**: One per export request
+- **Used when**: An export has been requested
 
 ## Job Lifecycle
 

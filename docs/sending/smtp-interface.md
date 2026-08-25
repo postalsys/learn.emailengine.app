@@ -327,27 +327,34 @@ Additional TLS options available with the `EENGINE_SMTP_TLS_` prefix:
 
 ## Features and Limitations
 
-### Supported Features
+### What Works
 
-- [YES] Standard SMTP protocol
-- [YES] Authentication (PLAIN, LOGIN)
-- [YES] TLS encryption (implicit TLS when enabled)
-- [YES] Multiple recipients (TO, CC, BCC)
-- [YES] Attachments
-- [YES] Custom headers
-- [YES] HTML and plain text
-- [YES] Automatic queuing and retries
-- [YES] Webhook notifications
+- Standard SMTP submission, with PLAIN and LOGIN authentication
+- TLS, implicit when the server is configured for it
+- Multiple recipients across To, Cc, and Bcc
+- Attachments, custom headers, HTML and plain text
+- The same outbox queue, retries, and webhooks as an API submission
 
-### Limitations
+### EmailEngine Options as Headers
 
-- [NO] Cannot specify custom `sendAt` (scheduled sending)
-- [NO] Cannot use mail merge via SMTP
-- [NO] Cannot reference templates by ID
-- [NO] Cannot use reply/forward reference mode
-- [NO] Limited access to EmailEngine-specific features
+Four submit-API options have header equivalents, because SMTP has no other way to pass them. EmailEngine strips each one from the message before delivering it:
 
-For advanced features, use the [REST API](./basic-sending.md) instead.
+| Header | Equivalent field | Value |
+|--------|------------------|-------|
+| `X-EE-Send-At` | `sendAt` | An ISO 8601 timestamp or a millisecond epoch. The `Date` header is rewritten to match |
+| `X-EE-Delivery-Attempts` | `deliveryAttempts` | A number |
+| `X-EE-Gateway` | `gateway` | A gateway ID |
+| `X-EE-Tracking-Enabled` | `trackOpens` and `trackClicks` together | A boolean |
+
+### What Is Not Available
+
+Everything the API expresses as a structured payload rather than a header:
+
+- Mail merge, which needs a recipient list with per-recipient parameters
+- Templates referenced by ID
+- Reply and forward mode, which needs a reference to a stored message
+
+For those, use the [REST API](./basic-sending.md).
 
 ## Monitoring and Webhooks
 
@@ -381,4 +388,10 @@ curl "https://emailengine.example.com/v1/outbox" \
 - Need advanced features (mail merge, templates, scheduled sending)
 - Need programmatic control
 - Want detailed delivery tracking
-- Performance is critical (REST is faster)
+
+## See Also
+
+- [Basic sending](/docs/sending/basic-sending) - The REST equivalent, with every option this page cannot express
+- [Transactional email](/docs/sending/transactional-service) - Using the SMTP server as a relay for an existing application
+- [Outbox queue](/docs/sending/outbox-queue) - Where an accepted message goes next
+- [Access tokens](/docs/api-reference/access-tokens) - Minting the token used as the SMTP password
