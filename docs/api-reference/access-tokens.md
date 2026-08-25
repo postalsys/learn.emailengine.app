@@ -267,6 +267,31 @@ The path parameter accepts either the original token value or the token `id` (th
 The CLI does not have a `tokens delete` command. To delete tokens programmatically, use the API endpoint above or the web interface.
 :::
 
+### Audit Log
+
+EmailEngine can record what each token actually did. It is off by default: turn it on under **Configuration** > **Security** > **Access Token Audit Log**, after which every request a token makes is recorded, refusals included.
+
+```bash
+curl "https://emailengine.example.com/v1/tokens/TOKEN_VALUE_OR_ID/log" \
+  -H "Authorization: Bearer ADMIN_TOKEN"
+```
+
+Each entry names the moment, the client address, the request, and what happened to it:
+
+| Field | Meaning |
+|-------|---------|
+| `time` | When the request arrived |
+| `ip` | The client address, resolved through the proxy configuration if there is one |
+| `method`, `path` | The API operation, for example `GET /v1/account/user123/messages` |
+| `action`, `group` | The permission the operation resolved to |
+| `account` | The account the request named, when it named one |
+| `status` | `allowed` or `denied` |
+| `reason` | Why a denied request was refused |
+
+Retention is bounded per token by [`EENGINE_TOKEN_LOG_ENTRIES`](/docs/configuration/environment-variables#security--access-control), 1000 by default, and [`EENGINE_TOKEN_LOG_AGE`](/docs/configuration/environment-variables#security--access-control), seven days by default, whichever is reached first. The log lives in Redis, so both limits cost memory across every token that has one.
+
+A denied entry is the useful half: it shows an integration reaching for something its token was never granted, which is what a narrowed token is supposed to surface.
+
 ## Disabling Authentication (Development Only)
 
 :::danger Never Use in Production

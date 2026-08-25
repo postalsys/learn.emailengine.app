@@ -419,6 +419,8 @@ Security settings and access restrictions.
 | `EENGINE_REQUIRE_API_AUTH` | boolean | `true` | Require API authentication tokens | `false` |
 | `EENGINE_ENABLE_OAUTH_TOKENS_API` | boolean | `false` | Allow retrieving raw OAuth tokens via API | `true` |
 | `EENGINE_DISABLE_SETUP_WARNINGS` | boolean | `false` | Disable admin password setup warnings | `true` |
+| `EENGINE_TOKEN_LOG_ENTRIES` | number | `1000` | Requests retained in a token's audit log | `5000` |
+| `EENGINE_TOKEN_LOG_AGE` | seconds | `604800` | How long a token's audit log entries are kept (7 days) | `2592000` |
 
 ### Credential Encryption (EENGINE_SECRET)
 
@@ -456,6 +458,15 @@ EENGINE_ADMIN_ACCESS_ADDRESSES="192.168.1.0/24,10.0.0.1"
 ```bash
 # WARNING: Never use in production
 EENGINE_REQUIRE_API_AUTH=false
+```
+
+**Token audit log retention:**
+
+The audit log is off until you enable it under **Configuration** > **Security**. These two variables bound what it keeps once it is on, per token, whichever limit is reached first. Both live in Redis, so raising them costs memory.
+
+```bash
+EENGINE_TOKEN_LOG_ENTRIES=5000
+EENGINE_TOKEN_LOG_AGE=2592000
 ```
 
 ## Single Sign-On (SSO)
