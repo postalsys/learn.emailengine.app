@@ -35,13 +35,9 @@ This enables event-driven architectures where your application responds to email
 
 ### SDK Integration
 
-Use official and community SDKs for easier integration:
+There is one published SDK, for PHP: [postalsys/emailengine-php](https://packagist.org/packages/postalsys/emailengine-php).
 
-- **PHP SDK**: [PostalSys/EmailEngine-PHP](https://packagist.org/packages/postalsys/emailengine-php)
-- **Node.js**: Direct HTTP client integration
-- **Python**: HTTP client integration
-
-For other languages, generate a client from the [OpenAPI specification](/docs/api-reference/openapi-spec) that every EmailEngine instance publishes.
+Everywhere else, the API is plain HTTP and JSON, so an HTTP client is enough. For a typed client, generate one from the [OpenAPI specification](/docs/api-reference/openapi-spec) that every EmailEngine instance publishes.
 
 ### AI Agents Over MCP
 
@@ -148,36 +144,6 @@ Embed email functionality in business apps:
 - **Data Retention**: Implement appropriate retention policies
 - **Privacy Compliance**: Ensure GDPR and privacy regulation compliance
 
-## Integration Workflow
-
-### 1. Planning Phase
-
-- Identify use cases and requirements
-- Choose integration pattern (API, webhook, low-code)
-- Design data flow and architecture
-- Plan security and authentication
-
-### 2. Development Phase
-
-- Set up EmailEngine instance
-- Configure webhooks and API access
-- Implement integration logic
-- Add error handling and logging
-
-### 3. Testing Phase
-
-- Test with development accounts
-- Verify webhook delivery
-- Test edge cases and error conditions
-- Performance testing
-
-### 4. Production Deployment
-
-- Configure production environment
-- Enable monitoring and alerting
-- Document operational procedures
-- Plan for scaling
-
 ## Getting Started
 
 Choose your integration path:
@@ -187,9 +153,10 @@ Choose your integration path:
 - **AI Enthusiasts**: Explore [AI and ChatGPT Integration](/docs/integrations/ai-chatgpt)
 - **No-Code Users**: Check out [Low-Code Integrations](/docs/integrations/low-code)
 
-## Support and Resources
+## See Also
 
-- **API Documentation**: [Complete API Reference](/docs/api-reference)
-- **Community**: GitHub Issues and Discussions
-- **Professional Support**: [Contact Support](/docs/support)
-- **Examples**: GitHub repository with integration examples
+- [API Reference](/docs/api-reference) - Authentication, conventions, and error handling
+- [Webhooks overview](/docs/webhooks/overview) - The event side of every integration here
+- [MCP for AI agents](/docs/mcp) - Letting an agent call EmailEngine without an integration of its own
+- [GitHub issues](https://github.com/postalsys/emailengine/issues) - Bug reports and feature requests
+- [Support](/docs/support) - Support channels and what a subscription covers

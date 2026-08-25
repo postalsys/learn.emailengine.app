@@ -43,28 +43,11 @@ _The AI Configuration section with the enable checkbox, API key field and model 
 
 ### Model Selection
 
-EmailEngine dynamically fetches available models from OpenAI's model listing API, so you always have access to the latest models. The model dropdown shows all chat-compatible models available for your API key.
+The dropdown is populated from your own API key: **Refresh Models** calls OpenAI's model listing endpoint and stores what came back, so the choices are whatever that key can actually use. Until the first refresh, the dropdown offers a small built-in list, currently GPT-5 Mini, GPT-5, and GPT-5 Nano.
 
-#### Recommended Models
+The default is `gpt-5-mini`, and it is the right starting point for this workload: email processing is short-context classification and summarization rather than deep reasoning, so a larger model mostly buys latency and cost. Move up only if the summaries or the extracted fields are visibly worse than you need, and compare on your own mail rather than on the model's benchmark reputation.
 
-| Model | Speed | Cost | Best For |
-|-------|-------|------|----------|
-| **GPT-5 Mini** | Fast | Low | General email processing (default) |
-| **GPT-5** | Medium | Medium | Complex analysis, longer emails |
-| **GPT-5 Pro** | Slower | High | Most demanding tasks |
-| **GPT-4o Mini** | Fast | Low | Budget-conscious processing |
-| **GPT-4o** | Medium | Medium | Balanced performance |
-| **O3 Mini** | Medium | Medium | Advanced reasoning tasks |
-
-#### Model Families
-
-- **GPT-5.x** - Latest generation with best overall performance
-- **GPT-4o** - Optimized models with good speed/cost balance
-- **GPT-4.1** - Enhanced GPT-4 variants
-- **O-series (O1, O3, O4)** - Reasoning-focused models for complex analysis
-- **GPT-3.5/GPT-4** - Legacy models (still available)
-
-**Recommendation**: Start with **GPT-5 Mini** (the default) for most email processing tasks. It offers an excellent balance of speed, cost, and quality. Upgrade to GPT-5 or GPT-5 Pro only if you need enhanced capabilities for complex analysis.
+Because the list comes from OpenAI, a model named here can be retired and a better one can appear without this page changing. Check what the dropdown offers rather than planning around a specific name.
 
 ### How It Works
 
@@ -707,3 +690,10 @@ app.post('/webhook', (req, res) => {
 ```
 
 Aggregating by `account` shows which mailboxes drive the spend, which is usually a small number of high-volume ones. See [Cost Optimization](#cost-optimization) for narrowing what gets processed.
+
+## See Also
+
+- [MCP for AI agents](/docs/mcp) - The opposite direction: an agent calling EmailEngine
+- [Pre-processing functions](/docs/advanced/pre-processing) - Filtering which messages reach a model
+- [Webhooks overview](/docs/webhooks/overview) - Where the enriched payload arrives
+- [Compliance and data handling](/docs/deployment/compliance) - What leaves the instance when AI processing is on
