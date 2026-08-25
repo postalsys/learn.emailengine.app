@@ -213,11 +213,7 @@ curl_close($ch);
 
 ### Success Responses
 
-Successful requests return HTTP status codes in the 2xx range:
-
-- **200 OK**: Request succeeded
-- **201 Created**: Resource created successfully
-- **204 No Content**: Request succeeded with no response body
+Every successful request answers **200 OK** with a JSON body. The API does not use 201 or 204, so a creation reports what it created in the body of a 200.
 
 Example success response, from registering an account:
 
@@ -238,6 +234,7 @@ Error requests return HTTP status codes in the 4xx or 5xx range:
 - **401 Unauthorized**: Missing or invalid authentication
 - **403 Forbidden**: Insufficient permissions
 - **404 Not Found**: Resource not found
+- **422 Unprocessable Entity**: The request was understood but the mail server or provider refused the operation
 - **429 Too Many Requests**: Rate limit exceeded
 - **500 Internal Server Error**: Server error
 - **503 Service Unavailable**: Service temporarily unavailable
@@ -282,6 +279,7 @@ Not every list is paginated. `GET /v1/account/{account}/mailboxes` returns the f
 | 401  | Unauthorized        | Verify authentication token  |
 | 403  | Forbidden           | Check token permissions      |
 | 404  | Not Found           | Verify resource exists       |
+| 422  | Unprocessable Entity | The provider refused the operation, not the request shape |
 | 429  | Too Many Requests   | Implement retry with backoff |
 | 500  | Server Error        | Retry after delay            |
 | 503  | Service Unavailable | Service restarting, retry    |

@@ -44,8 +44,8 @@ Standard HTTP status codes used by EmailEngine API.
 | Code | Name | Meaning |
 |------|------|---------|
 | 200 | OK | Request succeeded |
-| 201 | Created | Resource created successfully |
-| 204 | No Content | Request succeeded with no response body |
+
+200 is the only success code the API returns. A creation reports what it created in the body of a 200 rather than answering 201, and no endpoint answers 204.
 
 ---
 
@@ -239,6 +239,30 @@ async function makeRequestWithRetry(url, options, maxRetries = 3) {
 
 ---
 
+#### 422 Unprocessable Entity
+
+The request is well formed, but the mail server or provider cannot carry it out. This is the code for an operation the account's backend does not support, rather than for a mistake in the request.
+
+**Example:**
+```json
+{
+  "statusCode": 422,
+  "error": "Unprocessable Entity",
+  "message": "The mail server does not support the requested operation",
+  "code": "MissingServerExtension"
+}
+```
+
+**Common Causes:**
+- The IMAP server lacks an extension the operation needs
+- The operation exists only on some backends, such as a label change on a mailbox that is not Gmail
+
+**Solutions:**
+- Check what the account's backend supports before offering the operation
+- Do not retry: the answer will not change until the account or the server does
+
+---
+
 ### 5xx Server Errors
 
 Server-side errors that may be transient.
@@ -268,35 +292,9 @@ Unexpected server error occurred.
 
 ---
 
-#### 502 Bad Gateway
-
-EmailEngine could not complete an operation because the upstream mail server (IMAP/SMTP) was unavailable. The response carries the underlying code (for example `IMAPUnavailable`), not a generic "BadGateway" code.
-
-**Example:**
-```json
-{
-  "statusCode": 502,
-  "error": "Bad Gateway",
-  "message": "Server unavailable",
-  "code": "IMAPUnavailable"
-}
-```
-
-**Common Causes:**
-- Mail server unavailable
-- Mail server timeout
-- Network connectivity issue
-
-**Solutions:**
-- Retry after delay
-- Check mail server status
-- Verify network connectivity
-
----
-
 #### 503 Service Unavailable
 
-EmailEngine is temporarily unavailable (startup, shutdown, maintenance).
+EmailEngine is temporarily unavailable (startup, shutdown, maintenance), or the account's IMAP connection is not up, which answers `IMAPUnavailable` with this code.
 
 **Example:**
 ```json
@@ -573,16 +571,14 @@ Common IMAP server response codes:
 **Example Error:**
 ```json
 {
-  "statusCode": 502,
-  "error": "Bad Gateway",
-  "message": "IMAP server is currently unavailable",
-  "code": "IMAPUnavailable",
-  "details": {
-    "command": "LOGIN",
-    "response": "NO [AUTHENTICATIONFAILED] Invalid credentials"
-  }
+  "statusCode": 503,
+  "error": "Service Unavailable",
+  "message": "IMAP connection is currently not available for requested account",
+  "code": "IMAPUnavailable"
 }
 ```
+
+The IMAP server's own response is not returned here. It is recorded as the account's `lastError` and in the [per-account log](/docs/advanced/logging#per-account-protocol-logs).
 
 ---
 
@@ -609,17 +605,16 @@ Common SMTP error codes:
 | 553 | Mailbox name invalid | Fix recipient address |
 | 554 | Transaction failed | Check message content/format |
 
-**Example Error:**
+An SMTP rejection is not returned from the submit call, because submission is queued: the call answers 200 with a `queueId` and the rejection arrives later as a [`messageDeliveryError`](/docs/webhooks/messagedeliveryerror) or [`messageFailed`](/docs/webhooks/messagefailed) webhook carrying `smtpResponse` and `smtpResponseCode`.
+
+`SMTPUnavailable` is the separate case of an account with no usable SMTP configuration at all:
+
 ```json
 {
-  "statusCode": 502,
-  "error": "Bad Gateway",
-  "message": "SMTP server is currently unavailable",
-  "code": "SMTPUnavailable",
-  "details": {
-    "smtpResponse": "550 5.1.1 <user@example.com>: Recipient address rejected: User unknown",
-    "recipient": "user@example.com"
-  }
+  "statusCode": 404,
+  "error": "Not Found",
+  "message": "SMTP configuration not found",
+  "code": "SMTPUnavailable"
 }
 ```
 
@@ -739,7 +734,7 @@ Implement exponential backoff for transient errors:
 
 ```javascript
 async function makeRequestWithRetry(url, options, maxRetries = 3) {
-  const retriableStatusCodes = [408, 429, 500, 502, 503, 504];
+  const retriableStatusCodes = [429, 500, 503];
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
