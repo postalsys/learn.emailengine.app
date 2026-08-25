@@ -201,8 +201,8 @@ See [Threading Documentation](/docs/sending/threading/provider-support) for deta
 
 ### Nylas Pricing
 
-:::info Pricing as of 9 December 2025
-Pricing may change. Check [nylas.com/pricing](https://www.nylas.com/pricing/) for current rates.
+:::warning These figures were current on 9 December 2025
+Vendors revise pricing, and this page is not updated when they do. Treat the numbers below as the shape of the pricing model rather than a quote, and read the current rates at [nylas.com/pricing](https://www.nylas.com/pricing/).
 :::
 
 **Pricing Tiers:**
@@ -379,3 +379,10 @@ Enterprise customers can negotiate volume discounts with annual contracts.
 - Enterprise compliance needs
 
 **Both are excellent products** - choose based on your specific constraints and priorities, not generic "best" claims.
+
+## See Also
+
+- [EmailEngine vs Unipile](/docs/comparison/emailengine-vs-unipile) - The other managed alternative
+- [Introduction](/docs/getting-started/introduction) - What EmailEngine is and is not
+- [Licensing and privacy](/docs/licensing) - What the license covers and what leaves your server
+- [Installation](/docs/installation) - The self-hosting work a managed service saves you

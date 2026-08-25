@@ -27,10 +27,7 @@ Use the "Deploy to Render" button for automated setup with EmailEngine + Redis c
 - Automatic health checks
 - Built-in monitoring and logs
 
-**Costs (as of 2025):**
-- **Web Service:** Starting at $7/month (Starter plan)
-- **Redis:** Starting at $7/month (256MB)
-- **Total minimum:** ~$14/month
+**Costs:** two paid services, one web service and one Redis instance. Render revises its plans, so read the current figures on [Render's pricing page](https://render.com/pricing) rather than budgeting from a number quoted here.
 
 :::warning Resource Requirements
 Do not choose the smallest instance sizes. EmailEngine requires at least:
@@ -229,9 +226,9 @@ services:
 
 1. Go to **Settings** → **Instance Type**
 2. Select larger plan:
-   - **Starter:** 1 GB RAM, 0.5 CPU ($7/month)
-   - **Standard:** 2 GB RAM, 1 CPU ($25/month)
-   - **Pro:** 4 GB RAM, 2 CPU ($85/month)
+   - **Starter:** 1 GB RAM, 0.5 CPU
+   - **Standard:** 2 GB RAM, 1 CPU
+   - **Pro:** 4 GB RAM, 2 CPU
 3. Service automatically redeploys
 
 **When to upgrade:**
@@ -257,9 +254,9 @@ EmailEngine does NOT support horizontal scaling. Running multiple EmailEngine in
 1. Go to Redis dashboard
 2. **Settings** → **Plan**
 3. Select larger size:
-   - **Starter:** 256 MB ($7/month)
-   - **Standard:** 1 GB ($25/month)
-   - **Pro:** 4 GB ($90/month)
+   - **Starter:** 256 MB
+   - **Standard:** 1 GB
+   - **Pro:** 4 GB
 
 **When to upgrade:**
 - More than 100 accounts
@@ -505,8 +502,7 @@ redis-cli -u <external-redis-url> --rdb ./dump.rdb
 ## Cost Optimization Tips
 
 1. **Start small:**
-   - Begin with Starter plans ($14/month)
-   - Scale up as needed
+   - Begin on the Starter plans and scale up when the metrics say to
 
 2. **Monitor usage:**
    - Check metrics weekly
@@ -518,5 +514,12 @@ redis-cli -u <external-redis-url> --rdb ./dump.rdb
    - Disable unused features
 
 4. **Consider alternatives at scale:**
-   - Self-hosted VPS: ~$10-20/month for 500+ accounts
-   - Render is best for < 200 accounts
+   - A plain VPS is usually cheaper per account once the account count runs into the hundreds, at the cost of managing the host yourself
+   - Render suits deployments in the low hundreds of accounts
+
+## See Also
+
+- [Deployment overview](/docs/deployment) - The other hosting options
+- [Configuration](/docs/configuration) - Setting environment variables on the service
+- [Redis](/docs/configuration/redis) - What the managed Redis needs to provide
+- [Security](/docs/deployment/security) - Hardening a hosted deployment

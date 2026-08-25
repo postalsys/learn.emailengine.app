@@ -906,3 +906,10 @@ sudo systemctl status emailengine
 ```bash
 curl http://localhost:3000/health
 ```
+
+## See Also
+
+- [Linux installation](/docs/installation/linux) - Getting the binary in place first
+- [Source installation](/docs/installation/source) - The unit file for a source deployment
+- [Logging](/docs/advanced/logging) - Reading what the unit writes to the journal
+- [Security](/docs/deployment/security) - Hardening directives worth adding to the unit

@@ -212,22 +212,24 @@ graph LR
 
 ### Unipile Pricing
 
-:::info Pricing as of 9 December 2025
-Pricing may change. Check [unipile.com/pricing-api](https://www.unipile.com/pricing-api/) for current rates.
+:::warning These figures were current on 9 December 2025
+Vendors revise pricing, and this page is not updated when they do. Treat the numbers below as the shape of the pricing model rather than a quote, and read the current rates at [unipile.com/pricing-api](https://www.unipile.com/pricing-api/).
 :::
 
 **Structure:** Per connected account per month with volume discounts.
 
 **Pricing Tiers:**
 
-| Connected Accounts | EUR/Account/Month | USD/Account/Month (approx.) |
-| ------------------ | ----------------- | --------------------------- |
-| Up to 10           | 49 EUR flat total | ~$55 flat total             |
-| 11-50              | 5.00 EUR          | ~$5.50                      |
-| 51-200             | 4.50 EUR          | ~$5.00                      |
-| 201-1,000          | 4.00 EUR          | ~$4.50                      |
-| 1,001-5,000        | 3.50 EUR          | ~$4.00                      |
-| 5,001+             | 3.00 EUR          | ~$3.50                      |
+| Connected Accounts | EUR per account per month |
+| ------------------ | ------------------------- |
+| Up to 10           | 49 EUR flat total         |
+| 11-50              | 5.00 EUR                  |
+| 51-200             | 4.50 EUR                  |
+| 201-1,000          | 4.00 EUR                  |
+| 1,001-5,000        | 3.50 EUR                  |
+| 5,001+             | 3.00 EUR                  |
+
+Unipile quotes in euros. Any dollar figure depends on the rate on the day, so convert at the time rather than working from a number here.
 
 **What's Included (All Tiers):**
 
@@ -382,3 +384,10 @@ EmailEngine exposes you directly to IMAP server limits, which you must manage yo
 - Zero-ops preference
 
 **Key difference:** EmailEngine is email-focused and self-hosted; Unipile is multi-channel and cloud-only. If you only need email and want full control, choose EmailEngine. If you need LinkedIn, WhatsApp, and other channels with managed hosting, choose Unipile.
+
+## See Also
+
+- [EmailEngine vs Nylas](/docs/comparison/emailengine-vs-nylas) - The other managed alternative
+- [Introduction](/docs/getting-started/introduction) - What EmailEngine is and is not
+- [Account types](/docs/accounts) - The providers EmailEngine connects to
+- [Licensing and privacy](/docs/licensing) - What the license covers and what leaves your server

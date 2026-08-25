@@ -766,3 +766,10 @@ server {
 ```
 
 **Note:** The standby instance should remain stopped under normal operation. Nginx's `backup` directive means it will only be contacted if the primary is unavailable.
+
+## See Also
+
+- [Security](/docs/deployment/security) - TLS, headers, and access restrictions around the proxy
+- [Linux installation](/docs/installation/linux) - The same proxy configuration alongside the install
+- [Environment variables](/docs/configuration/environment-variables) - `EENGINE_API_PROXY` and the trusted proxy addresses
+- [MCP protocol](/docs/mcp/protocol) - Extra proxy requirements for the streaming endpoint

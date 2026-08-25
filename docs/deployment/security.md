@@ -908,8 +908,17 @@ Optionally, EmailEngine can be configured to retain the last N queue job entries
 - [ ] Update EmailEngine regularly
 - [ ] Update system packages weekly
 - [ ] Review access logs weekly
+- [ ] Review the [token audit log](/docs/api-reference/access-tokens#audit-log) for denied requests
 - [ ] Check for security advisories monthly
 - [ ] Test backups monthly
 - [ ] Review firewall rules quarterly
-- [ ] Audit user access quarterly
+- [ ] Audit issued tokens quarterly and revoke what is unused
 - [ ] Update SSL certificates (automatic with Let's Encrypt)
+
+## See Also
+
+- [Compliance and data handling](/docs/deployment/compliance) - What is stored, and what a vendor review asks for
+- [Access tokens](/docs/api-reference/access-tokens) - Scopes, restrictions, and the audit log
+- [Secret encryption](/docs/advanced/encryption) - Enabling and rotating `EENGINE_SECRET`
+- [Credential security FAQ](/docs/support/security-faq) - The questions this page gets asked about
+- [Nginx reverse proxy](/docs/deployment/nginx-proxy) - Terminating TLS in front of EmailEngine
