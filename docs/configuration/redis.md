@@ -205,24 +205,12 @@ appendonly yes
 appendfsync everysec
 ```
 
-:::danger High I/O Risk for EmailEngine
-AOF can be **dangerous for EmailEngine** due to extremely high write volume:
+:::danger AOF and EmailEngine's write pattern
+An initial sync writes one index entry per message, so a large mailbox produces a burst of small writes. With AOF every one of them is appended to disk, and the rewrite that periodically compacts the log competes with the same burst.
 
-- EmailEngine performs **thousands of write operations per second** when syncing mailboxes
-- Each write is logged to disk with AOF enabled
-- Sustained high write rates (e.g., initial sync of large mailboxes) can:
-  - **Saturate disk I/O** (requires 10,000+ IOPS minimum)
-  - **Fill disk rapidly** with AOF logs
-  - **Cause Redis to slow down or hang** during AOF rewrites
-  - **Degrade EmailEngine performance significantly**
+What that costs depends entirely on the storage underneath. On a slow disk it shows up as Redis latency, a growing AOF, and a sync that never seems to finish; on fast local NVMe it may not be noticeable at all. The failure is gradual rather than sudden, which is what makes it worth deciding deliberately.
 
-**Only use AOF if:**
-- Your storage can sustain 20,000+ IOPS continuously
-- You monitor disk I/O and AOF rewrite duration closely
-- You have adequate disk space for rapid AOF growth
-- You understand the performance trade-offs
-
-**For most deployments, use RDB snapshots instead.**
+The [official docker-compose.yml](/docs/installation/docker) uses RDB snapshots and no AOF, and that is the configuration this page recommends. If you turn AOF on, watch `latency_percentiles_usec` for write commands and the AOF rewrite duration in `INFO persistence` under a real initial sync before calling it good.
 :::
 
 **Verification:**
@@ -414,32 +402,26 @@ Back up `dump.rdb` regularly:
 
 ```bash
 #!/bin/bash
+set -euo pipefail
 BACKUP_DIR="/backup/redis"
 DATE=$(date +%Y%m%d_%H%M%S)
+
+# Remember the previous save so we can tell when this one finished
+PREV=$(redis-cli LASTSAVE)
 redis-cli BGSAVE
-while [ $(redis-cli LASTSAVE) -eq $LASTSAVE ]; do sleep 1; done
+while [ "$(redis-cli LASTSAVE)" = "$PREV" ]; do sleep 1; done
+
 cp /var/lib/redis/dump.rdb "$BACKUP_DIR/dump-$DATE.rdb"
 find "$BACKUP_DIR" -name "dump-*.rdb" -mtime +7 -delete
 ```
 
 ## Performance Tuning
 
-### Why AOF is Dangerous for EmailEngine
+### Write Pattern
 
-EmailEngine's write patterns make AOF persistence problematic:
+EmailEngine writes one small index entry per message, so the load is dominated by initial syncs: a mailbox with 100,000 messages is 100,000 writes, and several accounts syncing at once multiply that. Steady-state traffic afterwards is a fraction of it.
 
-- **Initial sync:** 5,000-10,000+ writes/second per account
-- **Continuous sync:** 100-1,000 writes/second per active account
-- **Large mailboxes:** Sustained high writes for hours
-- **Multiple accounts:** Write loads multiply
-
-**AOF problems:**
-- Logs every write to disk (requires 20,000+ IOPS sustained)
-- AOF rewrites lock Redis, causing timeouts
-- Rapid disk space consumption
-- Performance degradation
-
-**Solution:** Use RDB snapshots instead. Lower overhead, minimal performance impact.
+This is why [persistence choice matters](#persistence-configuration-recommended) here more than it would for a cache, and why RDB snapshots are the recommended setting. Snapshot cost is proportional to dataset size and paid periodically; AOF cost is proportional to write count and paid continuously.
 
 ### Memory Management
 
@@ -617,3 +599,12 @@ redis://:password@host:6379         # With password
 rediss://:password@host:6380        # With TLS
 redis://host:6379/8                 # Specific database
 ```
+
+## See Also
+
+- [Configuration overview](/docs/configuration) - Where the Redis URL fits among the other settings
+- [Environment variables](/docs/configuration/environment-variables#redis) - `EENGINE_REDIS`, the prefix, and the connection family
+- [Performance tuning](/docs/advanced/performance-tuning) - What drives the memory figures above
+- [Monitoring](/docs/advanced/monitoring) - Redis metrics worth alerting on
+- [Docker installation](/docs/installation/docker) - The shipped compose file and its Redis settings
+

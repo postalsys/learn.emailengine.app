@@ -128,7 +128,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: emailengine-redis
-    command: redis-server --appendonly yes --maxmemory-policy noeviction
+    command: redis-server --maxmemory-policy noeviction --save 900 1 --save 300 10 --save 60 10000
     volumes:
       - redis-data:/data
     networks:
@@ -285,12 +285,11 @@ docker-compose start redis
 Create `redis.conf`:
 
 ```conf
-# Persistence
-appendonly yes
-appendfsync everysec
+# Persistence. RDB snapshots rather than AOF, see the Redis page for why
 save 900 1
 save 300 10
 save 60 10000
+stop-writes-on-bgsave-error yes
 
 # Memory
 maxmemory-policy noeviction
