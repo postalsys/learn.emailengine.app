@@ -6,16 +6,19 @@ sidebar_position: 5
 
 # Nginx Reverse Proxy Setup
 
-Configure Nginx as a reverse proxy in front of EmailEngine to enable HTTPS, load balancing, and security features.
+Configure Nginx as a reverse proxy in front of EmailEngine to terminate HTTPS, restrict who reaches the admin interface, and rate-limit abusive clients.
 
 :::info Why Use a Reverse Proxy
-- **SSL/TLS termination** - Secure HTTPS connections
-- **Failover** - Automatic failover to standby instance for high availability
-- **Security** - Additional protection layer
-- **Rate limiting** - Prevent abuse
-- **Caching** - Improve performance
-- **WebSocket support** - Proxy WebSocket connections
+- **SSL/TLS termination** - EmailEngine itself listens on plain HTTP by default
+- **Failover** - Route to a cold standby instance when the primary is down
+- **Access control** - Restrict `/admin` and `/metrics` by network before EmailEngine sees the request
+- **Rate limiting** - Slow down abusive clients at the edge
 :::
+
+Two things about EmailEngine shape the configuration below:
+
+- **Two endpoints stream.** `GET /v1/changes` (and the dashboard's `/admin/changes`) is a Server-Sent Events feed, and `/mcp` streams notifications to a subscribed agent. A proxy that buffers responses holds those events back until the connection closes, so both locations run with buffering off and long read timeouts. EmailEngine does not use WebSockets, so no `Upgrade` handling is needed.
+- **EmailEngine reads `X-Forwarded-For` only if told to trust it,** and only from the peers you name. See [Tell EmailEngine to trust the proxy](#tell-emailengine-to-trust-the-proxy) below.
 
 ## Quick Start
 
@@ -56,7 +59,7 @@ sudo mv fullchain.pem /etc/ssl/certs/emailengine-fullchain.pem
 ```
 
 :::tip Why Dummy Certificates?
-We create dummy certificates first so Nginx can start with SSL enabled. We'll replace them with real Let's Encrypt certificates in Step 4.
+Nginx refuses to start a `ssl` listener without a certificate. The self-signed pair lets it start now; Step 4 replaces it with a Let's Encrypt certificate.
 :::
 
 ### 3. Configure Nginx Virtual Host
@@ -79,7 +82,7 @@ server {
     ssl_certificate_key /etc/ssl/private/emailengine-privkey.pem;
     ssl_certificate /etc/ssl/certs/emailengine-fullchain.pem;
 
-    # EventSource endpoint for real-time updates (no gzip)
+    # Server-Sent Events feed (API and admin dashboard): no gzip, no buffering
     location ~ ^/(admin|v1)/changes {
         gzip off;
         proxy_http_version 1.1;
@@ -91,6 +94,7 @@ server {
         proxy_pass http://127.0.0.1:3000;
         proxy_buffering off;
         proxy_cache off;
+        proxy_read_timeout 24h;
         chunked_transfer_encoding off;
     }
 
@@ -112,15 +116,13 @@ server {
     }
 
     location / {
-        client_max_body_size 50M;  # Allow large email submissions with attachments
+        client_max_body_size 50M;  # EmailEngine accepts message uploads up to 50 MB by default (EENGINE_MAX_BODY_SIZE)
         proxy_http_version 1.1;
         proxy_redirect off;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto https;
-        proxy_set_header X-Scheme $scheme;
         proxy_set_header Host $http_host;
-        proxy_set_header X-NginX-Proxy true;
         proxy_pass http://127.0.0.1:3000;  # EmailEngine port
     }
 
@@ -131,13 +133,23 @@ server {
 }
 ```
 
-:::important Tell EmailEngine to trust the proxy
-Setting the `X-Forwarded-*` headers above is not enough on its own. EmailEngine ignores forwarded headers unless you enable `EENGINE_API_PROXY=true` (or `--api.proxy=true`). Without it, the client IP recorded in logs, the IP-based rate limiter, and the `serviceUrl`/redirect scheme detection all see the proxy instead of the real client.
+### Tell EmailEngine to trust the proxy
 
-The official Docker image sets `EENGINE_API_PROXY=true` by default, so this applies mainly to bare-metal or SystemD deployments. Only enable it when EmailEngine is actually behind a trusted reverse proxy.
+Setting the `X-Forwarded-*` headers is half of the job. EmailEngine resolves the client address from `X-Forwarded-For` only when its **Behind Reverse Proxy** setting is on, and it decides which peers may set that header from `EENGINE_API_PROXY_ADDRESSES`.
 
-Also set `EENGINE_API_PROXY_ADDRESSES` to the addresses your proxy connects from (for example `EENGINE_API_PROXY_ADDRESSES=127.0.0.1`). Without it the header is honored from any peer, which is safe for logs but not for the [admin interface allowlist](/docs/deployment/security#admin-interface-access-control) or per-token address restrictions.
-:::
+**The setting.** Behind Reverse Proxy is a runtime setting (`enableApiProxy` in the [settings API](/docs/api/post-v-1-settings), the checkbox under **Configuration > General** in the admin interface). At the first start, when nothing is stored yet, EmailEngine seeds it from `EENGINE_API_PROXY` (or `--api.proxy`), and to `true` when that variable is not set at all. The official Docker image also sets `EENGINE_API_PROXY=true`. After the first start the stored setting is what counts; changing the environment variable later has no effect, so flip it in the admin interface or over the API instead.
+
+**The trusted peers.** With the setting on and `EENGINE_API_PROXY_ADDRESSES` unset, the left-most `X-Forwarded-For` entry is taken as the client address, which any caller that can reach the port can forge. That is acceptable for the address shown in logs and token usage records, but not for the two controls that key off the address: the [admin interface allowlist](/docs/deployment/security#admin-interface-access-control) and per-token `restrictions.addresses`. EmailEngine logs a warning at startup in that state. Name the proxies (since EmailEngine v2.75.0), and the header is honored only from them, with the entries they appended stripped:
+
+```bash
+# Nginx on the same host
+EENGINE_API_PROXY_ADDRESSES=127.0.0.1
+
+# Several proxies, IPs or CIDR ranges, comma-separated
+EENGINE_API_PROXY_ADDRESSES=10.0.0.0/8,192.168.1.10
+```
+
+The forwarded scheme and host do not set EmailEngine's public URL. That comes from the `serviceUrl` setting (Configuration > General), which the hosted authentication form, OAuth2 redirects and tracking links are built from; set it to the address Nginx serves, `https://emailengine.example.com` here. An `https:` service URL is also what makes EmailEngine mark its admin session cookie `Secure`.
 
 **Enable configuration:**
 
@@ -156,9 +168,7 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-:::warning Test Before Reload
-Always run `nginx -t` before reloading. A configuration error will stop Nginx completely!
-:::
+A reload with a broken configuration file fails and leaves the running Nginx as it was, so `nginx -t` first is what keeps a typo from turning into an outage on a full restart.
 
 ### 4. Provision SSL Certificates with Let's Encrypt
 
@@ -183,9 +193,7 @@ curl https://get.acme.sh | sh -s email=your@email.com
     --reloadcmd     "/bin/systemctl reload nginx"
 ```
 
-:::success Automatic Renewal
-Acme.sh automatically renews certificates before expiry. No manual intervention needed!
-:::
+acme.sh installs a cron job that renews the certificate before it expires and runs the reload command afterwards.
 
 **Verify SSL:**
 
@@ -204,15 +212,15 @@ openssl s_client -connect emailengine.example.com:443 -servername emailengine.ex
 Create `/etc/nginx/sites-available/emailengine.conf`:
 
 ```nginx
-# Rate limiting zone
+# Rate limiting zone, keyed by client address
 limit_req_zone $binary_remote_addr zone=emailengine_limit:10m rate=10r/s;
 
 # Upstream definition
 upstream emailengine_backend {
     server 127.0.0.1:3000 max_fails=3 fail_timeout=30s;
-    # For high availability (NOT scaling), add backup instance:
-    # server 127.0.0.1:3001 backup;
-    # Note: EmailEngine does NOT support horizontal scaling
+    # For failover (NOT scaling), add a cold standby:
+    # server emailengine-standby.internal:3000 backup;
+    # EmailEngine does NOT support two instances on one Redis database
 }
 
 # HTTP server - redirect to HTTPS
@@ -264,14 +272,13 @@ server {
     add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header X-Content-Type-Options "nosniff" always;
-    add_header X-XSS-Protection "1; mode=block" always;
     add_header Referrer-Policy "no-referrer-when-downgrade" always;
 
     # Logging
     access_log /var/log/nginx/emailengine-access.log combined;
     error_log /var/log/nginx/emailengine-error.log warn;
 
-    # EventSource endpoint for real-time admin updates (no gzip, no buffering)
+    # Server-Sent Events feed (API and admin dashboard): no gzip, no buffering
     location ~ ^/(admin|v1)/changes {
         gzip off;
         proxy_pass http://emailengine_backend;
@@ -305,7 +312,8 @@ server {
 
     # Main location block
     location / {
-        # Rate limiting
+        # Rate limiting (per client address; raise the rate or exempt your
+        # application's address if it makes many API calls from one host)
         limit_req zone=emailengine_limit burst=20 nodelay;
 
         # Proxy settings
@@ -313,10 +321,12 @@ server {
         proxy_http_version 1.1;
         proxy_redirect off;
 
-        # Client body size (for large email submissions with attachments)
+        # Client body size: EmailEngine accepts message uploads up to 50 MB by default
+        # (EENGINE_MAX_BODY_SIZE); other requests are capped at 1 MB
         client_max_body_size 50M;
 
-        # Timeouts (increased for large uploads)
+        # Timeouts: a message fetch or a large upload can take longer than
+        # the 60s Nginx default
         proxy_connect_timeout 90s;
         proxy_send_timeout 90s;
         proxy_read_timeout 90s;
@@ -329,10 +339,6 @@ server {
         proxy_set_header X-Forwarded-Host $host;
         proxy_set_header X-Forwarded-Port $server_port;
 
-        # WebSocket support (for real-time updates)
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-
         # Buffering
         proxy_buffering off;
         proxy_request_buffering off;
@@ -344,7 +350,8 @@ server {
         access_log off;
     }
 
-    # Metrics endpoint (restrict access)
+    # Metrics endpoint: restrict by network here, and EmailEngine still
+    # requires a token with the metrics scope
     location /metrics {
         allow 127.0.0.1;
         allow 10.0.0.0/8;   # Your internal network
@@ -352,13 +359,6 @@ server {
 
         proxy_pass http://emailengine_backend;
         access_log off;
-    }
-
-    # Static assets caching
-    location ~* \.(jpg|jpeg|png|gif|ico|css|js|svg|woff|woff2|ttf|eot)$ {
-        proxy_pass http://emailengine_backend;
-        expires 30d;
-        add_header Cache-Control "public, immutable";
     }
 }
 ```
@@ -388,7 +388,7 @@ This configuration:
 
 ### IP Whitelisting
 
-**Restrict access by IP:**
+EmailEngine has its own allowlist for the admin interface, [`EENGINE_ADMIN_ACCESS_ADDRESSES`](/docs/deployment/security#admin-interface-access-control), which works without a proxy and is the one to reach for first. Nginx rules add a second layer that stops the request before it reaches EmailEngine at all:
 
 ```nginx
 # Admin interface
@@ -411,73 +411,7 @@ location /v1/ {
 }
 ```
 
-**Using geo-blocking:**
-
-```nginx
-# Block countries
-geo $blocked_country {
-    default 0;
-    CN 1;  # China
-    RU 1;  # Russia
-}
-
-server {
-    if ($blocked_country) {
-        return 403;
-    }
-}
-```
-
-### Caching
-
-**Cache API responses:**
-
-```nginx
-# Define cache path
-proxy_cache_path /var/cache/nginx/emailengine
-    levels=1:2
-    keys_zone=emailengine_cache:10m
-    max_size=1g
-    inactive=60m
-    use_temp_path=off;
-
-server {
-    # Cache GET requests
-    location /v1/accounts {
-        proxy_cache emailengine_cache;
-        proxy_cache_valid 200 5m;
-        proxy_cache_valid 404 1m;
-        proxy_cache_bypass $http_cache_control;
-        add_header X-Cache-Status $upstream_cache_status;
-
-        proxy_pass http://emailengine_backend;
-    }
-}
-```
-
-### WebSocket Support
-
-**Full WebSocket configuration:**
-
-```nginx
-map $http_upgrade $connection_upgrade {
-    default upgrade;
-    '' close;
-}
-
-server {
-    location /ws {
-        proxy_pass http://emailengine_backend;
-        proxy_http_version 1.1;
-
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection $connection_upgrade;
-        proxy_set_header Host $host;
-
-        proxy_read_timeout 86400;  # 24 hours
-    }
-}
-```
+A `location /admin` block of its own needs the same `proxy_set_header` lines as `location /`. It does not capture `/admin/changes`: Nginx picks the longest matching prefix and then still tries the regular-expression locations, and the first regex that matches wins, so the streaming block keeps serving the dashboard feed. Declaring the prefix as `location ^~ /admin` would switch that regex check off, so leave the `^~` out.
 
 ### Custom Error Pages
 
@@ -521,11 +455,13 @@ server {
 </html>
 ```
 
+API clients receive these pages instead of JSON when the upstream is down, so keep `error_page` for the admin interface or accept that a 502 during a restart comes back as HTML.
+
 ## Security Hardening
 
 ### Basic Authentication
 
-**Add basic auth to admin panel:**
+EmailEngine's admin interface has its own login, with optional two-factor authentication and passkeys. HTTP basic authentication in Nginx adds a second prompt in front of it, which is useful when the admin interface must not be reachable at all without a shared credential:
 
 ```bash
 # Create password file
@@ -541,22 +477,7 @@ location /admin {
 }
 ```
 
-### ModSecurity WAF
-
-**Install ModSecurity:**
-
-```bash
-sudo apt-get install libnginx-mod-security
-```
-
-**Enable in Nginx:**
-
-```nginx
-server {
-    modsecurity on;
-    modsecurity_rules_file /etc/nginx/modsec/main.conf;
-}
-```
+Do not apply `auth_basic` to `/v1/`: API clients authenticate with the `Authorization: Bearer` header, which basic authentication would intercept.
 
 ### Fail2Ban Integration
 
@@ -564,9 +485,11 @@ server {
 
 ```ini
 [Definition]
-failregex = ^<HOST> -.*"(GET|POST|HEAD).*HTTP.*" (401|403|404)
+failregex = ^<HOST> -.*"(GET|POST|PUT|DELETE|HEAD).*HTTP.*" (401|403)
 ignoreregex =
 ```
+
+Match on 401 and 403 only. A 404 is a normal API answer (a message that no longer exists, a mailbox that was renamed), and banning on it would lock out a working integration.
 
 **Configure jail `/etc/fail2ban/jail.local`:**
 
@@ -614,9 +537,6 @@ awk '{print $9}' /var/log/nginx/emailengine-access.log | sort | uniq -c | sort -
 
 # Top endpoints
 awk '{print $7}' /var/log/nginx/emailengine-access.log | sort | uniq -c | sort -rn | head -10
-
-# Response times
-awk '{print $NF}' /var/log/nginx/emailengine-access.log | sort -n | tail -20
 ```
 
 ### Metrics Export
@@ -634,6 +554,8 @@ location /nginx_status {
     deny all;
 }
 ```
+
+EmailEngine's own metrics are separate: `/metrics` on the EmailEngine port, read with a `metrics`-scoped token. See [Monitoring](/docs/advanced/monitoring).
 
 ## Performance Optimization
 
@@ -692,12 +614,14 @@ http {
         image/svg+xml;
     gzip_disable "msie6";
 
-    # Brotli compression (if available)
+    # Brotli compression (if the module is installed)
     brotli on;
     brotli_comp_level 6;
     brotli_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
 }
 ```
+
+The streaming locations above turn `gzip off` for themselves; a compressed event stream would be held in the compressor's buffer just like a proxied one.
 
 ## Example Configurations
 
@@ -715,7 +639,7 @@ server {
     ssl_certificate /etc/ssl/certs/emailengine-fullchain.pem;
     ssl_certificate_key /etc/ssl/private/emailengine-privkey.pem;
 
-    # EventSource endpoint (no gzip)
+    # Server-Sent Events feed (no gzip, no buffering)
     location ~ ^/(admin|v1)/changes {
         gzip off;
         proxy_pass http://emailengine;
@@ -772,4 +696,5 @@ server {
 - [Security](/docs/deployment/security) - TLS, headers, and access restrictions around the proxy
 - [Linux installation](/docs/installation/linux) - The same proxy configuration alongside the install
 - [Environment variables](/docs/configuration/environment-variables) - `EENGINE_API_PROXY` and the trusted proxy addresses
+- [Change stream](/docs/api/get-v-1-changes) - The Server-Sent Events endpoint the unbuffered location exists for
 - [MCP protocol](/docs/mcp/protocol) - Extra proxy requirements for the streaming endpoint

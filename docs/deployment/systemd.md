@@ -1,264 +1,195 @@
 ---
 title: SystemD Service
-description: Run EmailEngine as a SystemD service on Linux servers with automatic restart
+description: Run EmailEngine as a systemd service on Linux, with the unit file, environment file, hardening and restart policy
 sidebar_position: 3
 ---
 
 # SystemD Service Deployment
 
-Run EmailEngine as a background service on Linux systems using SystemD.
+Run EmailEngine as a background service on Linux under systemd, so it starts at boot, restarts on failure and logs to the journal.
 
 :::info Prerequisites
-- Linux system with SystemD (Ubuntu 16.04+, Debian 8+, CentOS 7+, RHEL 7+)
-- Node.js 20+ installed (24+ recommended) for source installation
-- Redis 6.0+ installed and running
-- EmailEngine binary installed in `/usr/local/bin/` or `/opt/emailengine`
+- A Linux distribution that uses systemd
+- Redis running on the host or reachable from it
+- EmailEngine installed: the binary from [Linux installation](/docs/installation/linux), or a source checkout with Node.js 20+ (24+ recommended) from [Source installation](/docs/installation/source)
 :::
 
 ## Overview
 
-SystemD is the standard init system for most modern Linux distributions. Running EmailEngine as a SystemD service provides:
+EmailEngine fits systemd's `Type=simple` model without adaptation:
 
-- **Automatic startup** on system boot
-- **Process management** (restart on failure)
-- **Log management** with journald
-- **Resource limits** and security isolation
-- **Service dependencies** (start after Redis)
+- It stays in the foreground and does not fork
+- It writes JSON log lines to stdout, which journald captures
+- It shuts down on `SIGTERM`
 
-EmailEngine is well-suited for SystemD because it:
-- Doesn't fork itself (runs in foreground)
-- Logs to stdout/stderr (captured by journald)
-- Responds to SIGTERM for graceful shutdown
+There are three layouts in use, and the unit file differs for each:
 
-## Basic Setup
+| Layout | Binary or code | Unit file | Documented in |
+|--------|----------------|-----------|---------------|
+| Installer script | `/opt/emailengine` | Written by the installer | [Automated installer](/docs/installation/linux#method-1-automated-installer-ubuntudebian), summarized [below](#the-installer-layout) |
+| Manual binary install | `/usr/local/bin/emailengine` | The unit on this page | This page |
+| Source checkout | A clone plus `npm install --omit=dev` | `systemd/emailengine.service` in the repository | [Source installation](/docs/installation/source), summarized [below](#the-source-checkout-layout) |
 
-### 1. Install EmailEngine
+## The Installer Layout
 
-Choose one of the following installation methods:
+`install.sh`, the script served at `https://go.emailengine.app`, writes its own unit file and there is nothing to add to it. What it produces:
 
-**Option A: Download Binary (Recommended)**
+- The binary at `/opt/emailengine`, owned by a system user named `emailengine`
+- `/etc/systemd/system/emailengine.service` with `WorkingDirectory=/opt`, `ExecStart=/opt/emailengine`, `User=emailengine`, `After=redis-server`, `Restart=always` and `SyslogIdentifier=emailengine`
+- The configuration inline in the unit as `Environment=` lines: `EENGINE_REDIS` (database 8, with the Redis password it generated), `EENGINE_PORT=3000`, `EENGINE_SECRET`, `EENGINE_API_PROXY=true`, `EENGINE_WORKERS=8`, `EENGINE_LOG_LEVEL=info` and `EENGINE_INSTALL_SCRIPT=true`, which labels the install method in the [license beacon](/docs/licensing#what-a-licensed-instance-sends-home)
+- Redis configured with `requirepass` and `maxmemory-policy noeviction`
+- Caddy in front of port 3000, terminating TLS for the domain you gave it
+- The generated Redis password and `EENGINE_SECRET` in `/root/emailengine-credentials.txt`
+- An upgrade helper at `/opt/upgrade-emailengine.sh`
+
+The service commands in the rest of this page apply to that unit as well. To change its environment, edit the unit with `sudo systemctl edit --full emailengine` and restart.
+
+## Manual Setup
+
+### 1. Install the Binary
 
 ```bash
-# Download and extract
 wget https://go.emailengine.app/emailengine.tar.gz
 tar xzf emailengine.tar.gz
 sudo mv emailengine /usr/local/bin/
 sudo chmod +x /usr/local/bin/emailengine
 
-# Verify installation
 emailengine --version
 ```
 
-**Option B: Using Install Script (Ubuntu/Debian)**
+### 2. Create the Service User
 
 ```bash
-# Download and run install script
-wget https://go.emailengine.app -O install.sh
-chmod +x install.sh
-sudo ./install.sh
-
-# Verify installation
-emailengine --version
+sudo useradd --system --home /var/lib/emailengine --create-home --shell /usr/sbin/nologin emailengine
 ```
 
-**Option C: From Source**
+The home directory is the unit's working directory. EmailEngine reads a `.env` file from its working directory if one exists.
+
+### 3. Write the Environment File
+
+Keeping the secrets in a root-only file rather than in the unit itself matters because unit files are world-readable. systemd reads `EnvironmentFile=` as root before dropping to the service user, so the file needs no permissions for `emailengine` at all.
 
 ```bash
-# Download source distribution
-wget https://go.emailengine.app/source-dist.tar.gz
-tar xzf source-dist.tar.gz
-cd emailengine
-
-# Install dependencies
-npm install --omit=dev
-
-# Make globally available
-sudo npm link
-
-# Verify installation
-emailengine --version
-```
-
-### 2. Create Service User
-
-Create dedicated user for security:
-
-```bash
-# Create system user
-sudo useradd --system --no-create-home --shell /bin/false emailengine
-
-# Or with home directory for config files
-sudo useradd --system --home /opt/emailengine --shell /bin/false emailengine
-```
-
-### 3. Create Configuration Directory
-
-```bash
-# Create directories
 sudo mkdir -p /etc/emailengine
-sudo mkdir -p /var/log/emailengine
-
-# Set permissions
-sudo chown emailengine:emailengine /etc/emailengine
-sudo chown emailengine:emailengine /var/log/emailengine
+sudo tee /etc/emailengine/emailengine.env > /dev/null <<EOF
+EENGINE_REDIS=redis://127.0.0.1:6379/8
+EENGINE_SECRET=$(openssl rand -hex 32)
+EENGINE_WORKERS=4
+EENGINE_LOG_LEVEL=info
+EOF
+sudo chmod 600 /etc/emailengine/emailengine.env
 ```
 
-### 4. Configuration Options
+Add `EENGINE_API_PROXY=true` when a reverse proxy sits in front of EmailEngine, so the client address is read from `X-Forwarded-For`, and `EENGINE_API_PROXY_ADDRESSES` naming the proxy; see [Trusted Proxy Addresses](/docs/configuration/environment-variables#trusted-proxy-addresses). The API binds to `127.0.0.1` unless `EENGINE_HOST` says otherwise, which is the right default behind a proxy.
 
-EmailEngine can be configured via environment variables (recommended for SystemD) or a TOML configuration file.
-
-:::info Environment Variables Recommended
-For SystemD deployments, environment variables in the service file are simpler and more secure than config files. See the service file example below.
+:::danger Keep EENGINE_SECRET
+`EENGINE_SECRET` encrypts the account credentials stored in Redis. Back it up with the Redis data: without it the stored credentials cannot be decrypted. See [Secret Encryption](/docs/advanced/encryption).
 :::
 
-**Optional: Create TOML configuration file** `/etc/emailengine/config.toml`:
-
-```toml
-[dbs]
-redis = "redis://localhost:6379/8"
-
-[api]
-port = 3000
-host = "127.0.0.1"
-
-[workers]
-imap = 4
-
-[log]
-level = "info"
-```
-
-**Set permissions:**
-```bash
-sudo chown emailengine:emailengine /etc/emailengine/config.toml
-sudo chmod 640 /etc/emailengine/config.toml
-```
-
-:::warning TOML Format Required
-EmailEngine uses TOML configuration files, NOT JSON. If using a config file, it must have `.toml` extension and use TOML syntax.
-:::
-
-### 5. Create SystemD Service File
+### 4. Create the Unit File
 
 Create `/etc/systemd/system/emailengine.service`:
 
 ```ini
 [Unit]
-Description=EmailEngine Email API Service
-Documentation=https://emailengine.app
-After=network.target redis.service
-Requires=redis.service
+Description=EmailEngine
+Documentation=https://learn.emailengine.app/
+# On Debian and Ubuntu the Redis unit is redis-server.service; on most other
+# distributions it is redis.service. Name the one that exists on this host.
+After=network-online.target redis-server.service
+Wants=network-online.target
+# Give up after five restarts within five minutes rather than looping
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
 User=emailengine
 Group=emailengine
-
-# Working directory (where EmailEngine is installed)
-WorkingDirectory=/opt/emailengine
-
-# Start command - use binary directly, no --config flag
+WorkingDirectory=/var/lib/emailengine
+EnvironmentFile=/etc/emailengine/emailengine.env
+Environment="NODE_ENV=production"
 ExecStart=/usr/local/bin/emailengine
 
-# Restart policy
 Restart=always
 RestartSec=5
-StartLimitInterval=300
-StartLimitBurst=5
-
-# Environment variables (recommended configuration method)
-Environment="NODE_ENV=production"
-Environment="EENGINE_REDIS=redis://localhost:6379/8"
-Environment="EENGINE_SECRET=your-secret-key-at-least-32-characters"
-Environment="EENGINE_WORKERS=4"
-
-# Optional: Use config file instead of environment variables
-# Environment="NODE_CONFIG_PATH=/etc/emailengine/config.toml"
 
 # Logging
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=emailengine
 
-# Security hardening
+# Limits, matching the example unit in the EmailEngine repository
+LimitNOFILE=500000
+LimitNPROC=500000
+LimitFSIZE=infinity
+
+# Hardening
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/log/emailengine
-
-# Resource limits
-LimitNOFILE=500000
-LimitNPROC=500000
-LimitFSIZE=infinity
+ReadWritePaths=/var/lib/emailengine
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+LockPersonality=true
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-:::warning Security
-Replace `your-secret-key-at-least-32-characters` with a strong random string.
-:::
+`ProtectSystem=strict` makes the whole file system read-only for the service except the paths in `ReadWritePaths`. [Exports](/docs/receiving/exporting) are written to the temporary directory, which `PrivateTmp` keeps writable; if you point `EENGINE_EXPORT_PATH` or the `exportPath` setting somewhere else, add that directory to `ReadWritePaths`. Do not add `MemoryDenyWriteExecute=true`: Node.js needs writable executable memory for its JIT compiler and cannot run with it set.
 
-### 6. Enable and Start Service
+### 5. Enable and Start
 
 ```bash
-# Reload systemd configuration
 sudo systemctl daemon-reload
-
-# Enable service to start on boot
-sudo systemctl enable emailengine
-
-# Start service
-sudo systemctl start emailengine
-
-# Check status
+sudo systemctl enable --now emailengine
 sudo systemctl status emailengine
 ```
 
-## Configuration Options
+### 6. Verify
 
-### Environment Variables
-
-**Method 1: In service file**
-
-```ini
-[Service]
-Environment="EENGINE_REDIS=redis://localhost:6379/8"
-Environment="EENGINE_SECRET=your-secret-key"
-Environment="EENGINE_WORKERS=4"
-```
-
-**Method 2: Multiple environment variables in service file**
-
-Edit `/etc/systemd/system/emailengine.service`:
-
-```ini
-[Service]
-Environment="EENGINE_REDIS=redis://localhost:6379/8"
-Environment="EENGINE_SECRET=your-secret-key-at-least-32-characters"
-Environment="EENGINE_WORKERS=4"
-Environment="EENGINE_LOG_LEVEL=info"
-```
-
-**Apply changes:**
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl restart emailengine
+curl http://127.0.0.1:3000/health
 ```
 
-### Configuration File (TOML)
+A healthy instance answers `{"success":true}`. The endpoint needs no token and returns `500` when not every IMAP worker thread is running or a Redis write-read-delete round trip fails.
 
-**Optional: Complete `/etc/emailengine/config.toml`:**
+## The Source Checkout Layout
+
+The EmailEngine repository carries `systemd/emailengine.service`, an example unit for a checkout that was prepared with `npm install --omit=dev`. Its notable differences from the unit above:
+
+- `WorkingDirectory` points at the checkout, and `ExecStart=/usr/bin/npm start` runs it (`which npm` gives the path on your host)
+- The commented alternative `ExecStart=/usr/bin/npx emailengine@<version>` downloads the named version on first start, so no checkout is needed; upgrading is a matter of changing the version and restarting
+- It runs as `www-data`, which already exists on most systems; any unprivileged user with read access to the checkout works
+- Configuration is passed as `Environment=` lines, or through a configuration file named in `NODE_CONFIG_PATH`
+
+[Source installation](/docs/installation/source) has the full procedure.
+
+## Configuration File Instead of Environment Variables
+
+Environment variables cover every option, but EmailEngine also reads a configuration file whose values are merged over the built-in defaults. The file may be TOML, JSON or JavaScript, and is named either with the `--config` argument on `ExecStart` or with the `NODE_CONFIG_PATH` environment variable:
+
+```ini
+[Service]
+Environment="NODE_CONFIG_PATH=/etc/emailengine/emailengine.toml"
+```
+
+A file equivalent to the environment file above:
 
 ```toml
 [dbs]
-redis = "redis://localhost:6379/8"
+redis = "redis://127.0.0.1:6379/8"
+
+[service]
+secret = "your-generated-secret"
 
 [api]
 port = 3000
 host = "127.0.0.1"
-proxy = true
 
 [workers]
 imap = 4
@@ -267,100 +198,71 @@ imap = 4
 level = "info"
 ```
 
-:::tip Environment Variables Preferred
-For sensitive values like secrets and OAuth credentials, use environment variables in the service file rather than config files. This is more secure and easier to manage.
-:::
+Make it readable by the service user, since EmailEngine rather than systemd opens it:
+
+```bash
+sudo chown root:emailengine /etc/emailengine/emailengine.toml
+sudo chmod 640 /etc/emailengine/emailengine.toml
+```
+
+The keys are listed under [Configuration Files](/docs/configuration/cli#configuration-files). When a value is set in both places, the environment variable wins.
 
 ## Service Management
 
-### Basic Commands
-
 ```bash
-# Start service
 sudo systemctl start emailengine
-
-# Stop service
 sudo systemctl stop emailengine
-
-# Restart service
 sudo systemctl restart emailengine
-
-# Reload configuration (if supported)
-sudo systemctl reload emailengine
-
-# Check status
 sudo systemctl status emailengine
 
-# Enable auto-start on boot
-sudo systemctl enable emailengine
-
-# Disable auto-start
-sudo systemctl disable emailengine
-```
-
-### Check Service Status
-
-```bash
-# Detailed status
-sudo systemctl status emailengine
-
-# Check if running
 sudo systemctl is-active emailengine
-
-# Check if enabled
 sudo systemctl is-enabled emailengine
-
-# Show service properties
-sudo systemctl show emailengine
+sudo systemctl show emailengine -p NRestarts
 ```
+
+EmailEngine has no configuration reload; after changing the environment file or the unit, run `sudo systemctl daemon-reload` and restart.
 
 **Example status output:**
 
-```
-● emailengine.service - EmailEngine Email API Service
-   Loaded: loaded (/etc/systemd/system/emailengine.service; enabled; vendor preset: enabled)
-   Active: active (running) since Mon 2025-10-13 10:00:00 UTC; 2h 30min ago
-     Docs: https://emailengine.app
- Main PID: 12345 (node)
-    Tasks: 15 (limit: 4915)
-   Memory: 512.5M (limit: 2.0G)
-   CGroup: /system.slice/emailengine.service
-           └─12345 /usr/bin/node /usr/local/bin/emailengine
+```text
+● emailengine.service - EmailEngine
+     Loaded: loaded (/etc/systemd/system/emailengine.service; enabled; preset: enabled)
+     Active: active (running) since Mon 2026-08-24 10:00:00 UTC; 2h 30min ago
+       Docs: https://learn.emailengine.app/
+   Main PID: 12345 (emailengine)
+      Tasks: 15 (limit: 4915)
+     Memory: 512.5M
+     CGroup: /system.slice/emailengine.service
+             └─12345 /usr/local/bin/emailengine
 ```
 
-## Log Management
+## Logs
 
-### View Logs with Journalctl
+EmailEngine writes one JSON object per line to stdout, and journald stores them:
 
 ```bash
-# View recent logs
-sudo journalctl -u emailengine
-
-# Follow logs in real-time
+# Follow
 sudo journalctl -u emailengine -f
 
-# View logs from last boot
-sudo journalctl -u emailengine -b
-
-# View logs from specific time
-sudo journalctl -u emailengine --since "2025-10-13 10:00:00"
+# Since a point in time
+sudo journalctl -u emailengine --since "2026-08-24 10:00:00"
 sudo journalctl -u emailengine --since "1 hour ago"
 
-# View last 100 lines
+# Last 100 lines
 sudo journalctl -u emailengine -n 100
 
-# View logs with priority (errors only)
+# Errors only
 sudo journalctl -u emailengine -p err
 
-# Export logs to file
-sudo journalctl -u emailengine > emailengine.log
+# Raw lines, for piping into jq
+sudo journalctl -u emailengine -o cat | jq .
 ```
 
-### Log Rotation
+`EENGINE_LOG_LEVEL` in the environment file sets the verbosity; the default is `trace`, which is far more than a production host wants. [Logging](/docs/advanced/logging) describes the levels and the fields.
 
-**SystemD automatically rotates journal logs**, but you can configure retention:
+### Journal Retention
 
-Edit `/etc/systemd/journald.conf`:
+Journald rotates on its own. To bound what it keeps, edit `/etc/systemd/journald.conf`:
 
 ```ini
 [Journal]
@@ -369,547 +271,166 @@ SystemMaxFileSize=100M
 MaxRetentionSec=7day
 ```
 
-**Apply changes:**
-```bash
-sudo systemctl restart systemd-journald
-```
+Then `sudo systemctl restart systemd-journald`.
 
-### File-Based Logging
+### Log Files
 
-**Configure via environment variables:**
+EmailEngine does not write log files itself. If a file is required, for example for a collector that cannot read the journal, let systemd append stdout to one:
 
 ```ini
 [Service]
-Environment="EENGINE_LOG_LEVEL=info"
+StandardOutput=append:/var/log/emailengine/emailengine.log
+StandardError=inherit
 ```
 
-Or in TOML config file:
+Create the directory writable by the service user and add it to `ReadWritePaths`. Rotate with `logrotate` using `copytruncate`, since the process keeps the file open and cannot be told to reopen it.
 
-```toml
-[log]
-level = "info"
-```
+## Resource Limits and Memory
 
-**Set up logrotate:**
+### Restart on Memory Threshold
 
-Create `/etc/logrotate.d/emailengine`:
-
-```
-/var/log/emailengine/*.log {
-    daily
-    rotate 14
-    compress
-    delaycompress
-    missingok
-    notifempty
-    create 0640 emailengine emailengine
-    sharedscripts
-    postrotate
-        /bin/systemctl reload emailengine > /dev/null 2>&1 || true
-    endscript
-}
-```
-
-## Security Hardening
-
-### Minimal Service File
-
-```ini
-[Unit]
-Description=EmailEngine Email API Service
-After=network.target redis.service
-Requires=redis.service
-
-[Service]
-Type=simple
-User=emailengine
-Group=emailengine
-WorkingDirectory=/opt/emailengine
-ExecStart=/usr/local/bin/emailengine
-Restart=always
-
-# Security
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/var/log/emailengine
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectControlGroups=true
-RestrictRealtime=true
-RestrictNamespaces=true
-LockPersonality=true
-MemoryDenyWriteExecute=true
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
-
-# Capabilities
-CapabilityBoundingSet=
-AmbientCapabilities=
-
-# System calls
-SystemCallFilter=@system-service
-SystemCallFilter=~@privileged @resources
-SystemCallErrorNumber=EPERM
-
-[Install]
-WantedBy=multi-user.target
-```
-
-### File Permissions
-
-```bash
-# Service file
-sudo chmod 644 /etc/systemd/system/emailengine.service
-
-# Configuration files (if using TOML config)
-sudo chmod 640 /etc/emailengine/config.toml
-sudo chown root:emailengine /etc/emailengine/config.toml
-
-# Environment file (secrets)
-sudo chmod 640 /etc/emailengine/environment
-sudo chown root:emailengine /etc/emailengine/environment
-
-# Log directory
-sudo chmod 750 /var/log/emailengine
-sudo chown emailengine:emailengine /var/log/emailengine
-```
-
-### Resource Limits
-
-**CPU limits:**
-```ini
-[Service]
-CPUQuota=200%          # Max 2 CPU cores
-CPUWeight=100          # Priority (1-10000)
-```
-
-**Memory limits:**
-```ini
-[Service]
-MemoryLimit=2G         # Hard limit
-MemoryHigh=1.5G        # Soft limit (throttling)
-```
-
-**File descriptor limits:**
-```ini
-[Service]
-LimitNOFILE=500000     # Max open files (matches official config)
-LimitNPROC=500000      # Max processes
-LimitFSIZE=infinity    # No file size limit
-```
-
-**IO limits:**
-```ini
-[Service]
-IOWeight=500           # IO priority
-IOReadBandwidthMax=/var 10M
-IOWriteBandwidthMax=/var 10M
-```
-
-### Automatic Restart on Memory Threshold
-
-SystemD can automatically restart EmailEngine when memory usage exceeds a defined threshold. This is useful for preventing runaway memory usage from causing system-wide issues and ensuring long-term stability.
-
-**Configure memory-based automatic restart:**
+`MemoryMax` makes the kernel kill the service when its cgroup exceeds the limit, and `Restart=always` brings it back:
 
 ```ini
 [Service]
-# Memory threshold - service is killed when exceeded
 MemoryMax=4G
-
-# Ensure service restarts after being killed
 Restart=always
 RestartSec=5
 ```
 
-When EmailEngine's memory usage exceeds `MemoryMax`, SystemD terminates the process with an OOM (Out of Memory) kill signal. Combined with `Restart=always`, the service automatically restarts with fresh memory allocation.
+The journal records the kill:
 
-**Complete example with memory management:**
-
-```ini
-[Unit]
-Description=EmailEngine Email API Service
-After=network.target redis.service
-Requires=redis.service
-
-[Service]
-Type=simple
-User=emailengine
-Group=emailengine
-WorkingDirectory=/opt/emailengine
-ExecStart=/usr/local/bin/emailengine
-
-# Memory management - kill and restart when exceeded
-MemoryMax=4G
-
-# Restart policy
-Restart=always         # Always restart (including after OOM kill)
-RestartSec=5           # Wait 5 seconds before restart
-StartLimitInterval=300 # Rate limit: max restarts within 5 minutes
-StartLimitBurst=5      # Max 5 restarts within interval
-
-# Environment
-Environment="EENGINE_REDIS=redis://localhost:6379/8"
-Environment="EENGINE_SECRET=your-secret-key-at-least-32-characters"
-
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=emailengine
-
-[Install]
-WantedBy=multi-user.target
-```
-
-**How it works:**
-
-1. **MemoryMax:** When memory exceeds this value, SystemD sends SIGKILL to terminate the service
-2. **Restart=always:** Ensures the service restarts after any termination, including OOM kills
-3. **StartLimitBurst/Interval:** Prevents rapid restart loops if there are severe issues
-
-**Verify memory-based restart is configured:**
-
-```bash
-# Check current memory limit
-sudo systemctl show emailengine -p MemoryMax
-
-# Monitor memory usage
-sudo systemctl status emailengine | grep Memory
-
-# View OOM kill events in logs
-sudo journalctl -u emailengine | grep -i "killed\|oom"
-
-# Check restart count
-sudo systemctl show emailengine -p NRestarts
-```
-
-**Example log output after memory-based restart:**
-
-```
+```text
 emailengine.service: A process of this unit has been killed by the OOM killer.
 emailengine.service: Main process exited, code=killed, status=9/KILL
 emailengine.service: Scheduled restart job, restart counter is at 1.
-Started EmailEngine Email API Service.
+Started emailengine.service - EmailEngine.
 ```
 
-:::tip Choosing Memory Limits
-Memory usage varies significantly based on the number of accounts, message volume, and specific usage patterns. Monitor your actual memory usage over time with `systemctl status emailengine` and set `MemoryMax` appropriately for your workload. Leave enough headroom below your server's total RAM for the operating system and other services.
-:::
+Memory use scales with the number of accounts and the size of their mailboxes. Watch `systemctl status emailengine` for a while before choosing the limit, and leave headroom for Redis and the operating system. `StartLimitIntervalSec` and `StartLimitBurst` in the `[Unit]` section above stop a service that dies immediately after every restart from looping; `systemctl reset-failed emailengine` clears the counter once the cause is fixed.
 
-:::warning Detecting Memory Exhaustion
-If EmailEngine's CPU usage reaches 100% and stays there persistently, this often indicates the process has exhausted available memory. When this happens, the system starts thrashing (excessive swapping), causing high CPU load while the process becomes unresponsive. Setting `MemoryMax` prevents this scenario by terminating and restarting the service before it can consume all system memory.
-:::
-
-:::warning Restart Limits
-The `StartLimitBurst` and `StartLimitInterval` settings prevent infinite restart loops. If EmailEngine restarts more than 5 times within 5 minutes, SystemD stops trying. Check logs to diagnose the underlying issue.
-:::
-
-## Advanced Configuration
-
-### Multiple Instances
-
-Run multiple EmailEngine instances on different ports:
-
-**Instance 1:** `/etc/systemd/system/emailengine@3001.service`
-
-```ini
-[Unit]
-Description=EmailEngine Instance on port %i
-After=network.target redis.service
-
-[Service]
-Type=simple
-User=emailengine
-ExecStart=/usr/bin/emailengine --api.port=%i
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-```
-
-**Start instances:**
-```bash
-sudo systemctl start emailengine@3001
-sudo systemctl start emailengine@3002
-sudo systemctl enable emailengine@3001
-sudo systemctl enable emailengine@3002
-```
-
-### Dependency Management
-
-**Start after Redis:**
-
-```ini
-[Unit]
-After=redis.service
-Requires=redis.service
-```
-
-**Wait for network:**
-
-```ini
-[Unit]
-After=network-online.target
-Wants=network-online.target
-```
-
-**Start after file system:**
-
-```ini
-[Unit]
-After=local-fs.target
-RequiresMountsFor=/var/log/emailengine
-```
-
-### Graceful Shutdown
-
-**Configure timeout:**
+### CPU
 
 ```ini
 [Service]
-TimeoutStopSec=30      # Wait 30s before SIGKILL
-KillMode=mixed         # SIGTERM to main, then SIGKILL
+CPUQuota=200%
 ```
 
-**Pre-stop script:**
+Caps the service at two cores' worth of CPU time. EmailEngine's IMAP work is spread across `EENGINE_WORKERS` threads, so a quota lower than the worker count leaves threads waiting.
+
+## Multiple Instances on One Host
+
+Each instance needs its own Redis database and its own port. Two instances on the same Redis database both sync every account and corrupt each other's state.
+
+A template unit reads a per-instance environment file. Create `/etc/systemd/system/emailengine@.service` as a copy of the unit above with these lines changed:
 
 ```ini
 [Service]
-ExecStop=/usr/local/bin/emailengine-stop.sh
+EnvironmentFile=/etc/emailengine/%i.env
+WorkingDirectory=/var/lib/emailengine/%i
+ReadWritePaths=/var/lib/emailengine/%i
 ```
 
-**Create `/usr/local/bin/emailengine-stop.sh`:**
+Then give each instance a file that names a distinct database and port:
 
 ```bash
-#!/bin/bash
-# Notify monitoring system
-curl -X POST https://monitor.example.com/emailengine/stopping
+# /etc/emailengine/tenant-a.env
+EENGINE_REDIS=redis://127.0.0.1:6379/8
+EENGINE_PORT=3000
+EENGINE_SECRET=3f0c9d7a2b1e4c8f9a6d5e4b3c2a1f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a
 
-# Allow connections to drain
-sleep 5
+# /etc/emailengine/tenant-b.env
+EENGINE_REDIS=redis://127.0.0.1:6379/9
+EENGINE_PORT=3001
+EENGINE_SECRET=a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5
 ```
 
-## Monitoring and Health Checks
+```bash
+sudo mkdir -p /var/lib/emailengine/tenant-a /var/lib/emailengine/tenant-b
+sudo chown emailengine:emailengine /var/lib/emailengine/tenant-*
+sudo systemctl enable --now emailengine@tenant-a emailengine@tenant-b
+```
 
-### SystemD Health Checks
+## Shutdown
 
-**Configure watchdog:**
+On `systemctl stop`, systemd sends `SIGTERM` and EmailEngine closes its IMAP connections and exits. Give it long enough to do so on a host with many accounts:
 
 ```ini
 [Service]
-WatchdogSec=60
-Restart=on-watchdog
+TimeoutStopSec=30
+KillMode=mixed
 ```
 
-**Check health endpoint:**
+`KillMode=mixed` sends `SIGTERM` to the main process only and `SIGKILL` to anything left in the cgroup once the timeout expires.
 
-Create `/usr/local/bin/emailengine-health.sh`:
+## Monitoring
+
+### Prometheus
+
+`GET /metrics` serves Prometheus metrics to a token holding the `metrics` scope. The CLI writes tokens straight into Redis, so give it the same connection string the service uses:
 
 ```bash
-#!/bin/bash
-response=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/health)
-if [ "$response" = "200" ]; then
-    exit 0
-else
-    exit 1
-fi
+emailengine tokens issue -d "Prometheus" -s "metrics" --dbs.redis="redis://127.0.0.1:6379/8"
 ```
-
-**Add to service:**
-
-```ini
-[Service]
-ExecStartPost=/usr/local/bin/emailengine-health.sh
-```
-
-### Monitoring Commands
 
 ```bash
-# CPU and memory usage
-sudo systemctl status emailengine | grep -E 'CPU|Memory'
+curl -H "Authorization: Bearer YOUR_TOKEN" http://127.0.0.1:3000/metrics
+```
 
-# Detailed resource usage
+[Monitoring](/docs/advanced/monitoring) lists the metrics.
+
+### Commands
+
+```bash
+# CPU and memory of the service cgroup
 sudo systemd-cgtop
 
-# Service failures
+# Units in the failed state
 sudo systemctl list-units --failed
 
-# Restart count
+# Restart count since boot
 sudo systemctl show emailengine -p NRestarts
 ```
 
-### Integration with Monitoring Tools
+## Updates
 
-**Prometheus metrics:**
-
-Metrics are available at `/metrics` endpoint on the main API port. Create a token with metrics scope:
+Replace the binary and restart. The service is down for the duration of the restart only.
 
 ```bash
-emailengine tokens issue -d "Prometheus" -s "metrics"
-```
-
-Access metrics:
-```bash
-curl -H "Authorization: Bearer YOUR_TOKEN" http://localhost:3000/metrics
-```
-
-**Export logs to external system:**
-
-```bash
-# Forward to syslog
-sudo journalctl -u emailengine -f | logger -t emailengine
-
-# Forward to Logstash
-sudo journalctl -u emailengine -f -o json | \
-  netcat logstash.example.com 5000
-```
-
-## Updates and Maintenance
-
-### Update EmailEngine
-
-```bash
-# Stop service
-sudo systemctl stop emailengine
-
-# Download new version
+# Latest release
 wget https://go.emailengine.app/emailengine.tar.gz
-tar xzf emailengine.tar.gz
 
-# Replace binary
+# Or a specific release, for example
+# wget https://go.emailengine.app/download/v2.79.4/emailengine.tar.gz
+
+tar xzf emailengine.tar.gz
 sudo mv emailengine /usr/local/bin/
 sudo chmod +x /usr/local/bin/emailengine
+sudo systemctl restart emailengine
 
-# Or download specific version (e.g., v2.48.5)
-# wget https://github.com/postalsys/emailengine/releases/download/v2.48.5/emailengine.tar.gz
-
-# Reload systemd (if service file changed)
-sudo systemctl daemon-reload
-
-# Start service
-sudo systemctl start emailengine
-
-# Verify version
 emailengine --version
 ```
 
-### Backup Configuration
+Installer-managed hosts run `/opt/upgrade-emailengine.sh` instead, which downloads the latest release, compares versions and restarts the service only when they differ.
+
+## Backup
+
+The state is in Redis and the secret is in the environment file. Back up both:
 
 ```bash
-# Backup configuration files
 sudo tar czf emailengine-config-$(date +%Y%m%d).tar.gz \
   /etc/emailengine/ \
   /etc/systemd/system/emailengine.service
 
-# Backup Redis data
-sudo cp /var/lib/redis/dump.rdb /backup/
+sudo cp /var/lib/redis/dump.rdb /backup/emailengine-$(date +%Y%m%d).rdb
 ```
 
-### Service File Changes
-
-```bash
-# Edit service file
-sudo systemctl edit --full emailengine
-
-# Or manually edit
-sudo nano /etc/systemd/system/emailengine.service
-
-# Reload systemd
-sudo systemctl daemon-reload
-
-# Restart service
-sudo systemctl restart emailengine
-```
-
-## Complete Example
-
-### Production Setup
-
-**1. Install dependencies:**
-```bash
-sudo apt update
-sudo apt install -y redis-server
-
-# Download and install EmailEngine
-wget https://go.emailengine.app/emailengine.tar.gz
-tar xzf emailengine.tar.gz
-sudo mv emailengine /usr/local/bin/
-sudo chmod +x /usr/local/bin/emailengine
-```
-
-**2. Create user and directories:**
-```bash
-sudo useradd --system --home /opt/emailengine --shell /bin/false emailengine
-sudo mkdir -p /etc/emailengine /var/log/emailengine
-sudo chown emailengine:emailengine /var/log/emailengine
-```
-
-**3. Generate secret:**
-```bash
-# Generate a random secret (minimum 32 characters) and save it
-openssl rand -hex 32
-```
-
-**Save this value securely!** You'll use it in the service file below.
-
-**4. Create service file (use the secret from step 3):**
-```bash
-sudo tee /etc/systemd/system/emailengine.service > /dev/null <<'EOF'
-[Unit]
-Description=EmailEngine Email API Service
-After=network.target redis.service
-Requires=redis.service
-
-[Service]
-Type=simple
-User=emailengine
-Group=emailengine
-WorkingDirectory=/opt/emailengine
-
-# Replace with your actual secret from step 3
-Environment="EENGINE_REDIS=redis://localhost:6379/8"
-Environment="EENGINE_SECRET=your-generated-secret-from-step-3"
-Environment="EENGINE_WORKERS=4"
-Environment="EENGINE_LOG_LEVEL=info"
-
-ExecStart=/usr/local/bin/emailengine
-Restart=always
-RestartSec=10
-
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=emailengine
-
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/var/log/emailengine
-
-LimitNOFILE=65536
-MemoryLimit=2G
-
-[Install]
-WantedBy=multi-user.target
-EOF
-```
-
-**5. Enable and start:**
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable emailengine
-sudo systemctl start emailengine
-sudo systemctl status emailengine
-```
-
-**6. Verify:**
-```bash
-curl http://localhost:3000/health
-```
+`dump.rdb` is only as current as the last Redis snapshot; see [Redis](/docs/configuration/redis#persistence-configuration-recommended) for the persistence settings.
 
 ## See Also
 
-- [Linux installation](/docs/installation/linux) - Getting the binary in place first
+- [Linux installation](/docs/installation/linux) - Getting the binary in place first, or letting the installer do all of this
 - [Source installation](/docs/installation/source) - The unit file for a source deployment
+- [Configuration files](/docs/configuration/cli#configuration-files) - Every key the TOML file accepts
 - [Logging](/docs/advanced/logging) - Reading what the unit writes to the journal
-- [Security](/docs/deployment/security) - Hardening directives worth adding to the unit
+- [Security](/docs/deployment/security) - What to lock down once the service is running

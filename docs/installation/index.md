@@ -1,6 +1,6 @@
 ---
 title: Install EmailEngine - Setup Guide for All Platforms
-description: Install EmailEngine on Linux, macOS, Windows, or Docker, with one-click cloud deployments for Render, DigitalOcean, CapRover, and Heroku.
+description: Install EmailEngine on Linux, macOS, Windows, or Docker, with one-click cloud deployments for Render, DigitalOcean, and Heroku.
 sidebar_position: 1
 keywords:
   - install EmailEngine
@@ -29,9 +29,9 @@ sudo mv emailengine /usr/local/bin/
 # Docker: Run container
 docker run -p 3000:3000 --env EENGINE_REDIS="redis://host.docker.internal:6379/8" postalsys/emailengine:v2
 
-# Source: Production deployment
+# Source: Production deployment (the tarball has no top-level directory, so make one)
 wget https://go.emailengine.app/source-dist.tar.gz
-tar xzf source-dist.tar.gz && cd emailengine
+mkdir emailengine && tar xzf source-dist.tar.gz -C emailengine && cd emailengine
 node server.js
 ```
 
@@ -41,12 +41,12 @@ node server.js
 
 #### [Linux Installation](/docs/installation/linux)
 
-Install on Ubuntu, Debian, CentOS, or RHEL.
+Install on any distribution.
 
 **Methods:**
 
-- Automated installer (Ubuntu/Debian) - one-click setup
-- Binary installation - standalone executable
+- Automated installer (Ubuntu/Debian) - installs Redis, Caddy, and a SystemD service in one run
+- Binary installation - standalone x86_64 executable
 - Source installation
 
 **Best for:** Servers, VPS hosting, production deployments
@@ -61,8 +61,7 @@ Install on macOS (Apple Silicon or Intel).
 
 **Methods:**
 
-- PKG installer - signed macOS package
-- Homebrew + binary
+- PKG installer - signed and notarized package, one per architecture
 - Source installation
 
 **Best for:** Development, testing, local deployments
@@ -73,12 +72,12 @@ Install on macOS (Apple Silicon or Intel).
 
 #### [Windows Installation](/docs/installation/windows)
 
-Install on Windows 10+ (native or WSL2).
+Install on Windows (native or WSL2).
 
 **Methods:**
 
-- Windows executable - standalone .exe
-- WSL2 installation - recommended for production
+- Windows executable - standalone .exe with a Redis-compatible server such as Memurai
+- WSL2 installation - the Linux build inside Windows
 - Docker Desktop
 
 **Best for:** Development, testing, Windows servers
@@ -146,17 +145,13 @@ Automatic setup with managed Redis.
 
 One-click droplet with everything pre-configured.
 
-**Note:** Request SMTP port unblocking from DigitalOcean support.
-
-#### CapRover
-
-Deploy via One-Click Apps in CapRover dashboard. Search for "EmailEngine".
+**Note:** DigitalOcean blocks outbound SMTP ports 25, 465, and 587 on Droplets (per [Why is SMTP blocked?](https://docs.digitalocean.com/support/why-is-smtp-blocked/), checked 2026-08-26), so an EmailEngine on a Droplet can receive mail but cannot reach most providers' SMTP servers to send. Sending needs an SMTP relay on a port that is not blocked, or a host that allows SMTP.
 
 #### Heroku
 
 [![Deploy to Heroku](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/postalsys/emailengine)
 
-**Note:** Pick a dyno with at least 4 GB of memory. EmailEngine holds one connection per account, and the smaller dynos run out of memory before they run out of connections.
+The button reads the `app.json` in the EmailEngine repository. It provisions a `heroku-redis` add-on and sets `EENGINE_WORKERS=1` because the Heroku Redis add-on caps the number of client connections; raise the worker count only together with a larger Redis plan. It also sets `NODE_TLS_REJECT_UNAUTHORIZED=0`, which the template needs to reach the Heroku Redis add-on over TLS and which disables certificate validation for every outbound TLS connection EmailEngine makes.
 
 [View all deployment guides →](/docs/deployment)
 

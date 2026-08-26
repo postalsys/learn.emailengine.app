@@ -1,35 +1,27 @@
 ---
 title: macOS Installation
-description: Install EmailEngine on macOS using PKG installer or Homebrew
+description: Install EmailEngine on macOS using the signed PKG installer or from source
 sidebar_position: 3
 ---
 
 # Installing EmailEngine on macOS
 
-Two ways to run EmailEngine on macOS: the signed PKG installer, or from source. Both work on Apple Silicon and Intel.
+Two ways to run EmailEngine on macOS: the signed and notarized PKG installer, or from source. Both work on Apple Silicon and Intel.
 
 ## Overview
 
 EmailEngine can be installed on macOS using two methods:
 
-1. **PKG Installer** - Graphical installer for both Apple Silicon and Intel Macs
+1. **PKG Installer** - One package for Apple Silicon and one for Intel Macs
 2. **Source Installation** - Run from source (requires Node.js 20+, recommended 24+)
 
 ### System Requirements
 
-**Minimum (development/testing):**
-- macOS 11 (Big Sur) or later
-- 2 GB RAM
-- 10 GB storage
-
-**Recommended (production):**
-- macOS 12 (Monterey) or later
-- 4-8 GB RAM or more
-- 20+ GB SSD storage
+The figures on the [installation overview](/docs/installation#system-requirements) apply: 2 GB of memory to evaluate, 4 to 8 GB for production. The packaged binary bundles a Node.js 24 runtime, so it runs on any macOS release that Node.js 24 supports.
 
 ### Required Software
 
-- **Redis 6.0+** (install via Homebrew)
+- **Redis** (install via Homebrew), stand-alone, with `maxmemory-policy noeviction`
 - **Node.js 20+** (only for source installation)
 - **Homebrew** (recommended for Redis installation)
 
@@ -55,8 +47,8 @@ The easiest way to install EmailEngine on macOS.
 # Download latest version
 curl -LO https://go.emailengine.app/emailengine-arm.pkg
 
-# Or download specific version (e.g., 2.79.3)
-curl -LO https://go.emailengine.app/download/v2.79.3/emailengine-arm.pkg
+# Or download specific version (e.g., 2.79.4)
+curl -LO https://go.emailengine.app/download/v2.79.4/emailengine-arm.pkg
 ```
 
 **For Intel Macs:**
@@ -64,15 +56,30 @@ curl -LO https://go.emailengine.app/download/v2.79.3/emailengine-arm.pkg
 # Download latest version
 curl -LO https://go.emailengine.app/emailengine.pkg
 
-# Or download specific version (e.g., 2.79.3)
-curl -LO https://go.emailengine.app/download/v2.79.3/emailengine.pkg
+# Or download specific version (e.g., 2.79.4)
+curl -LO https://go.emailengine.app/download/v2.79.4/emailengine.pkg
 ```
+
+The package is signed with a Developer ID Installer certificate and notarized by Apple, so Gatekeeper opens it without an override. To check before installing:
+
+```bash
+pkgutil --check-signature emailengine-arm.pkg
+spctl -a -vv -t install emailengine-arm.pkg
+```
+
+The first command names the certificate and reports `Notarization: trusted by the Apple notary service`; the second answers `accepted` with `source=Notarized Developer ID`.
 
 ### Install
 
 1. Double-click the downloaded `.pkg` file
 2. Follow the installation wizard
-3. Installer will place binary at `/usr/local/bin/emailengine`
+3. The package (identifier `com.postalsys.emailengine`) installs a single file, `/usr/local/bin/emailengine`, and asks for an administrator password because that directory is not user-writable. It runs no install scripts and does not create a launch agent or any configuration; starting EmailEngine at login is set up separately below
+
+Or install from the terminal:
+
+```bash
+sudo installer -pkg emailengine-arm.pkg -target /
+```
 
 ### Verify Installation
 
@@ -149,7 +156,7 @@ Create `~/Library/LaunchAgents/com.emailengine.plist`:
     <key>EnvironmentVariables</key>
     <dict>
         <key>EENGINE_REDIS</key>
-        <string>redis://127.0.0.1:6379</string>
+        <string>redis://127.0.0.1:6379/8</string>
         <key>EENGINE_SECRET</key>
         <string>your-encryption-secret-from-openssl-rand-hex-32</string>
         <key>EENGINE_WORKERS</key>

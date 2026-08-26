@@ -10,13 +10,16 @@ Prepared configuration allows you to pre-configure EmailEngine settings, access 
 
 ## Overview
 
-EmailEngine supports three types of prepared configuration:
+EmailEngine supports four types of prepared configuration:
 
-1. **Prepared Settings** - Runtime configuration (webhooks, OAuth2, etc.)
-2. **Prepared Access Tokens** - API authentication tokens
-3. **Prepared License Keys** - License activation
+1. **Prepared Settings** (`EENGINE_SETTINGS`) - Runtime configuration such as webhooks and the service URL, described on this page
+2. **Prepared Access Tokens** (`EENGINE_PREPARED_TOKEN`) - An [exported API token](/docs/configuration/prepared-settings/tokens)
+3. **Prepared License Keys** (`EENGINE_PREPARED_LICENSE`) - [License activation](/docs/configuration/prepared-settings/license)
+4. **Prepared Admin Password** (`EENGINE_PREPARED_PASSWORD`) - A password hash produced by [`emailengine password --hash`](/docs/configuration/reset-password)
 
-All prepared configuration is applied on every application startup. This means settings will be overwritten each time EmailEngine starts, ensuring your environment configuration always takes precedence.
+Each of these is read from the environment variable, from the matching `_FILE` variable (`EENGINE_SETTINGS_FILE` and so on, see [Loading values from files](/docs/configuration/environment-variables#loading-values-from-files)), or from the command line and configuration file under the keys `settings`, `preparedToken`, `preparedLicense` and `preparedPassword`.
+
+Prepared configuration is processed on every startup, after the Redis connection is up and before the workers start. Settings, the license and the password are written each time, so a value changed through the API or the admin interface reverts to the prepared value at the next restart. A prepared token is imported only if its hash is not already stored; an existing token is left untouched.
 
 ## Use Cases
 
@@ -89,7 +92,6 @@ ENV EENGINE_SETTINGS='{"webhooks":"https://your-app.com/webhook","webhookEvents"
 
 **Multi-line YAML format (recommended):**
 ```yaml
-version: '3.8'
 services:
   emailengine:
     image: postalsys/emailengine:v2
@@ -135,6 +137,8 @@ EENGINE_SETTINGS='{
 }'
 ```
 
+`webhookEvents` is an allowlist with no default: without it, no webhooks are delivered. `["*"]` subscribes to every event.
+
 **Complete configuration:**
 ```bash
 EENGINE_SETTINGS='{
@@ -164,20 +168,17 @@ EENGINE_SETTINGS='{
 ```
 
 :::note OAuth2 Configuration
-OAuth2 provider credentials (Gmail, Outlook) should be configured using the OAuth2 Applications API (`/v1/oauth2`) rather than the settings endpoint. The legacy settings like `gmailClientId` are deprecated.
+OAuth2 provider credentials (Gmail, Outlook) are configured as [OAuth2 applications](/docs/accounts/oauth2-setup), through the admin interface or `POST /v1/oauth2`, not through settings. The legacy settings keys such as `gmailClientId` are no longer read: an `EENGINE_SETTINGS` value that still carries them starts normally, but the keys are dropped and an error is logged naming them (since v2.79.1).
 :::
 
 ### Validation
 
-Settings are validated on startup. If validation fails, the application won't start:
+The JSON is parsed and validated against the settings schema (the same one `POST /v1/settings` uses) before EmailEngine connects to anything. Two outcomes are possible:
 
-```
-Error: Invalid settings configuration
-  - webhooks: must be a valid URL
-  - webhookEvents: must be an array
-```
+- **Invalid JSON or an invalid value** (a `webhooks` value that is not a URL, a string where a boolean is expected): EmailEngine logs a fatal `Invalid settings configuration provided` line and exits with status 1. The log entry carries the validation details, with secret values redacted.
+- **Unknown keys** (a typo, or a key from an older release): the key is dropped, an error line `Ignoring unknown keys in the prepared settings` lists the dropped keys, and startup continues with the remaining settings.
 
-Check your JSON syntax and setting values if you encounter errors.
+Values are coerced the way the API coerces them, so `"notifyText": "true"` is accepted as a boolean.
 
 ### Updating Prepared Settings
 
@@ -186,27 +187,25 @@ Prepared settings are applied on every startup, overwriting existing values. To 
 1. Update the `EENGINE_SETTINGS` environment variable and restart EmailEngine
 2. Or use the Settings API for runtime changes (will be overwritten on next restart if also defined in `EENGINE_SETTINGS`)
 
+Only the keys present in `EENGINE_SETTINGS` are written. Removing a key from the variable does not clear the stored value; clear it through the API or the admin interface.
+
 **Update settings via API:**
 ```bash
-# Update specific setting
-curl -X POST http://localhost:3000/v1/settings \
+curl -X POST https://emailengine.example.com/v1/settings \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "webhooks": "https://new-webhook-url.com/webhook",
     "webhookEvents": ["messageNew", "messageSent"]
   }'
-
-# Clear specific setting by setting to null
-curl -X POST http://localhost:3000/v1/settings \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"webhooks": null}'
 ```
+
+The response is `{"updated": ["webhooks", "webhookEvents"]}`. To clear the webhook URL, send an empty string (`{"webhooks": ""}`); `webhooks` does not accept `null`.
 
 ## See Also
 
 - [Prepared Access Tokens](/docs/configuration/prepared-settings/tokens) - Pre-configure API access tokens
 - [Prepared License](/docs/configuration/prepared-settings/license) - Pre-configure license keys
+- [Reset Password](/docs/configuration/reset-password) - Generating the hash for `EENGINE_PREPARED_PASSWORD`
 - [Environment Variables](/docs/configuration/environment-variables) - Complete environment variable reference
-- [Settings API](/docs/api/post-v-1-settings) - Programmatic settings management
+- [Settings API](/docs/api/post-v-1-settings) - Every settings key, its type and default

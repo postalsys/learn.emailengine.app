@@ -12,25 +12,17 @@ Three ways to run EmailEngine on Linux: the automated installer for a fresh Ubun
 
 EmailEngine can be installed on Linux using three methods:
 
-1. **Automated Installer** (Ubuntu/Debian) - One-click script for fresh servers
-2. **Binary Installation** - Standalone executable (all distributions)
+1. **Automated Installer** (Ubuntu/Debian) - A script for fresh, public-facing servers
+2. **Binary Installation** - Standalone x86_64 executable (any distribution)
 3. **Source Installation** - Run from source for production (requires Node.js 20+, recommended 24+)
 
 ### System Requirements
 
-**Minimum (development/testing):**
-- 1-2 CPU cores
-- 2 GB RAM
-- 10 GB storage
-
-**Recommended (production):**
-- 4+ CPU cores
-- 4-8 GB RAM or more
-- 20+ GB SSD storage
+The figures on the [installation overview](/docs/installation#system-requirements) apply: 2 GB of memory to evaluate, 4 to 8 GB for production.
 
 ### Required Software
 
-- **Redis 6.0+** (stand-alone mode, persistence enabled)
+- **Redis** - a stand-alone instance with `maxmemory-policy noeviction` and persistence enabled; Redis Cluster and ElastiCache are not supported. The EmailEngine README states that any Redis version works
 - **Node.js 20+** (only for source installation, recommended 24+)
 - **OpenSSL** (for generating secrets)
 
@@ -50,14 +42,14 @@ Once installed, EmailEngine runs as an unprivileged user. For privileged ports, 
 
 ## Method 1: Automated Installer (Ubuntu/Debian)
 
-The easiest way to install EmailEngine on Ubuntu 20.04+ or Debian 11+.
+A script that installs and wires up everything a single-server deployment needs. It does not check which distribution it is running on; what it needs is `apt-get`, systemd, a `redis-server` package that reads `/etc/redis/redis.conf`, and Caddy's Debian package repository, which is what Ubuntu and Debian provide. It has to run as root and, for a new installation, on a server reachable from the public internet, because Caddy provisions the TLS certificate during the run.
 
 ### What It Installs
 
 - EmailEngine binary at `/opt/emailengine`, running as the `emailengine` system user
-- Redis server (configured for production)
-- Caddy reverse proxy with automatic HTTPS
-- SystemD service at `/etc/systemd/system/emailengine.service`
+- Redis server from the distribution's package, with a generated password, `maxmemory-policy noeviction`, and RDB snapshots appended to `/etc/redis/redis.conf`
+- Caddy reverse proxy with automatic HTTPS, configured in `/etc/caddy/Caddyfile` with a redirect from port 80, a 100 MB request body limit, and a set of security response headers (HSTS among them)
+- SystemD service at `/etc/systemd/system/emailengine.service`, with `EENGINE_REDIS` (database 8, with the password), `EENGINE_SECRET`, `EENGINE_PORT=3000`, `EENGINE_API_PROXY=true`, `EENGINE_WORKERS=8`, and `EENGINE_LOG_LEVEL=info` set in the unit. It also sets `EENGINE_INSTALL_SCRIPT=true`, which makes the admin **Upgrade** page show the instructions for this layout
 - Upgrade helper script at `/opt/upgrade-emailengine.sh`
 
 :::note This layout differs from the manual install below
@@ -86,27 +78,28 @@ curl -L https://go.emailengine.app -o install.sh
 
 ```bash
 chmod +x install.sh
-sudo su
-./install.sh example.com
+sudo ./install.sh example.com
 ```
 
-Replace `example.com` with your domain name, or leave empty to auto-generate one.
+Replace `example.com` with the hostname EmailEngine will be served on. If you omit it, the script asks for one, and leaving that prompt empty makes it request an auto-generated hostname from `api.nodemailer.com`, which is enough to try the installation without DNS of your own. On an existing installation the script takes the hostname from the current Caddyfile instead of asking.
 
 **Install specific version:**
 ```bash
-./install.sh example.com 2.79.3
+sudo ./install.sh example.com 2.79.4
 ```
+
+The version is accepted with or without a leading `v`.
 
 #### 3. Wait for Completion
 
 The script will:
-1. Install dependencies (Redis, Caddy, tools)
-2. Download EmailEngine binary
-3. Generate secure credentials
-4. Configure Redis for production
-5. Set up reverse proxy with TLS
-6. Create SystemD service
-7. Start EmailEngine
+1. Install dependencies (Redis, Caddy, `curl`, `wget`, `openssl`)
+2. Generate a Redis password and the `EENGINE_SECRET`
+3. Configure and start Redis
+4. Download the EmailEngine binary to `/opt/emailengine` and create the `emailengine` user
+5. Create and start the SystemD service
+6. Write the Caddyfile and reload Caddy, then wait up to 60 seconds for `https://example.com/` to answer
+7. Write the credentials file
 
 #### 4. Access EmailEngine
 
@@ -116,10 +109,9 @@ Once complete, open `https://example.com` to create your admin account.
 
 ### Important Notes
 
-- **Fresh servers only** for new installations (rewrites network settings)
-- **Supports upgrades** on existing installations (preserves configuration)
-- **VPS with 2+ GB RAM** recommended during installation
-- **Public-facing server required** (for TLS certificate provisioning)
+- **Fresh servers only** for new installations: the script overwrites `/etc/caddy/Caddyfile` and appends to `/etc/redis/redis.conf`
+- **Supports upgrades** on existing installations: when `emailengine.service` is already active it reads the existing Redis password and secret from the unit, skips the Redis and unit configuration, and only replaces the binary
+- **Public-facing server required** for a new installation, because Caddy provisions the TLS certificate during the run
 
 ### Upgrading
 
@@ -130,16 +122,10 @@ For servers installed with the automated installer:
 sudo /opt/upgrade-emailengine.sh
 
 # Or re-run installer for specific version
-sudo ./install.sh example.com 2.79.3
+sudo ./install.sh example.com 2.79.4
 ```
 
-The upgrade process:
-1. Detects existing installation
-2. Shows current and target versions
-3. Prompts for confirmation
-4. Preserves all configuration and data
-5. Downloads new binary
-6. Restarts service
+`/opt/upgrade-emailengine.sh` downloads the latest release, compares its version with the installed binary, and either reports that nothing changed or swaps the binary and restarts the service. Re-running `install.sh` on an existing installation shows the current and target versions, asks for confirmation, keeps the Redis configuration and the unit file, and replaces the binary.
 
 ## Method 2: Binary Installation
 
@@ -197,8 +183,8 @@ sudo systemctl restart redis
 # Download latest binary
 wget https://go.emailengine.app/emailengine.tar.gz
 
-# Or download specific version (e.g., 2.79.3)
-wget https://go.emailengine.app/download/v2.79.3/emailengine.tar.gz
+# Or download specific version (e.g., 2.79.4)
+wget https://go.emailengine.app/download/v2.79.4/emailengine.tar.gz
 
 # Extract
 tar xzf emailengine.tar.gz
@@ -211,6 +197,8 @@ sudo chmod +x /usr/local/bin/emailengine
 # Verify
 emailengine --version
 ```
+
+The archive contains one file, a self-contained executable built for x86_64 with a bundled Node.js 24 runtime. There is no ARM build of the Linux binary; on ARM servers use the [Docker image](/docs/installation/docker), which has an `arm64` manifest, or run from [source](/docs/installation/source).
 
 ### Step 4: Create Configuration
 
@@ -258,6 +246,7 @@ sudo nano /etc/systemd/system/emailengine.service
 ```ini
 [Unit]
 Description=EmailEngine
+# Debian and Ubuntu name the unit redis-server.service; adjust both lines to match
 After=redis.service
 Requires=redis.service
 
@@ -302,8 +291,8 @@ sudo systemctl status emailengine
 # Download latest
 wget https://go.emailengine.app/emailengine.tar.gz
 
-# Or download specific version (e.g., 2.79.3)
-wget https://go.emailengine.app/download/v2.79.3/emailengine.tar.gz
+# Or download specific version (e.g., 2.79.4)
+wget https://go.emailengine.app/download/v2.79.4/emailengine.tar.gz
 
 # Extract and replace
 tar xzf emailengine.tar.gz
@@ -328,7 +317,7 @@ For complete source installation instructions, including Node.js setup, SystemD 
 
 ### 1. Set Up Reverse Proxy with HTTPS
 
-For production, use Nginx or Caddy as a reverse proxy with automatic HTTPS.
+For production, use Nginx or Caddy as a reverse proxy with automatic HTTPS. In the configurations below, `emailengine.example.com` is the public hostname and `localhost:3000` is EmailEngine itself, listening on the same machine.
 
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
@@ -642,7 +631,7 @@ maxclients 10000
 ### Optimize EmailEngine
 
 ```bash
-# Increase workers (1 per CPU core recommended)
+# IMAP worker threads (default 4); see the performance tuning page for sizing
 EENGINE_WORKERS=8
 
 # Increase file descriptor limit

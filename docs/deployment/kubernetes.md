@@ -13,7 +13,7 @@ For Docker and Docker Compose setup, see the [Docker Installation Guide](/docs/i
 :::
 
 :::warning Single Instance Only
-**EmailEngine does NOT support horizontal scaling.** You must run exactly **one replica** of EmailEngine per Redis database. Multiple instances connecting to the same Redis will cause conflicts, duplicate processing, and data corruption. Scale vertically (more CPU/RAM) instead of horizontally (more replicas).
+**EmailEngine does NOT support horizontal scaling.** You must run exactly **one replica** of EmailEngine per Redis database. Two instances on the same Redis database each open their own IMAP connections for every account, deliver every webhook twice, and overwrite each other's sync state. Scale vertically (more CPU/RAM) instead of horizontally (more replicas).
 :::
 
 ## Overview
@@ -21,14 +21,14 @@ For Docker and Docker Compose setup, see the [Docker Installation Guide](/docs/i
 Kubernetes deployment provides:
 
 - **Self-healing** - Automatic pod replacement on failure
-- **Rolling updates** - Zero-downtime deployments
-- **Service discovery** - Built-in DNS and load balancing
-- **Secret management** - Secure credential storage
+- **Controlled updates** - A `Recreate` rollout that never overlaps two instances (see [Update Strategy](#update-strategy))
+- **Service discovery** - A stable in-cluster address for Redis and for EmailEngine
+- **Secret management** - Credentials mounted from Secrets rather than baked into images
 - **Resource management** - CPU and memory limits
 
 ## Prerequisites
 
-- Kubernetes cluster (1.20+)
+- A Kubernetes cluster whose API serves `networking.k8s.io/v1` Ingress (1.19 or later)
 - `kubectl` configured
 - Redis accessible from cluster (or deploy Redis in cluster)
 
@@ -72,6 +72,10 @@ spec:
             secretKeyRef:
               name: emailengine-secrets
               key: secret
+        # The image already sets EENGINE_HOST=0.0.0.0 and EENGINE_API_PROXY=true.
+        # Name the peers allowed to set X-Forwarded-For (the ingress controller's pods):
+        - name: EENGINE_API_PROXY_ADDRESSES
+          value: "10.244.0.0/16"
         resources:
           requests:
             memory: "1Gi"
@@ -121,12 +125,32 @@ stringData:
   secret: "your-secret-key-at-least-32-characters"
 ```
 
-**Create from file:**
+**Create from the command line:**
 
 ```bash
 kubectl create secret generic emailengine-secrets \
-  --from-env-file=.env
+  --from-literal=redis-url="redis://redis:6379/8" \
+  --from-literal=secret="$(openssl rand -hex 32)"
 ```
+
+The keys of the Secret (`redis-url`, `secret`) are what the Deployment's `secretKeyRef` entries name; they do not have to match the environment variable names.
+
+**Prepared configuration** goes through the same Secret. Add the values as keys and map them to [`EENGINE_PREPARED_PASSWORD`](/docs/configuration/reset-password), [`EENGINE_PREPARED_TOKEN`](/docs/configuration/prepared-settings/tokens) and [`EENGINE_PREPARED_LICENSE`](/docs/configuration/prepared-settings/license) with `secretKeyRef`, or mount the Secret as files and point the `_FILE` variants at them:
+
+```yaml
+        - name: EENGINE_PREPARED_LICENSE_FILE
+          value: /run/secrets/emailengine/license
+        volumeMounts:
+        - name: prepared
+          mountPath: /run/secrets/emailengine
+          readOnly: true
+      volumes:
+      - name: prepared
+        secret:
+          secretName: emailengine-secrets
+```
+
+Most `EENGINE_*` variables have a `_FILE` form; the exceptions are listed under [Loading values from files](/docs/configuration/environment-variables#loading-values-from-files).
 
 ### Redis StatefulSet
 
@@ -222,6 +246,8 @@ EmailEngine does not support horizontal scaling. For very large deployments (10,
 
 ### Ingress Configuration
 
+Two of EmailEngine's endpoints stream responses: `/v1/changes` (the [change stream](/docs/api/get-v-1-changes), also used by the admin dashboard as `/admin/changes`) and `/mcp` when an agent subscribes. An ingress that buffers responses holds those events until the connection closes, so turn buffering off and allow long reads. With ingress-nginx:
+
 ```yaml
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -229,6 +255,8 @@ metadata:
   name: emailengine-ingress
   annotations:
     nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
 spec:
   ingressClassName: nginx
@@ -266,9 +294,13 @@ spec:
 
 Do not use `RollingUpdate` with `maxSurge` - that briefly runs two EmailEngine instances against the same Redis database, which EmailEngine does not support. The `Recreate` strategy means a short downtime during each deployment, but this is the safe trade-off for a single-instance application.
 
+Roll out a new release by changing the image tag, for example `kubectl set image deployment/emailengine emailengine=postalsys/emailengine:v2.79.4`. A floating tag such as `v2` does not change the pod template, so nothing is rolled out.
+
 ## Monitoring
 
 ### Prometheus ServiceMonitor
+
+The `/metrics` endpoint needs an access token with the `metrics` scope. Issue one with `emailengine tokens issue -s metrics` (see [Prepared Tokens](/docs/configuration/prepared-settings/tokens)) and store it in the Secret under `metrics-token`:
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
@@ -292,8 +324,12 @@ spec:
 
 ### Health Check Endpoints
 
-- **Liveness:** `/health` - Returns 200 if running
-- **Readiness:** `/health` - Returns 200 if ready to accept traffic
+`/health` needs no authentication. It returns `{"success": true}` once the API worker is serving, every configured IMAP worker thread is running, and a Redis write-read-delete round trip succeeds; otherwise it returns a 500 whose message is `Not all IMAP workers available` or `Database check failed`. Nothing answers on the port until the API worker is up, which is what makes it usable for both probes:
+
+- **Liveness:** `/health` - a pod that keeps failing after `initialDelaySeconds` is restarted
+- **Readiness:** `/health` - the Service does not route to the pod until the API answers
+
+The check says nothing about individual accounts: an instance whose accounts are all in `authenticationError` is still healthy. Watch the `imap_connections` metric or the account list for that.
 
 ## Troubleshooting
 
@@ -331,5 +367,7 @@ kubectl logs <pod-name> -n emailengine --previous  # Previous container
 ## See Also
 
 - [Docker Installation](/docs/installation/docker) - Docker and Docker Compose setup
+- [Nginx Reverse Proxy](/docs/deployment/nginx-proxy) - The same streaming and forwarded-header rules for a proxy outside the cluster
+- [Prepared Settings](/docs/configuration/prepared-settings) - Provisioning settings, tokens, the license and the password from Secrets
 - [Performance Tuning](/docs/advanced/performance-tuning) - Optimize for large deployments
 - [Monitoring](/docs/advanced/monitoring) - Set up Prometheus and Grafana

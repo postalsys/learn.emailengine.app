@@ -19,10 +19,10 @@ EmailEngine stores the following data in [Redis](/docs/configuration/redis):
 | **Account credentials** | IMAP/SMTP passwords, OAuth tokens | Yes | Until account deleted |
 | **Account metadata** | Email address, account ID, connection state | No | Until account deleted |
 | **Message index** | Message UIDs, flags, email IDs, labels, folder structure | No | Until account deleted or [flushed](/docs/api/put-v-1-account-account-flush) |
-| **OAuth configuration** | Client IDs, client secrets | Yes | Until removed |
+| **OAuth2 applications** | Client IDs, client secrets, service account keys | Secrets and keys yes, client IDs no | Until removed |
 | **Application settings** | Webhook URLs, [API tokens](/docs/api-reference/access-tokens) | No | Persistent |
-| **Queue jobs** | Pending emails, webhook deliveries | No | Until processed (typically minutes) |
-| **Logs** | Connection events, errors | No | [Configurable](/docs/advanced/logging) (default: 10,000 entries) |
+| **Queue jobs** | Pending emails, webhook deliveries | No | Until delivered; jobs that failed every attempt are kept for 7 days, the newest 500 per queue (`EENGINE_QUEUE_KEEP_FAILED_AGE`, `EENGINE_QUEUE_KEEP_FAILED`) |
+| **Logs** | Connection events, errors | No | [Configurable](/docs/advanced/logging) (off by default; 10,000 entries per account when enabled) |
 
 \* Encryption requires [`EENGINE_SECRET`](/docs/advanced/encryption) to be configured. Without it, all data is stored in cleartext.
 
@@ -51,8 +51,11 @@ EmailEngine is fully self-hosted. EmailEngine developers have no access to your 
 
 - `postalsys.com` - License validation for subscription licenses. The daily validation request sends your license key, a stable instance ID, and an anonymized feature beacon (described below). Perpetual licenses are verified offline and never make this request.
 - `api.github.com` - Version update checks (optional, for admin dashboard notifications). Nothing is sent beyond a standard User-Agent header. Disable with `EENGINE_UPDATE_CHECK_DISABLED=true` (since EmailEngine v2.76.0).
+- `sentry.emailengine.dev` - Error reports, only while the `sentryEnabled` setting is on (described below). Reports go to this instance, run by the EmailEngine developers, unless `sentryDsn` or the `SENTRY_DSN` environment variable names your own Sentry server.
 
-Neither request includes email content, message headers, email addresses, or credentials. See [Outbound Connection Whitelist](/docs/deployment/security#outbound-connection-whitelist) for the complete list of external domains, including those used by optional features such as OAuth2 providers, AI processing, and account autodiscovery.
+None of these requests includes email content, message headers, or credentials. See [Outbound Connection Whitelist](/docs/deployment/security#outbound-connection-whitelist) for the complete list of external domains, including those used by optional features such as OAuth2 providers, AI processing, and account autodiscovery.
+
+**Error reporting (Sentry):** Off by default, with one exception: activating a trial license switches `sentryEnabled` on (since EmailEngine v2.79.0), so that failures on evaluation instances reach the developers. The trial default lasts only while you have never set `sentryEnabled` yourself; activating a full license or removing the license switches it back off, and any explicit write to the setting (the **Configuration** > **Logging** page, `POST /v1/settings`, or `EENGINE_SETTINGS`) makes your choice permanent. A report carries the exception message and stack trace, the EmailEngine version and worker name, the instance ID and license key, the ID of the account the error concerned when there is one, and a few fields of context such as the log message and the mailbox path involved. It does not carry message content or credentials. To keep reports in-house, set `sentryDsn` to your own server; setting the `SENTRY_DSN` environment variable pins that choice and makes the runtime settings irrelevant.
 
 **Anonymized feature beacon:** The license validation request includes a compact, anonymized snapshot of how the instance is configured - which features are enabled (for example webhooks, OAuth2 providers, or AI processing), coarse magnitude tiers (buckets, not exact counts) for accounts and other entities, the list of mail providers in use, and runtime context such as the Node.js version and CPU architecture. It never includes email content, email addresses, URLs, credentials, or other personal data. Set `EENGINE_BEACON_DISABLED=true` to disable it.
 
@@ -86,9 +89,8 @@ EmailEngine supports **AES-256-GCM** field-level encryption for all sensitive da
 **Encrypted when [`EENGINE_SECRET`](/docs/advanced/encryption) is set:**
 - IMAP/SMTP passwords
 - OAuth access and refresh tokens
-- OAuth client secrets (Gmail, Outlook)
-- API secrets and service keys
-- OpenAI API key
+- OAuth2 application client secrets and service account keys
+- Secrets held in settings, such as the SMTP server password and the OpenAI API key
 
 **Not encrypted:**
 - Account IDs and email addresses
@@ -213,7 +215,7 @@ Document why your application needs each OAuth scope:
 | `gmail.readonly` | Read emails for CRM integration, support ticket creation |
 | `gmail.modify` | Mark emails as read, apply labels, move messages |
 | `gmail.send` | Send emails on behalf of user |
-| `mail.google.com` | Full IMAP access (rarely approved for new apps) |
+| `mail.google.com` | Full mailbox access; this is the scope IMAP and SMTP with OAuth2 require |
 
 :::tip Minimize Scopes
 Request only the scopes your application needs. Broader scopes require more justification and stricter security review.
@@ -238,15 +240,18 @@ Since EmailEngine is self-hosted software, compliance certifications (SOC 2, ISO
 
 For compliance audits, EmailEngine provides:
 
-- **Structured logs** - JSON format compatible with SIEM systems
-- **API access logs** - Track all API operations
-- **Webhook delivery logs** - Record of all notifications sent
-- **Account activity** - Connection states and sync history
+- **Structured logs** - JSON format on stdout, compatible with SIEM systems
+- **Token usage records** - Each access token records when it was last used and from where, visible under Access Tokens in the admin interface
+- **Per-account connection logs** - IMAP session logs, when enabled for an account
+- **Account activity** - Connection states and sync state, via the API and the admin interface
 - **Dependency inventory** - An SPDX software bill of materials for the running build
 
 Configure log retention and forwarding in [Logging](/docs/advanced/logging).
 
-The bill of materials names every package the instance runs and the version of each, which is what a vulnerability review asks for. It is served at `/sbom.json`, outside the versioned API and outside the OpenAPI spec:
+The bill of materials names every package the instance runs and the version of each, which is what a vulnerability review asks for. It is generated at build time, so it describes the release, not a live scan. Two routes serve the same file:
+
+- **From the admin interface:** open the **Legal Information** page (linked from the footer of every admin page as "License and terms") and click **Software Bill of Materials (SBOM)**. This downloads `/admin/legal/sbom.json` with the admin session and honors the [`EENGINE_ADMIN_ACCESS_ADDRESSES`](/docs/deployment/security#admin-interface-access-control) allowlist like the rest of `/admin`. Added in EmailEngine v2.79.4.
+- **With an access token:** `GET /sbom.json`, outside the versioned API and outside the OpenAPI spec:
 
 ```bash
 curl "https://emailengine.example.com/sbom.json" \
@@ -254,7 +259,7 @@ curl "https://emailengine.example.com/sbom.json" \
   -o sbom.json
 ```
 
-The inventory is instance-wide rather than tied to an account, so the request needs an [access token](/docs/api-reference/access-tokens) with the full `api` scope. Account-bound and permission-restricted tokens are refused.
+The inventory is instance-wide rather than tied to an account, so this request needs an [access token](/docs/api-reference/access-tokens) with the full `api` scope. Account-bound and permission-restricted tokens are refused. The route has required a token since v2.79.2; earlier releases served it without authentication.
 
 ## See Also
 

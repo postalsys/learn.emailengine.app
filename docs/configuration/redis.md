@@ -38,14 +38,14 @@ EENGINE_REDIS="redis://admin:mypassword@redis.example.com:6379"
 EENGINE_REDIS="rediss://redis.example.com:6380"
 ```
 
+The URL is parsed by EmailEngine itself before it reaches the Redis client: the `rediss:` scheme turns TLS on, the path selects the database, and a username is passed along only when it is not `default` (add `?allowUsernameInURI=true` to force it through). `EENGINE_REDIS` and `--dbs.redis` accept a single host; Redis Sentinel and Redis Cluster addresses are not supported.
+
 ### Deployment Examples
 
 <Tabs groupId="deployment-platform">
 <TabItem value="docker" label="Docker Compose">
 
 ```yaml
-version: '3.8'
-
 services:
   redis:
     image: redis:7-alpine
@@ -135,7 +135,7 @@ emailengine --dbs.redis="redis://:mypassword@redis.example.com:6379"
 
 ### Connection Options
 
-For advanced Redis configurations, you can pass connection options as query parameters:
+A few options can be passed as query parameters:
 
 ```bash
 # Connect with TLS
@@ -144,11 +144,20 @@ EENGINE_REDIS="rediss://redis.example.com:6380"
 # Specify IPv4 or IPv6
 EENGINE_REDIS="redis://redis.example.com:6379?family=4"  # Force IPv4
 EENGINE_REDIS="redis://redis.example.com:6379?family=6"  # Force IPv6
+
+# Password and database as parameters instead of URL parts
+EENGINE_REDIS="redis://redis.example.com:6379?password=secret&db=8"
 ```
+
+`family`, `password`, `db` and `allowUsernameInURI` are the recognized parameters; anything else in the query string is ignored.
 
 ## Required Redis Configuration
 
 EmailEngine requires specific Redis settings to function correctly.
+
+### Redis Version
+
+Use Redis 6.2 or newer. The queue library EmailEngine is built on (BullMQ) refuses to start against a server older than 5.0 and prints a warning on anything below 6.2. Username-based ACLs in the connection URL need Redis 6.0 or newer.
 
 ### Memory Eviction Policy (Required)
 
@@ -170,7 +179,7 @@ redis-cli CONFIG GET maxmemory-policy
 redis-cli CONFIG SET maxmemory-policy noeviction
 ```
 
-**No alternatives:** `noeviction` is the only supported policy. EmailEngine raises a danger-level warning on the dashboard if any other `maxmemory-policy` is configured, and a separate data-loss warning if Redis has actually evicted keys. Do not use `volatile-*` or `allkeys-*` policies - evicted keys mean lost mailbox indexes and credentials.
+**No alternatives:** `noeviction` is the only supported policy. The dashboard shows an "Unsafe Redis eviction policy" banner when any other `maxmemory-policy` is configured (danger-level when `maxmemory` is set, warning-level when it is not), and a "Redis eviction detected" danger banner with the evicted key count once Redis has actually evicted keys. The same count is exported as `redis_evicted_keys_total` on the metrics endpoint.
 
 ### Persistence Configuration (Recommended)
 
@@ -253,13 +262,13 @@ redis-cli CONFIG GET appendonly
 
 ### TCP Keep-Alive (Recommended)
 
-Configure TCP keep-alive to maintain long-lived Pub/Sub connections:
+Configure TCP keep-alive on long-lived connections:
 
 ```ini
 tcp-keepalive 300
 ```
 
-**Why this matters:** EmailEngine uses Redis Pub/Sub for real-time updates. Without keep-alive, NAT devices or load balancers may silently drop idle connections.
+**Why this matters:** Every EmailEngine thread keeps its Redis connections open for the life of the process, and the queue workers hold blocking connections that can sit idle between jobs. Without keep-alive, a NAT device or load balancer between EmailEngine and Redis may drop an idle connection without either side noticing until the next command fails. Redis 3.2 and later default to `tcp-keepalive 300` already; the setting only needs attention on an older server or one that has overridden it.
 
 ## Redis Configuration File Example
 
@@ -322,32 +331,27 @@ EmailEngine uses JSON logging (pino). Log levels: `60`=FATAL, `50`=ERROR, `40`=W
 
 **Successful connection:**
 ```text
-{"level":30,"time":1762176419767,"pid":93728,"msg":"EmailEngine starting up","version":"2.79.3"}
-{"level":20,"time":1762176421071,"pid":93728,"msg":"Started API server thread","port":3000,"host":"127.0.0.1"}
+{"level":30,"time":1762176419767,"pid":93728,"msg":"EmailEngine starting up","version":"2.79.4"}
+{"level":30,"time":1762176421071,"pid":93728,"msg":"Started API server thread","port":3000,"host":"127.0.0.1","maxSize":5242880,"maxBodySize":52428800,"version":"2.79.4"}
 ```
 
-No explicit "Redis connected" message. If "Started API server thread" appears (at debug level), Redis is connected.
+There is no "Redis connected" message. If "Started API server thread" appears (at info level), the API worker has its Redis connection.
 
-**Connection failure:**
-```
-============================================================================================================
-Failed to establish connection to Redis using "redis://127.0.0.1:16379"
-Can not connect to the database. Redis might not be running.
-============================================================================================================
-```
+**Connection failure:** a refused connection, a timeout, a wrong password (`NOAUTH` or `WRONGPASS`), or a `MISCONF` reply before the first successful connection is fatal. EmailEngine prints a boxed message on stderr with the password masked and exits with status 1:
 
-**Common errors:**
-
-Connection refused:
-```json
-{"level":60,"time":1762176637410,"pid":2625,"msg":"EmailEngine starting up"}
-```
-
-Invalid hostname:
 ```text
-{"level":60,"msg":false,"err":{"message":"getaddrinfo ENOTFOUND invalid-host","code":"ENOTFOUND"}}
-{"level":10,"msg":"Connection retry","times":1,"delay":1000}
+=========================================================================================
+Failed to establish connection to Redis using "redis://127.0.0.1:16379"
+Can not connect to the database. Redis might not be running. Are you using correct hostname and port values?
+
+To run EmailEngine provide valid Redis configuration
+  $ emailengine --dbs.redis="redis://username:password@1.2.3.4:6379/0"
+=========================================================================================
 ```
+
+Other errors before the first connection (an unresolvable hostname, for example) end the same way when EmailEngine runs in a terminal; run as a service, they are logged at warning level while the client keeps retrying. The retry cadence is visible at trace level as `Connection retry` entries, with the delay doubling from 1 second up to 15 seconds between attempts.
+
+After a connection has been established, a dropped connection is not fatal: the client reconnects on its own, logging `Redis connection error` at warning level in the meantime.
 
 **Pretty format (development):**
 ```bash
@@ -356,14 +360,15 @@ emailengine | pino-pretty
 
 ## Data Stored in Redis
 
-| Data Type | Typical Size |
-|-----------|--------------|
-| Mailbox indexes | 1-2 MiB/account |
-| OAuth tokens | ~1 KiB/account |
-| Webhook queue | Varies |
-| Outbox queue | Varies |
-| Account metadata | ~2 KiB/account |
-| Web sessions | ~500 bytes/session |
+Redis is EmailEngine's only database. It holds:
+
+- Account records, credentials (encrypted when `EENGINE_SECRET` is set) and connection state
+- The message index for each account: one small entry per message, plus mailbox listings
+- Settings, OAuth2 applications, access token hashes and admin sessions
+- The BullMQ queues: webhook deliveries, the outbox, and export jobs
+- Per-account logs, when enabled
+
+The message index dominates, which is where the 1-2 MiB per account planning figure comes from; see [Performance tuning](/docs/advanced/performance-tuning) for what drives it. Message bodies and attachments are not stored: they are fetched from the mail server on request.
 
 **Check memory usage:**
 ```bash
@@ -393,7 +398,7 @@ Deploy Redis and EmailEngine in the same availability zone. Target RTT < 5ms (id
 
 **Measure latency:**
 ```bash
-redis-cli --latency --raw -h <redis-host>
+redis-cli --latency --raw -h redis.example.com
 ```
 
 ### Backups
@@ -437,11 +442,13 @@ redis-cli SHUTDOWN SAVE && redis-server /etc/redis/redis.conf
 
 ### Connection Health
 
-Normal: 2-5 connections per EmailEngine instance.
+Every EmailEngine thread (the main process, each IMAP worker, the API, webhook and submission workers) opens its own Redis connections, and the queue workers add blocking connections on top, so a single instance normally shows a few dozen clients. The count grows with `EENGINE_WORKERS`; it should be stable over time.
 
 ```bash
 redis-cli CLIENT LIST | wc -l
 ```
+
+The same number is exported as `redis_connected_clients` on the metrics endpoint.
 
 ## Managed Redis Services
 
@@ -449,16 +456,19 @@ redis-cli CLIENT LIST | wc -l
 
 | Service | Status | Notes |
 |---------|--------|-------|
-| **Upstash Redis** | Supported with constraints | 1 MB command size limit affects large MIME blobs; free tier quotas are insufficient; must be located in the same cloud region |
+| **Upstash Redis** | Supported with constraints | Per-request size and daily command quotas depend on the plan; an initial sync or a large outbox message can hit them. Deploy in the same region as EmailEngine |
 | **Amazon ElastiCache** | Not supported | EmailEngine declares ElastiCache incompatible and shows a danger-level dashboard warning - using it as the database backend can result in data loss |
-| **Azure Cache for Redis** | Supported | Use Basic, Standard, or Premium tier; verify persistence is enabled |
+| **Amazon MemoryDB** | Recognized | Detected from `INFO` and named on the dashboard; no compatibility warning is raised, and there is no long-term production data |
+| **Azure Cache for Redis** | Supported | Pick a tier that offers data persistence and set the eviction policy to `noeviction` |
 | **Google Cloud Memorystore** | Supported | Use Standard tier with replication for high availability |
 | **Redis Cloud** | Supported | Native Redis service; ensure persistence and eviction policy are configured |
 | **Memurai** | Experimental | Passes basic tests on Windows; no long-term performance data |
-| **Dragonfly** | Experimental | Requires `--default_lua_flags=allow-undeclared-keys`; validate against production workloads |
+| **Dragonfly** | Experimental | Recognized on the dashboard; validate against production workloads before relying on it |
 | **KeyDB** | Experimental | Multi-threaded fork of Redis; monitor replication lag and memory stability |
 
-**Unsupported:** Redis Cluster is incompatible with EmailEngine's Lua scripts that reference dynamic keys. Use a single Redis instance with persistence enabled.
+EmailEngine reads `INFO` at startup and on the dashboard to recognize these backends, and names the one it found next to the Redis version on the dashboard.
+
+**Unsupported:** Redis Cluster. EmailEngine detects `cluster_enabled` and shows a danger-level dashboard warning. Use a single Redis primary with persistence enabled; a replica for failover is fine as long as EmailEngine is given one stable address to connect to.
 
 ### Service-Specific Configuration
 
@@ -471,8 +481,7 @@ EENGINE_REDIS="rediss://:YOUR_PASSWORD@YOUR_ENDPOINT.upstash.io:6379"
 ```
 
 **Limitations:**
-- 1 MB command size limit (affects large attachments in outbox)
-- Free tier: 10,000 commands/day is insufficient for production
+- Upstash caps the size of a single request and the number of commands per day by plan; check the current limits against the outbox message sizes and account counts you expect. A free-tier quota is not enough for a production instance
 - Requires same-region deployment to minimize latency
 
 </TabItem>
@@ -490,10 +499,8 @@ EmailEngine is incompatible with Amazon ElastiCache as the database backend - us
 EENGINE_REDIS="rediss://:YOUR_ACCESS_KEY@your-cache.redis.cache.windows.net:6380"
 ```
 
-**Recommended tier:** Standard or Premium (not Basic, which lacks persistence)
-
 **Configuration:**
-- Enable data persistence (RDB or AOF)
+- Pick a tier that offers data persistence and enable it (RDB is the recommended mode, see above)
 - Set eviction policy to `noeviction`
 - Enable TLS (port 6380)
 - Configure firewall rules
@@ -562,8 +569,11 @@ redis-cli INFO persistence | grep rdb_last_save_time
 ### EmailEngine Prometheus Metrics
 
 ```bash
-curl http://localhost:3000/metrics | grep redis
+curl https://emailengine.example.com/metrics \
+  -H "Authorization: Bearer YOUR_METRICS_TOKEN" | grep redis
 ```
+
+The endpoint needs a token with the `metrics` scope.
 
 Example output:
 ```

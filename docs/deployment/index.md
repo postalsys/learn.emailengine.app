@@ -59,10 +59,9 @@ EmailEngine can be deployed in various ways depending on your infrastructure and
 
 ### Kubernetes
 **Pros:**
-- Production-ready
-- High availability
-- Auto-scaling
-- Self-healing
+- Declarative configuration and secrets
+- Automatic restarts on failure
+- Health probes and resource limits
 
 **Cons:**
 - Complex setup
@@ -71,7 +70,7 @@ EmailEngine can be deployed in various ways depending on your infrastructure and
 
 **When to use:** Enterprise, large scale, cloud deployments
 
-[Kubernetes deployment →](/docs/installation/docker#production-deployment)
+[Kubernetes deployment →](/docs/deployment/kubernetes)
 
 ---
 
@@ -164,12 +163,10 @@ services:
 
 **Recommended:** Kubernetes
 
-**Features needed:**
-- High availability
-- Auto-scaling
-- Load balancing
-- Health checks
-- Rolling updates
+**What it gives you:**
+- Automatic restarts and health probes
+- Declarative secrets and configuration
+- A single, larger pod: EmailEngine still runs as one replica (see [Scaling Strategies](#scaling-strategies))
 
 ## Production Checklist
 
@@ -177,24 +174,23 @@ Before deploying to production, ensure you have:
 
 ### Infrastructure
 
-- [ ] Redis 6.0+ deployed with persistence enabled
-- [ ] Sufficient memory (1-2 MB per mailbox)
+- [ ] Redis 6.2 or newer deployed with persistence enabled (see [Redis](/docs/configuration/redis))
+- [ ] Sufficient Redis memory (1-2 MiB per account, provisioned twice over)
 - [ ] Fast network connection to Redis (< 5ms latency)
 - [ ] HTTPS/TLS configured
 - [ ] Firewall rules configured
 
 ### Configuration
 
-- [ ] Strong `EENGINE_SECRET` (32+ characters)
-- [ ] `EENGINE_SECRET` for field encryption
-- [ ] OAuth2 credentials configured
+- [ ] `EENGINE_SECRET` set to a stable random value (32 bytes, `openssl rand -hex 32`) so stored credentials are encrypted
+- [ ] OAuth2 applications configured
 - [ ] Webhook endpoints configured
 - [ ] Base URL set correctly
 - [ ] License key activated
 
 ### Monitoring
 
-- [ ] Prometheus metrics enabled
+- [ ] Prometheus scraping `/metrics` with a `metrics`-scoped token
 - [ ] Log aggregation configured
 - [ ] Health check endpoints monitored
 - [ ] Alerts configured for errors
@@ -247,7 +243,7 @@ Since EmailEngine doesn't support multiple instances, focus on Redis high availa
 
 1. **Single EmailEngine instance** (primary)
 2. **Standby EmailEngine instance** (cold standby, not running)
-3. **Redis Sentinel** (auto-failover) - Redis Cluster is not supported
+3. **A Redis primary with a replica**, and a failover mechanism that presents one stable address. EmailEngine connects to a single `redis://` or `rediss://` host; it does not speak the Sentinel protocol, and Redis Cluster is not supported. Put the promotion behind a virtual IP, a DNS name you update, or a proxy that follows the primary
 4. **Persistent storage** for Redis
 5. **Health monitoring** to detect failures
 
@@ -258,7 +254,7 @@ graph TB
     Monitor[Health Monitor<br/>Detects failures]
     Monitor --> Primary[EE Primary<br/>Active]
     Monitor --> Standby[EE Standby<br/>Stopped]
-    Primary --> Redis[Redis Sentinel<br/>Master + 2x Replicas]
+    Primary --> Redis[Stable Redis address<br/>Primary + replica behind it]
     Standby --> Redis
 
     style Monitor fill:#e1f5ff
@@ -270,13 +266,13 @@ graph TB
 **Failover Process:**
 1. Health monitor detects primary failure
 2. Manually start standby instance (or use orchestration tool)
-3. Standby connects to Redis Sentinel (gets current master)
+3. Standby connects to the same Redis address, which now resolves to the promoted replica
 4. Service resumes with minimal downtime
 
 ### Health Check Endpoint
 
 ```bash
-curl http://localhost:3000/health
+curl https://emailengine.example.com/health
 ```
 
 **Response:**
@@ -286,7 +282,7 @@ curl http://localhost:3000/health
 }
 ```
 
-The health endpoint verifies that all account workers are running and Redis is accessible. It returns a 500 error if any checks fail.
+The endpoint needs no authentication. It checks that every configured IMAP worker thread is running, then writes, reads back and deletes a probe key in Redis; a 500 with `Not all IMAP workers available` or `Database check failed` as the message reports which check failed. It says nothing about individual accounts. Use the [account list](/docs/api/get-v-1-accounts) or the `imap_connections` metric for those.
 
 ## Environment-Specific Configuration
 
@@ -294,7 +290,6 @@ The health endpoint verifies that all account workers are running and Redis is a
 
 ```bash
 # .env.development
-NODE_ENV=development
 EENGINE_LOG_LEVEL=trace
 EENGINE_PORT=3001
 EENGINE_REDIS=redis://localhost:6379/8
@@ -304,7 +299,6 @@ EENGINE_REDIS=redis://localhost:6379/8
 
 ```bash
 # .env.staging
-NODE_ENV=production
 EENGINE_LOG_LEVEL=debug
 EENGINE_SETTINGS='{"serviceUrl":"https://staging-email.example.com"}'
 EENGINE_REDIS=redis://staging-redis:6379/2
@@ -314,12 +308,13 @@ EENGINE_REDIS=redis://staging-redis:6379/2
 
 ```bash
 # .env.production
-NODE_ENV=production
 EENGINE_LOG_LEVEL=info
 EENGINE_SETTINGS='{"serviceUrl":"https://emailengine.example.com"}'
 EENGINE_REDIS=redis://prod-redis:6379/2
 EENGINE_SECRET=${ENCRYPTION_KEY}
 ```
+
+`.env` files are read from the directory EmailEngine is started in. `NODE_ENV` has no effect on EmailEngine's own behavior.
 
 ## Common Deployment Patterns
 
@@ -386,7 +381,7 @@ graph TB
 
 Note: EmailEngine runs as a single instance only. Kubernetes is used for container orchestration, health monitoring, and automatic restarts rather than horizontal scaling.
 
-[Kubernetes guide →](/docs/installation/docker#production-deployment)
+[Kubernetes guide →](/docs/deployment/kubernetes)
 
 ## Migration & Updates
 
@@ -415,8 +410,10 @@ systemctl restart emailengine
 **Kubernetes:**
 ```bash
 kubectl set image deployment/emailengine \
-  emailengine=postalsys/emailengine:v2
+  emailengine=postalsys/emailengine:v2.79.4
 ```
+
+Pin a version tag here: with a floating tag such as `v2` the image reference does not change and no rollout happens.
 
 ### Updates with Brief Downtime
 
@@ -432,7 +429,8 @@ spec:
 
 **Docker Compose:**
 ```bash
-docker-compose up -d --no-deps --build emailengine
+docker compose pull emailengine
+docker compose up -d --no-deps emailengine
 ```
 
 ### Backup Before Updates
@@ -454,7 +452,7 @@ The Prometheus metrics endpoint is available at `/metrics` on the main API serve
 
 **Access metrics:**
 ```bash
-curl http://localhost:3000/metrics \
+curl https://emailengine.example.com/metrics \
   -H "Authorization: Bearer YOUR_METRICS_TOKEN"
 ```
 

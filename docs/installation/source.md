@@ -15,33 +15,22 @@ Running EmailEngine from source provides several advantages over binary distribu
 ### Production Benefits
 
 **Lower Memory Usage:**
-The pre-built binary uses a virtual filesystem where all application files are loaded into memory at startup. When running from source, files remain on disk and are only loaded when needed, resulting in lower base memory consumption.
+The pre-built binary is a `pkg` bundle: the application files sit in a snapshot inside the executable and are served from memory. When running from source, files stay on disk and are read as Node.js loads them, so the base memory footprint is lower.
 
-**Enhanced Control:**
-- Full access to source code for debugging
-- Ability to apply custom patches if needed
-- Direct configuration without binary limitations
-- Easier integration with monitoring tools
+**Your Own Runtime:**
+The binary bundles a fixed Node.js version (24 for the current releases). From source you pick the Node.js version, apply patches if you need to, and can read the code that is running.
 
 **Production Recommendation:**
-For production environments, especially those managing many email accounts or running on resource-constrained servers, source installation is the recommended approach.
+For production environments, especially those managing many email accounts or running on servers with limited memory, source installation is the recommended approach.
 
 ### System Requirements
 
-**Minimum (development/testing):**
-- 1-2 CPU cores
-- 2 GB RAM
-- 10 GB storage
-
-**Recommended (production):**
-- 4+ CPU cores
-- 4-8 GB RAM or more
-- 20+ GB SSD storage
+The figures on the [installation overview](/docs/installation#system-requirements) apply: 2 GB of memory to evaluate, 4 to 8 GB for production.
 
 ### Required Software
 
-- **Node.js 20+** (24+ recommended for best performance)
-- **Redis 6.0+** (stand-alone mode, persistence enabled)
+- **Node.js 20+** (the `engines` field in EmailEngine's package.json is `>=20.x`; the release builds and CI use 24)
+- **Redis** - a stand-alone instance with `maxmemory-policy noeviction` and persistence enabled
 - **wget/curl** (for downloading release tarballs)
 
 ### Privileges
@@ -72,10 +61,10 @@ Choose between stable releases or development versions:
 
 #### Prerequisites
 
-Before installing EmailEngine from source, you need Node.js 20+ (24+ recommended) and Redis 6.0+:
+Before installing EmailEngine from source, you need Node.js 20+ (24+ recommended) and Redis:
 
 - **Node.js & Redis setup:** Follow the [Linux Installation Guide](/docs/installation/linux) for Redis setup, and install Node.js 20+ (24+ recommended)
-- Returns to this guide after completing the prerequisites
+- Return to this guide after completing the prerequisites
 
 #### Step 1: Setup Directory Structure
 
@@ -123,8 +112,8 @@ cd /opt/emailengine
 # Download latest source distribution
 sudo wget https://go.emailengine.app/source-dist.tar.gz
 
-# Or download specific version (e.g., 2.79.3)
-sudo wget https://go.emailengine.app/download/v2.79.3/source-dist.tar.gz
+# Or download specific version (e.g., 2.79.4)
+sudo wget https://go.emailengine.app/download/v2.79.4/source-dist.tar.gz
 
 # Extract to app directory (includes node_modules)
 sudo tar xzf source-dist.tar.gz -C app --strip-components=1
@@ -132,7 +121,7 @@ sudo rm source-dist.tar.gz
 ```
 
 :::tip No npm install needed
-The source-dist.tar.gz includes a complete `node_modules` folder with all production dependencies, so you don't need to run `npm install`.
+The source-dist.tar.gz includes a complete `node_modules` folder with the production dependencies already installed (`npm ci --omit=dev` at build time), so there is nothing to run before starting. The archive has no top-level directory of its own; its entries start with `./`, which is what `--strip-components=1` removes.
 :::
 
 #### Step 4: Test Installation
@@ -231,7 +220,7 @@ sudo journalctl -u emailengine -f
 Before installing EmailEngine from source, you need Node.js 20+ (24+ recommended) and Redis:
 
 - **Node.js & Redis setup:** Follow the [macOS Installation Guide](/docs/installation/macos) for Redis setup, and install Node.js 20+ (24+ recommended)
-- Returns to this guide after completing the prerequisites
+- Return to this guide after completing the prerequisites
 
 #### Step 1: Download and Install EmailEngine
 
@@ -379,7 +368,7 @@ pm2 stop emailengine
 
 ### Docker with Source
 
-If you want to build your own Docker image from source, the EmailEngine repository includes a production-ready `Dockerfile`. Clone the repository and build:
+If you want to build your own Docker image from source, the EmailEngine repository includes the `Dockerfile` the published images are built from. Clone the repository (the build copies `.git/refs/heads/master` to stamp the commit, so a source tarball without `.git` does not build) and run:
 
 ```bash
 # Clone the repository
@@ -398,11 +387,11 @@ docker run -d \
   emailengine:custom
 ```
 
-The official Dockerfile includes security best practices like running as a non-root user and using `dumb-init` for proper signal handling.
+The Dockerfile installs dependencies with `npm ci --omit=dev`, runs as a non-root user, uses `dumb-init` as the entrypoint for signal handling, and presets `EENGINE_HOST=0.0.0.0` and `EENGINE_API_PROXY=true`.
 
 ## Upgrading
 
-The directory structure makes upgrades simple - just replace the `app/` directory while keeping your `.env` file intact.
+The directory structure keeps an upgrade to replacing the `app/` directory; the `.env` file next to it is untouched.
 
 ```bash
 cd /opt/emailengine
@@ -419,8 +408,8 @@ sudo mkdir -p app
 # Download new version (latest)
 sudo wget https://go.emailengine.app/source-dist.tar.gz
 
-# Or download specific version (e.g., 2.79.3)
-sudo wget https://go.emailengine.app/download/v2.79.3/source-dist.tar.gz
+# Or download specific version (e.g., 2.79.4)
+sudo wget https://go.emailengine.app/download/v2.79.4/source-dist.tar.gz
 
 # Extract to app directory
 sudo tar xzf source-dist.tar.gz -C app --strip-components=1
@@ -441,7 +430,7 @@ curl http://localhost:3000/health
 
 ### With PM2
 
-The PM2 upgrade process is the same as SystemD - just replace the `app/` directory and reload PM2.
+The PM2 upgrade process is the same as with SystemD: replace the `app/` directory and reload PM2.
 
 ```bash
 cd /opt/emailengine
@@ -455,8 +444,8 @@ sudo mkdir -p app
 # Download new version (latest)
 sudo wget https://go.emailengine.app/source-dist.tar.gz
 
-# Or download specific version (e.g., 2.79.3)
-sudo wget https://go.emailengine.app/download/v2.79.3/source-dist.tar.gz
+# Or download specific version (e.g., 2.79.4)
+sudo wget https://go.emailengine.app/download/v2.79.4/source-dist.tar.gz
 
 # Extract to app directory
 sudo tar xzf source-dist.tar.gz -C app --strip-components=1
@@ -533,9 +522,10 @@ curl http://localhost:3000/health
 
 ### Prometheus Metrics
 
-Create a token with metrics scope:
+Create a token with the `metrics` scope. A source installation has no `emailengine` command on the path; the CLI is `app/bin/emailengine.js`, and it reads the same `.env` from the working directory as the server does:
 ```bash
-emailengine tokens issue -d "Prometheus" -s "metrics"
+cd /opt/emailengine
+node app/bin/emailengine.js tokens issue -d "Prometheus" -s "metrics"
 ```
 
 Access metrics at `/metrics` endpoint:

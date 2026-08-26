@@ -95,8 +95,8 @@ Open PowerShell and download the Windows executable:
 # Download latest version
 Invoke-WebRequest -Uri "https://go.emailengine.app/emailengine.exe" -OutFile "emailengine.exe"
 
-# Or for specific version (e.g., 2.79.3)
-Invoke-WebRequest -Uri "https://go.emailengine.app/download/v2.79.3/emailengine.exe" -OutFile "emailengine.exe"
+# Or for specific version (e.g., 2.79.4)
+Invoke-WebRequest -Uri "https://go.emailengine.app/download/v2.79.4/emailengine.exe" -OutFile "emailengine.exe"
 ```
 
 **Alternative: Browser download**
@@ -110,8 +110,8 @@ Invoke-WebRequest -Uri "https://go.emailengine.app/download/v2.79.3/emailengine.
 Generate secrets and create `.env` file in the same directory as `emailengine.exe`:
 
 ```powershell
-# Generate random secret (64 characters)
-$secret = -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 64 | ForEach-Object {[char]$_})
+# Generate a random secret (32 random bytes as 64 hex characters)
+$secret = -join ((1..32) | ForEach-Object { '{0:x2}' -f (Get-Random -Maximum 256) })
 
 # Create .env file with configuration
 @"
@@ -126,7 +126,7 @@ Write-Host "Configuration saved to .env file"
 Write-Host "EENGINE_SECRET=$secret"
 ```
 
-**Important:** The `.env` file is created in the current directory and will be automatically loaded by `emailengine.exe` when it starts. Keep this file secure and back it up.
+**Important:** EmailEngine reads a `.env` file from the directory it is started in (the working directory, not the directory the executable sits in), and variables already set in the environment take precedence over the file. Keep this file secure and back it up.
 
 ### Step 4: Test Run
 
@@ -237,20 +237,23 @@ wsl --install -d Ubuntu-22.04
 wsl
 ```
 
-Inside WSL2, follow the [Linux installation guide](/docs/installation/linux):
+Inside WSL2, follow the binary method of the [Linux installation guide](/docs/installation/linux):
 
 ```bash
-# Quick install using automated installer
-wget https://go.emailengine.app -O install.sh
-chmod +x install.sh
-sudo ./install.sh
-
-# Or manual installation
 sudo apt update
 sudo apt install redis-server
 wget https://go.emailengine.app/emailengine.tar.gz
 tar xzf emailengine.tar.gz
 sudo mv emailengine /usr/local/bin/
+```
+
+The automated installer is not the right tool here: it provisions a TLS certificate through Caddy for a public hostname, which a WSL2 instance behind the Windows host cannot answer for.
+
+To run EmailEngine as a SystemD service inside WSL2, systemd has to be enabled in the distribution first. Add the following to `/etc/wsl.conf` inside the distribution and run `wsl --shutdown` from PowerShell:
+
+```ini
+[boot]
+systemd=true
 ```
 
 ### Step 3: Access from Windows
@@ -271,7 +274,7 @@ wsl sudo service redis-server start
 wsl sudo systemctl start emailengine
 ```
 
-The second line assumes EmailEngine is installed as a service inside WSL2. The automated installer above creates it; a manual binary install does not, so create the [SystemD unit](/docs/deployment/systemd) first or start the binary directly.
+The second line assumes EmailEngine is installed as a SystemD service inside WSL2 with systemd enabled as described above. Create the [SystemD unit](/docs/deployment/systemd) first, or start the binary directly instead.
 
 **Add to Windows startup:**
 
@@ -320,12 +323,15 @@ redis = "redis://127.0.0.1:6379/8"
 port = 3000
 host = "0.0.0.0"
 
-workers = 4
+[workers]
+imap = 4
 
 [log]
 level = "info"
 raw = false
 ```
+
+The section and key names are those of the `config/default.toml` shipped with EmailEngine, so `EENGINE_WORKERS` corresponds to `workers.imap`, not to a key under `[api]`.
 
 Run with config file:
 

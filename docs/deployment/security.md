@@ -17,6 +17,7 @@ EmailEngine handles sensitive data including email credentials, OAuth tokens, an
 This guide covers:
 
 - Network security and firewall configuration
+- Admin password, API token requirement, and token scopes
 - Authentication and access control (passwords, passkeys, SSO)
 - Audit logging for authentication events
 - Encryption at rest and in transit
@@ -27,6 +28,8 @@ This guide covers:
 ## Network Security
 
 ### Firewall Configuration
+
+EmailEngine binds its API and admin interface to `127.0.0.1` unless `EENGINE_HOST` (or `api.host` in a config file) says otherwise, so on a single host nothing reaches port 3000 except through the reverse proxy. The Docker image sets `EENGINE_HOST=0.0.0.0` because the container network needs it; there, the firewall rules below are what keep the port private.
 
 **Only expose necessary ports:**
 
@@ -128,6 +131,7 @@ These domains are required for core EmailEngine functionality:
 | Domain | Port | Purpose |
 |--------|------|---------|
 | `postalsys.com` | 443 | License validation and trial provisioning. Required for all licensed installations. |
+| `sentry.emailengine.dev` | 443 | Error reporting, only while `sentryEnabled` is on with no DSN of your own. A trial license turns it on by default; see [Error reporting](/docs/configuration/environment-variables#logging--monitoring) for how to keep reports in-house or off. |
 
 #### OAuth2 Provider Domains
 
@@ -138,8 +142,10 @@ Required based on which OAuth2 providers you use:
 | Domain | Port | Purpose |
 |--------|------|---------|
 | `oauth2.googleapis.com` | 443 | OAuth2 token exchange and refresh for Gmail accounts |
-| `gmail.googleapis.com` | 443 | Gmail API for profile info and message operations (when using API mode) |
+| `www.googleapis.com` | 443 | Profile lookup after authorization (`/oauth2/v2/userinfo`) |
+| `gmail.googleapis.com` | 443 | Gmail API for message operations (when using API mode) |
 | `pubsub.googleapis.com` | 443 | Gmail push notifications for real-time updates (when using Pub/Sub) |
+| `iamcredentials.googleapis.com` | 443 | Service account apps using external account (workload identity) authentication |
 
 **Microsoft (Outlook/Office 365):**
 
@@ -189,7 +195,7 @@ These endpoints depend on your specific configuration:
 | Endpoint Type | Purpose |
 |---------------|---------|
 | Webhook URLs | URLs configured in EmailEngine settings for webhook delivery. Whitelist your webhook receiver endpoints. |
-| Elasticsearch URLs | If using document store for email indexing and AI embeddings. Whitelist your Elasticsearch cluster. |
+| Elasticsearch URLs | Only with the deprecated Document Store, which is removed from releases starting 2026-10-01. Whitelist your Elasticsearch cluster while it is in use. |
 | IMAP/SMTP servers | Mail servers for connected accounts. Typically ports 993 (IMAPS), 465/587 (SMTPS/submission), 143 (IMAP), 25 (SMTP). |
 
 #### Minimal Whitelist Example
@@ -236,29 +242,16 @@ The `EENGINE_SECRET` must be stored permanently in your configuration. If lost, 
 **Generate a secure secret:**
 
 ```bash
-# Generate a 32-byte (256-bit) secret
+# Generate a 32-byte (256-bit) secret, printed as 64 hex characters
 openssl rand -hex 32
-# Example output: a1b2c3d4e5f6...64 hex characters
 ```
 
 **Store permanently (choose one method):**
 
-```bash
-# Option 1: SystemD service file (recommended for Linux servers)
-# Edit /etc/systemd/system/emailengine.service
-[Service]
-Environment="EENGINE_SECRET=your-generated-secret-here"
-
-# Then reload and restart:
-sudo systemctl daemon-reload
-sudo systemctl restart emailengine
-
-# Option 2: Environment file
-echo "EENGINE_SECRET=your-generated-secret-here" >> /etc/emailengine/.env
-
-# Option 3: Secret management service (production)
-# AWS Secrets Manager, HashiCorp Vault, Azure Key Vault, etc.
-```
+- **systemd environment file.** A root-only file named by `EnvironmentFile=` in the unit, as shown in [SystemD Service](/docs/deployment/systemd#3-write-the-environment-file). Unit files themselves are world-readable, so do not put the secret in an `Environment=` line
+- **`.env` in the working directory.** EmailEngine loads a `.env` file from the directory it starts in; this is how the [source](/docs/installation/source) and [Docker Compose](/docs/installation/docker) layouts carry it
+- **`EENGINE_SECRET_FILE`.** Points at a file holding the value, for Docker and Kubernetes secrets; see [Loading Values From Files](/docs/configuration/environment-variables#loading-values-from-files)
+- **A secret manager.** Fetched at start and exported into the environment; an example is under [Secret Management](#secret-management)
 
 **Requirements:**
 
@@ -269,32 +262,44 @@ echo "EENGINE_SECRET=your-generated-secret-here" >> /etc/emailengine/.env
 
 For migrating existing data, rotating secrets, and detailed encryption procedures, see the [Secret Encryption](/docs/advanced/encryption) guide.
 
+### Admin Password and API Authentication
+
+A fresh instance has no admin password. Until one is set, the admin interface opens without a login for anyone who can reach the port, and it refuses to issue access tokens because there is no session to tie them to. Set the password before the instance faces a network, by one of:
+
+- **Account** > **Security** in the admin interface (the username menu in the top-right corner)
+- `emailengine password` on the host, which prints a generated password or takes one with `-p`; see [Password Management](/docs/configuration/cli#password-management)
+- `EENGINE_PREPARED_PASSWORD`, carrying a hash from `emailengine password --hash`, for provisioned deployments; see [Prepared Admin Password](/docs/configuration/environment-variables#prepared-admin-password)
+
+API requests require a bearer token by default. The switch that turns this off is the `disableTokens` setting, shown as **Configuration** > **Security** in the admin interface. `EENGINE_REQUIRE_API_AUTH=false` sets it on first start only, for a development instance that has never run before; on an instance that already has the setting stored, the environment variable does nothing. While tokens are disabled, a request that presents no credential at all is accepted, and the dashboard shows a warning. See [Disabling Authentication](/docs/api-reference/access-tokens#disabling-authentication-development-only).
+
 ### API Token Management
 
-EmailEngine supports two types of tokens:
+A token carries a scope and, optionally, a narrowing on top of it:
 
-1. **System-wide tokens**: Full access to all accounts and endpoints
-2. **Account-specific tokens**: Restricted to a single account
+1. **System-wide tokens** with scope `*` reach every account and every endpoint, including settings and the token endpoints themselves
+2. **Account-bound tokens** name one account and are refused for any other. The CLI's `-a` flag and the API's `account` field create them
+3. **Narrowed tokens** carry a `permissions` record that subtracts actions or endpoint groups from what the scope allows. Only the API creates them
 
-**Generate tokens via web UI:**
+The scopes are `*`, `api`, `metrics`, `smtp`, `imap-proxy` and `mcp`. `metrics` reaches only `/metrics`; `smtp` and `imap-proxy` authenticate to the [SMTP](/docs/sending/smtp-interface) and [IMAP proxy](/docs/configuration/environment-variables#imap-proxy-server) servers rather than the REST API; `mcp` reaches the [MCP endpoint](/docs/mcp). [Token Scopes](/docs/api-reference/access-tokens#token-scopes) has the full matrix.
 
-1. Log in to EmailEngine admin interface
-2. Navigate to **Integrations** → **Access Tokens**
-3. Click **Generate New Token**
-4. Set description and permissions
-5. Copy the token immediately (shown only once)
+**Generate tokens in the admin interface:**
 
-**Generate tokens via CLI:**
+1. Open **Integrations** > **Access Tokens** in the sidebar
+2. Click **Create access token**. The form only appears once an admin password is set
+3. Enter a description, choose the scope and, optionally, an account and restrictions
+4. Click **Generate a token** and copy it: it is shown once and never again
+
+**Generate tokens with the CLI:**
 
 ```bash
 # System-wide token
 emailengine tokens issue -d "Admin token" -s "*" --dbs.redis="redis://127.0.0.1:6379/8"
 
-# Account-specific token
+# Account-bound token
 emailengine tokens issue -d "User token" -s "api" -a "account_id" --dbs.redis="redis://127.0.0.1:6379/8"
 ```
 
-For complete token management details including scopes, export/import, and revocation, see [Access Tokens](/docs/api-reference/access-tokens).
+The CLI writes the token straight into Redis, so `--dbs.redis` must name the database the service uses. The API can also mint tokens, but only account-bound or narrowed ones; see [Creating Tokens](/docs/api-reference/access-tokens#creating-tokens) for the three methods, and the same page for export, import and revocation.
 
 **Store tokens securely:**
 
@@ -324,8 +329,9 @@ curl -X POST https://emailengine.example.com/v1/oauth2 \
   -d '{
     "name": "My Gmail App",
     "provider": "gmail",
-    "clientId": "xxx.apps.googleusercontent.com",
-    "clientSecret": "GOCSPX-xxx",
+    "clientId": "1234567890-abcdefghijklmnop.apps.googleusercontent.com",
+    "clientSecret": "GOCSPX-abcdefghijklmnopqrstuvwxyz",
+    "redirectUrl": "https://emailengine.example.com/oauth",
     "enabled": true
   }'
 ```
@@ -334,15 +340,7 @@ curl -X POST https://emailengine.example.com/v1/oauth2 \
 OAuth2 app credentials are encrypted at rest using [`EENGINE_SECRET`](#eengine_secret). EmailEngine automatically manages access tokens, refresh tokens, and handles token refresh.
 :::
 
-**OAuth2 redirect URI restrictions:**
-
-| Redirect URI | Allowed | Reason |
-|--------------|---------|--------|
-| `https://emailengine.example.com/oauth` | Yes | Valid HTTPS endpoint |
-| `https://emailengine.example.com/oauth/callback` | Yes | Valid HTTPS callback |
-| `http://emailengine.example.com/oauth` | No | Missing HTTPS |
-| `https://*/oauth` | No | Wildcards not permitted |
-| `http://localhost/oauth` | Dev only | Acceptable for local development |
+**Redirect URL:** EmailEngine receives the provider's callback at `/oauth` under the Service URL, so the redirect URL registered at Google or Microsoft must be exactly `https://<serviceUrl>/oauth`, and `redirectUrl` on the application must carry the same value. Providers refuse plain `http` outside `localhost`, which is why the Service URL has to be the public HTTPS address. See [OAuth2 Setup](/docs/accounts/oauth2-setup).
 
 **Microsoft Graph webhook subscriptions:**
 
@@ -464,7 +462,7 @@ EENGINE_API_PROXY=true
 EENGINE_API_PROXY_ADDRESSES=10.0.0.0/8
 ```
 
-Without `EENGINE_API_PROXY_ADDRESSES`, EmailEngine trusts the header from any peer, so a client that can reach the port directly can present whatever address the allowlist expects and walk straight through it. See [Trusted Proxy Addresses](/docs/reference/configuration-options#trusted-proxy-addresses).
+Without `EENGINE_API_PROXY_ADDRESSES`, EmailEngine trusts the header from any peer, so a client that can reach the port directly can present whatever address the allowlist expects and walk straight through it. See [Trusted Proxy Addresses](/docs/configuration/environment-variables#trusted-proxy-addresses).
 :::
 
 ### Passkey Authentication (WebAuthn)
@@ -642,12 +640,16 @@ server {
 }
 ```
 
-**IMAP/SMTP connection security:**
+**TLS on the API port itself:**
+
+A reverse proxy is the usual place to terminate TLS. When EmailEngine has to serve HTTPS directly, `EENGINE_API_TLS=true` turns it on, and the certificate material comes from variables with the `EENGINE_API_TLS_` prefix: `EENGINE_API_TLS_KEY`, `EENGINE_API_TLS_CERT`, `EENGINE_API_TLS_CA`, plus `_CIPHERS`, `_MIN_VERSION`, `_MAX_VERSION`, `_ECDH_CURVE`, `_DHPARAM` and `_PASSPHRASE` for the corresponding Node.js TLS options. The same prefix scheme with `EENGINE_SMTP_TLS_` and `EENGINE_IMAPPROXY_TLS_` covers the SMTP and IMAP proxy servers. See [TLS Configuration](/docs/configuration/environment-variables#tls-configuration).
+
+**IMAP and SMTP connections to mail servers:**
+
+Whether a connection to a mail server is encrypted is decided per account: `secure: true` on the IMAP or SMTP settings opens a TLS connection, and the [SSL/TLS settings](/docs/accounts/imap-smtp#ssltls-configuration) on the same page cover STARTTLS and certificate checking. The floor for outbound IMAP TLS is set instance-wide with `EENGINE_TLS_MIN_VERSION` (default `TLSv1`), `EENGINE_TLS_MIN_DH_SIZE` (default `1024`) and `EENGINE_TLS_CIPHERS` (default `DEFAULT@SECLEVEL=0`). The defaults are permissive so that old mail servers still connect; raise them where every server you connect to supports TLS 1.2:
 
 ```bash
-# EmailEngine automatically uses TLS for IMAP/SMTP connections
-# Verify in logs:
-grep "Connection established" /var/log/emailengine/app.log
+EENGINE_TLS_MIN_VERSION=TLSv1.2
 ```
 
 ### Redis Encryption
@@ -709,7 +711,7 @@ The EmailEngine API is designed to be an internal resource, accessed only by you
 If you need to expose the API with account-specific tokens (rare use case), EmailEngine supports optional per-token rate limiting. Configure rate limits when creating access tokens:
 
 ```bash
-curl -X POST http://localhost:3000/v1/tokens \
+curl -X POST https://emailengine.example.com/v1/tokens \
   -H "Authorization: Bearer ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -730,13 +732,11 @@ curl -X POST http://localhost:3000/v1/tokens \
 | `maxRequests` | Maximum requests allowed in the time window |
 | `timeWindow` | Time window duration in seconds |
 
-When rate limited, the API returns `429 Too Many Requests` with headers:
+Every accepted request from such a token carries `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset` headers. Once the window is used up, the API answers `429 Too Many Requests` with `X-RateLimit-Limit` and `X-RateLimit-Reset` (seconds until the window resets) and a `ttl` field in the error body carrying the same number. The denial is also recorded in the [token audit log](/docs/api-reference/access-tokens#audit-log). Restrictions can also pin a token to source addresses and referrers; see [Token Restrictions](/docs/api-reference/access-tokens#token-restrictions).
 
-| Header | Description |
-|--------|-------------|
-| `X-RateLimit-Limit` | Maximum requests per window |
-| `X-RateLimit-Remaining` | Requests remaining in window |
-| `X-RateLimit-Reset` | Seconds until limit resets |
+### Cross-Origin Requests
+
+The API sends no CORS headers unless `EENGINE_CORS_ORIGIN` lists the origins that may call it from a browser. Leave it unset for a backend-only API; a browser client would otherwise have to carry an access token, which the [restrictions](#per-token-rate-limiting) above can bound but not make safe to publish. See [CORS Configuration](/docs/configuration/environment-variables#cors-configuration).
 
 ### IP Whitelisting
 
@@ -766,16 +766,11 @@ server {
 **Using account IDs (not email addresses):**
 
 ```bash
-# CORRECT: Use account ID
 curl https://emailengine.example.com/v1/account/account_1234 \
   -H "Authorization: Bearer TOKEN"
-
-# INCORRECT: Cannot use email address
-# curl https://emailengine.example.com/v1/account/user@example.com
-
-# Account ID might be same as email, but usually is different
-# Always use the account ID returned during account creation
 ```
+
+The path segment is the account ID chosen when the account was registered, not its email address. The two can be identical if you registered it that way, but nothing maps an address to an ID for you.
 
 **Common API operations:**
 
@@ -874,7 +869,7 @@ curl -X DELETE https://emailengine.example.com/v1/account/account_1234 \
 :::info What EmailEngine Stores
 EmailEngine stores account credentials, OAuth tokens, and sync state in Redis. Email messages themselves are not stored - EmailEngine reads them from the mail server on demand.
 
-Optionally, EmailEngine can be configured to retain the last N queue job entries (including webhook deliveries) as a FIFO buffer for debugging. By default, no job history is stored.
+Queue job entries are the other place message-derived data can linger. Completed jobs are removed as soon as they finish unless the Job History Limit setting keeps a bounded number for debugging. Failed jobs, including webhook deliveries that were given up on after every retry, are kept by default: the last 500 per queue for 7 days, adjustable with `EENGINE_QUEUE_KEEP_FAILED` and `EENGINE_QUEUE_KEEP_FAILED_AGE`. A failed webhook entry carries the payload it tried to deliver, so on a deployment with strict retention rules, shorten that age. See [Queue Management](/docs/advanced/queue-management).
 :::
 
 ## Security Checklist
@@ -883,6 +878,8 @@ Optionally, EmailEngine can be configured to retain the last N queue job entries
 
 - [ ] Generate strong `EENGINE_SECRET` (32+ characters)
 - [ ] Store `EENGINE_SECRET` permanently (critical!)
+- [ ] Set the admin password
+- [ ] Leave API tokens required (`EENGINE_REQUIRE_API_AUTH` unset)
 - [ ] Configure Redis authentication
 - [ ] Enable Redis persistence with `noeviction` policy
 - [ ] Set up firewall rules
