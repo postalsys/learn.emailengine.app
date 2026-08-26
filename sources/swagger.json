@@ -108,7 +108,7 @@
   },
   "info": {
     "title": "EmailEngine API",
-    "version": "2.79.3",
+    "version": "2.79.4",
     "contact": {
       "name": "EmailEngine Support",
       "url": "https://learn.emailengine.app/docs/support",
@@ -1202,7 +1202,7 @@
             "paused": "Syncing was paused through the API. No connection is maintained",
             "authenticationError": "The credentials were rejected. Requires re-authentication before syncing resumes",
             "connectError": "The server could not be reached or the TLS handshake failed. Retried with backoff",
-            "unset": "No IMAP or OAuth2 configuration is set, so the account is not synced"
+            "unset": "The account is not syncing: either no IMAP or OAuth2 configuration is set, or syncing was switched off - by the operator, or automatically after repeated authentication failures"
           }
         },
         "enum": [
@@ -1677,6 +1677,13 @@
           },
           "imapIndexer": {
             "$ref": "#/components/schemas/AccountImapIndexer"
+          },
+          "authFailureDisabledAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When EmailEngine switched syncing off for this account after repeated authentication failures, or `null`. Read-only. Supply working credentials - re-authorize an OAuth2 account, or save new IMAP settings - and syncing resumes. `imap.disabled` is also the operator's own send-only switch, so this is what tells an automatic disable from a deliberate one.",
+            "example": "2021-03-22T13:13:31.000Z",
+            "nullable": true
           },
           "subconnections": {
             "$ref": "#/components/schemas/SubconnectionPaths"
@@ -6194,7 +6201,7 @@
             "paused": "Syncing was paused through the API. No connection is maintained",
             "authenticationError": "The credentials were rejected. Requires re-authentication before syncing resumes",
             "connectError": "The server could not be reached or the TLS handshake failed. Retried with backoff",
-            "unset": "No IMAP or OAuth2 configuration is set, so the account is not synced"
+            "unset": "The account is not syncing: either no IMAP or OAuth2 configuration is set, or syncing was switched off - by the operator, or automatically after repeated authentication failures"
           }
         },
         "enum": [
@@ -6296,6 +6303,13 @@
             "format": "date-time",
             "description": "Last sync time (IMAP accounts only)",
             "example": "2021-02-17T13:43:18.860Z"
+          },
+          "authFailureDisabledAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When EmailEngine switched syncing off for this account after repeated authentication failures, or `null`. Read-only. Supply working credentials - re-authorize an OAuth2 account, or save new IMAP settings - and syncing resumes. `imap.disabled` is also the operator's own send-only switch, so this is what tells an automatic disable from a deliberate one.",
+            "example": "2021-03-22T13:13:31.000Z",
+            "nullable": true
           },
           "lastError": {
             "$ref": "#/components/schemas/AccountErrorEntry"
@@ -10654,7 +10668,7 @@
           "version": {
             "type": "string",
             "description": "EmailEngine version number",
-            "example": "2.79.3"
+            "example": "2.79.4"
           },
           "license": {
             "type": "string",
@@ -17253,7 +17267,7 @@
                   "paused": "Syncing was paused through the API. No connection is maintained",
                   "authenticationError": "The credentials were rejected. Requires re-authentication before syncing resumes",
                   "connectError": "The server could not be reached or the TLS handshake failed. Retried with backoff",
-                  "unset": "No IMAP or OAuth2 configuration is set, so the account is not synced"
+                  "unset": "The account is not syncing: either no IMAP or OAuth2 configuration is set, or syncing was switched off - by the operator, or automatically after repeated authentication failures"
                 }
               },
               "enum": [

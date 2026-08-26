@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "name": "EmailEngine",
   "description": "Self-hosted email API gateway providing REST API access to email accounts via IMAP, SMTP, Gmail API, and Microsoft Graph API",
-  "version": "2.79.3",
+  "version": "2.79.4",
   "documentationUrl": "https://learn.emailengine.app/",
   "openApiSpec": "https://go.emailengine.app/swagger.json",
   "authentication": {
@@ -294,7 +294,10 @@
     {"type": "outlook", "description": "Microsoft 365/Outlook via OAuth2", "protocols": ["imap", "smtp", "ms-graph"]},
     {"type": "outlookService", "description": "Microsoft 365 via application credentials (client credentials)", "protocols": ["ms-graph"]},
     {"type": "mailRu", "description": "Mail.ru via OAuth2", "protocols": ["imap", "smtp"]},
-    {"type": "oauth2", "description": "Generic OAuth2 provider", "protocols": ["imap", "smtp"]}
+    {"type": "delegated", "description": "Reported only: Microsoft 365 shared mailbox borrowing another account's OAuth2 grant (oauth2.auth.delegatedAccount)", "protocols": ["ms-graph"]},
+    {"type": "sending", "description": "Reported only: SMTP-only account with no IMAP or OAuth2 configuration", "protocols": ["smtp"]},
+    {"type": "oauth2", "description": "Reported only: the account references an OAuth2 application that no longer exists", "protocols": []},
+    {"type": "invalid", "description": "Reported only: delegated account whose parent account is missing or broken", "protocols": []}
   ],
   "accountStates": [
     {"state": "init", "description": "Being initialized", "operational": false},
@@ -305,7 +308,7 @@
     {"state": "authenticationError", "description": "Invalid credentials", "operational": false},
     {"state": "connectError", "description": "Network/server error", "operational": false},
     {"state": "paused", "description": "Syncing paused through the API", "operational": false},
-    {"state": "unset", "description": "No usable IMAP or OAuth2 configuration, or syncing disabled for the account (imap.disabled)", "operational": false}
+    {"state": "unset", "description": "Not syncing: either no IMAP or OAuth2 configuration is set, or syncing was switched off, by the operator (imap.disabled) or automatically after repeated authentication failures (authFailureDisabledAt is set; re-authorizing or saving new IMAP settings resumes syncing)", "operational": false}
   ],
   "errorCodes": [
     {"code": "AccountNotFound", "status": 404, "retryable": false, "description": "Account doesn't exist"},
