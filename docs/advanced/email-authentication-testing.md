@@ -1,6 +1,6 @@
 ---
 title: Email Authentication Testing
-sidebar_position: 7
+sidebar_position: 8
 description: Verify DKIM, SPF, DMARC, BIMI, and ARC configuration by testing your email setup with EmailEngine's delivery test API
 keywords:
   - dkim
@@ -34,13 +34,13 @@ Testing helps you identify and fix these issues before they affect real email de
 
 ## How It Works
 
-1. You initiate a test via the API for a specific account
-2. EmailEngine automatically creates a temporary test mailbox on [Ethereal Email](https://ethereal.email) (no configuration needed)
-3. EmailEngine sends a test email from your account to this temporary mailbox
-4. The Ethereal verification server analyzes the email's authentication headers
+1. You initiate a test via the API for a specific account, or with the **Delivery test** button on the account's page in the admin interface
+2. EmailEngine requests a single-use test address from the verification service at `api.nodemailer.com`, which is run by the [Ethereal Email](https://ethereal.email) project (no configuration needed)
+3. EmailEngine queues a test email from your account to that address, with one delivery attempt
+4. The verification service analyzes the email's authentication headers
 5. You poll the check endpoint to retrieve DKIM, SPF, DMARC, BIMI, and ARC results
 
-The entire process is fully automated - you don't need to provide any test email addresses or set up external services. EmailEngine handles the test mailbox creation and cleanup automatically.
+You do not need to provide any test email addresses or set up external services.
 
 ### Why an External Service?
 
@@ -50,7 +50,7 @@ Email authentication verification requires an **external receiving server** for 
 - **DKIM signatures** are applied by the mail server during delivery. Sending to your own account might bypass these steps entirely.
 - **DMARC alignment** depends on how the email travels through the internet. Internal delivery doesn't simulate real-world routing.
 
-By using Ethereal Email as an external receiver, the test email goes through the complete email delivery pipeline to an independent mail server that performs all standard authentication checks, just like Gmail, Outlook, or any other recipient would.
+By using Ethereal Email as an external receiver, the test email goes through the complete email delivery pipeline to an independent mail server that performs all standard authentication checks, the same way Gmail, Outlook, or any other recipient would.
 
 This works with any account backend:
 - **SMTP accounts** - Email is sent via your configured SMTP server
@@ -60,11 +60,11 @@ This works with any account backend:
 The test verifies whatever authentication your actual sending method provides.
 
 :::note Service Availability
-Since email authentication testing relies on an external service (Ethereal Email), test availability depends on that service being operational. If the external service is temporarily unavailable, delivery tests will fail. There is no fallback mechanism - you'll need to retry later when the service is back online.
+Since email authentication testing relies on an external service, test availability depends on that service being operational. If it is temporarily unavailable, delivery tests fail. There is no fallback mechanism - retry later when the service is back online.
 :::
 
 :::info Result Retention
-Test results are stored for **1 hour** after the test is initiated. After this period, the test data is automatically deleted and you'll need to run a new test. Make sure to retrieve your results within this timeframe.
+EmailEngine keeps its own record of the delivery attempt for **one hour** after the message was handed over or failed. Poll for the result within that window; after it, start a new test.
 :::
 
 ## Starting a Delivery Test
@@ -75,7 +75,7 @@ Initiate a test for any connected email account:
 <TabItem value="curl" label="cURL" default>
 
 ```bash
-curl -X POST "http://localhost:3000/v1/delivery-test/account/my-account" \
+curl -X POST "https://emailengine.example.com/v1/delivery-test/account/my-account" \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{}'
@@ -86,7 +86,7 @@ curl -X POST "http://localhost:3000/v1/delivery-test/account/my-account" \
 
 ```javascript
 const response = await fetch(
-  'http://localhost:3000/v1/delivery-test/account/my-account',
+  'https://emailengine.example.com/v1/delivery-test/account/my-account',
   {
     method: 'POST',
     headers: {
@@ -113,20 +113,24 @@ console.log('Test ID:', result.deliveryTest);
 }
 ```
 
+If the test message could not be queued, for example because the account has no SMTP configuration, the response is `{"error": "..."}` with the reason and no `success` or `deliveryTest` field.
+
 ## Using a Gateway
 
 By default, the test email is sent using the account's native sending method (SMTP, Gmail API, or Microsoft Graph). To test delivery through a specific SMTP gateway instead, use the `gateway` parameter.
 
-A **gateway** in EmailEngine is an SMTP account (typically from a sending provider like SendGrid, Mailgun, or Amazon SES) that EmailEngine can use to send emails on behalf of any account. Gateways must allow custom `From:` addresses since they send mail for multiple accounts. You can register gateways via the [Gateway API](/docs/api/post-v-1-gateway).
+A **gateway** in EmailEngine is an SMTP account (typically from a sending provider like SendGrid, Mailgun, or Amazon SES) that EmailEngine can use to send emails on behalf of any account. Gateways must allow custom `From:` addresses since they send mail for multiple accounts. You can register gateways via the [Gateway API](/docs/api/post-v-1-gateway); see [SMTP gateways](/docs/sending/transactional-service).
 
 ```bash
-curl -X POST "http://localhost:3000/v1/delivery-test/account/my-account" \
+curl -X POST "https://emailengine.example.com/v1/delivery-test/account/my-account" \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "gateway": "sendgrid-gateway"
   }'
 ```
+
+An unknown gateway ID is rejected with 404 before anything is sent.
 
 This is useful for testing:
 - Third-party SMTP services (SendGrid, Mailgun, Amazon SES)
@@ -142,7 +146,7 @@ Poll the check endpoint with the test ID to get results. The verification server
 <TabItem value="curl" label="cURL" default>
 
 ```bash
-curl "http://localhost:3000/v1/delivery-test/check/6420a6ad-7f82-4e4f-8112-82a9dad1f34d" \
+curl "https://emailengine.example.com/v1/delivery-test/check/6420a6ad-7f82-4e4f-8112-82a9dad1f34d" \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
 
@@ -153,7 +157,7 @@ curl "http://localhost:3000/v1/delivery-test/check/6420a6ad-7f82-4e4f-8112-82a9d
 async function checkDeliveryTest(testId, maxAttempts = 10) {
   for (let i = 0; i < maxAttempts; i++) {
     const response = await fetch(
-      `http://localhost:3000/v1/delivery-test/check/${testId}`,
+      `https://emailengine.example.com/v1/delivery-test/check/${testId}`,
       {
         headers: {
           'Authorization': 'Bearer YOUR_ACCESS_TOKEN'
@@ -191,7 +195,7 @@ console.log('DMARC:', results.dmarc?.status?.result);
   "spf": {
     "status": {
       "result": "pass",
-      "comment": "example.com: domain of sender designates 203.0.113.10 as permitted sender"
+      "comment": "domain of sender designates 203.0.113.10 as permitted sender"
     },
     "rr": "v=spf1 include:_spf.example.com ~all"
   },
@@ -233,7 +237,7 @@ console.log('DMARC:', results.dmarc?.status?.result);
 }
 ```
 
-While the test message has not arrived yet, the response is `{"success": false, "status": "pending"}` instead. Poll until `success` is `true`.
+While the test message has not arrived yet, the response is `{"success": false, "status": "pending"}` instead. Poll until `success` is `true`. If EmailEngine's own delivery attempt failed, the check answers 500 with `Failed to deliver email`; there is no retry, so start a new test after fixing the sending configuration.
 
 The per-protocol objects come straight from the verification service, so they carry more detail than shown here. The fields to build on are:
 
@@ -243,7 +247,7 @@ The per-protocol objects come straight from the verification service, so they ca
 | `spf.rr` | The SPF record that was evaluated |
 | `dkim.results[]` | One entry per DKIM signature on the message, each with `signingDomain`, `selector`, and `status` |
 | `dmarc.status.result` | DMARC outcome |
-| `dmarc.policy` | The policy that applies to this message, taken from the record's `sp` for a subdomain and `p` otherwise |
+| `dmarc.policy` | The published policy that applies to this message (`none`, `quarantine` or `reject`): the organizational domain's `sp` for a subdomain that has one, otherwise `p`, which is reported separately |
 | `dmarc.alignment.spf.result` / `dmarc.alignment.dkim.result` | The domain that aligned, or absent when that mechanism did not align. DMARC passes when either one aligns |
 | `mainSig` | The DKIM signature EmailEngine treats as the primary one (see below) |
 
@@ -324,7 +328,7 @@ ARC preserves authentication results when emails are forwarded.
 Start a test, poll until the verification service has analysed the message, then report the three checks that decide whether mail is accepted:
 
 ```javascript
-const API_URL = 'http://localhost:3000';
+const API_URL = 'https://emailengine.example.com';
 const TOKEN = 'YOUR_ACCESS_TOKEN';
 
 const api = path =>
@@ -393,5 +397,7 @@ For complete request/response schemas, see the API documentation:
 ## See Also
 
 - [Inbox Placement Testing](/docs/advanced/inbox-placement-testing) - Test whether emails land in inbox or spam
+- [SMTP Gateways](/docs/sending/transactional-service) - Registering the relay a test can be routed through
+- [Bounce Detection](/docs/advanced/bounces) - The `auth_failure` bounces that a failing SPF or DKIM setup produces in real traffic
 - [SMTP Server](/docs/sending/smtp-interface) - Send emails via SMTP protocol
-- [Webhooks](/docs/webhooks/overview) - Monitor email events
+- [Webhooks](/docs/webhooks/overview) - The `messageSent` and `messageFailed` events the test message raises like any other

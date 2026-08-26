@@ -13,7 +13,7 @@ keywords:
 
 # Continuous Email Processing
 
-Continuous email processing enables you to build real-time pipelines that analyze, archive, and act on emails as they arrive. Unlike one-time exports, continuous processing keeps your systems synchronized with the latest email data, making it ideal for AI analysis, vector databases, and automation workflows.
+Continuous email processing means a pipeline that analyzes, archives or acts on messages as they arrive, rather than a one-time [export](/docs/receiving/exporting). EmailEngine's part of it is the `messageNew` webhook: every message it sees for the first time is delivered to your endpoint as a JSON document, and the rest of the pipeline is yours. This page covers the settings that shape that feed, patterns for consuming it, and the cases where a message can be reported more than once.
 
 ## Why Continuous Processing?
 
@@ -112,7 +112,7 @@ await addAccountWithHistoricalProcessing('example', {
 
 ### Step 2: Use Hosted Authentication (Alternative)
 
-Generate an authentication link with `notifyFrom`:
+The [hosted authentication form](/docs/accounts/hosted-authentication) takes the same `notifyFrom` value, so an account the user connects themselves can start with history too. `redirectUrl` is the only required field; `type: "imap"` fixes the form to the account type `notifyFrom` applies to:
 
 ```javascript
 async function generateAuthLink(accountId, redirectUrl) {
@@ -126,6 +126,7 @@ async function generateAuthLink(accountId, redirectUrl) {
       },
       body: JSON.stringify({
         account: accountId,
+        type: 'imap',
         notifyFrom: '1970-01-01T00:00:00.000Z',
         redirectUrl: redirectUrl
       })
@@ -143,7 +144,7 @@ console.log('User authentication URL:', authUrl);
 
 ### Step 3: Configure Webhooks
 
-Enable webhooks to receive email notifications using the [Update Settings API endpoint](/docs/api/post-v-1-settings):
+Enable webhooks and choose what each `messageNew` payload carries, using the [Update Settings API endpoint](/docs/api/post-v-1-settings). `webhookEvents` is an allowlist with no default, so it has to name `messageNew` (or `*`) or nothing is delivered. `notifyText` is what puts the message body into the payload; without it a pipeline has to fetch every body separately:
 
 ```bash
 curl -X POST "https://emailengine.example.com/v1/settings" \
@@ -152,16 +153,29 @@ curl -X POST "https://emailengine.example.com/v1/settings" \
   -d '{
     "webhooks": "https://your-app.com/webhooks/emailengine",
     "webhooksEnabled": true,
-    "notifyHeaders": ["*"],
+    "webhookEvents": ["messageNew"],
+    "notifyText": true,
     "notifyTextSize": 2097152,
     "notifyWebSafeHtml": true,
+    "notifyHeaders": ["*"],
     "notifyCalendarEvents": true
   }'
 ```
 
+| Setting | Effect on the payload |
+|---------|-----------------------|
+| `notifyText` | Include `text.plain` and `text.html` |
+| `notifyTextSize` | Cap each text part at this many bytes |
+| `notifyWebSafeHtml` | Replace `text.html` with the sanitized [web-safe rendering](/docs/receiving/web-safe-html) |
+| `notifyHeaders` | Header names to include under `headers`; `["*"]` includes all of them |
+| `notifyCalendarEvents` | Parse iCalendar attachments into `calendarEvent` |
+| `notifyAttachments`, `notifyAttachmentSize` | Include attachment content as base64, see [Working with Attachments](/docs/receiving/attachments#attachments-in-webhook-payloads) |
+
+The full payload is documented on the [messageNew reference](/docs/webhooks/messagenew).
+
 ### Step 4: Optimize for Processing Speed
 
-For pure processing pipelines (no UI needed), use "fast" indexing:
+A pipeline that only consumes new messages does not need EmailEngine to track flag changes and deletions. The `fast` IMAP indexer keeps one UID per folder instead of a record per message, still delivers `messageNew`, and skips `messageUpdated` and `messageDeleted`:
 
 ```bash
 curl -X POST "https://emailengine.example.com/v1/settings" \
@@ -172,16 +186,7 @@ curl -X POST "https://emailengine.example.com/v1/settings" \
   }'
 ```
 
-**Differences between indexing methods:**
-
-| Feature | Full | Fast |
-|---------|------|------|
-| New message webhooks | Yes | Yes |
-| Message update webhooks | Yes | No |
-| Message delete webhooks | Yes | No |
-| Flag change webhooks | Yes | No |
-| Processing speed | Slower | Faster |
-| Use case | Full sync | Processing only |
+This is the instance-wide default; the same key on an account overrides it. [IMAP indexers](/docs/accounts/imap-indexers) compares the two indexers in detail.
 
 ## Processing Pipeline Implementations
 
@@ -251,34 +256,26 @@ Feed emails to a vector database for semantic search:
 
 ```javascript
 const { OpenAI } = require('openai');
-const { PineconeClient } = require('@pinecone-database/pinecone');
+const { Pinecone } = require('@pinecone-database/pinecone');
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const pinecone = new PineconeClient();
-
-async function initializePinecone() {
-  await pinecone.init({
-    apiKey: process.env.PINECONE_API_KEY,
-    environment: process.env.PINECONE_ENV
-  });
-}
+const pinecone = new Pinecone({ apiKey: process.env.PINECONE_API_KEY });
+const index = pinecone.index('emails');
 
 async function processEmailContent(email) {
   // Generate embedding
   const text = `${email.subject} ${email.content}`;
 
   const embeddingResponse = await openai.embeddings.create({
-    model: 'text-embedding-ada-002',
+    model: 'text-embedding-3-small',
     input: text.substring(0, 8000) // Token limit
   });
 
   const embedding = embeddingResponse.data[0].embedding;
 
   // Store in Pinecone
-  const index = pinecone.Index('emails');
-
-  await index.upsert({
-    vectors: [{
+  await index.upsert([
+    {
       id: email.messageId,
       values: embedding,
       metadata: {
@@ -288,17 +285,14 @@ async function processEmailContent(email) {
         date: email.date,
         hasAttachments: email.hasAttachments
       }
-    }]
-  });
+    }
+  ]);
 
   console.log(`Added to vector database: ${email.subject}`);
 }
-
-// Initialize
-initializePinecone().then(() => {
-  console.log('Pinecone initialized');
-});
 ```
+
+Message ids change when a message moves between folders, so key long-lived records on `emailId` or `messageId` where you can; see [Duplicate Detection](#duplicate-detection).
 
 ### AI Analysis Pipeline
 
@@ -680,7 +674,11 @@ let lastMessageReceived = Date.now();
 
 app.post('/webhooks/emailengine', async (req, res) => {
   lastMessageReceived = Date.now();
-  // ... process webhook
+  res.status(200).json({ success: true });
+
+  if (req.body.event === 'messageNew') {
+    await processMessage(req.body);
+  }
 });
 
 app.get('/health', (req, res) => {
@@ -707,60 +705,92 @@ app.get('/health', (req, res) => {
 
 ### notifyFrom Behavior
 
-**IMAP Accounts:**
-- `notifyFrom` treats existing messages as "new"
-- Webhooks sent for all messages newer than date
-- Works for initial processing of historical data
+**IMAP accounts:**
+- `notifyFrom` is the date from which existing messages count as new. It defaults to the time the account was added, so by default only mail that arrives afterwards is reported
+- On the first sync of each folder EmailEngine starts from the first message received on or after that date and reports each one with `messageNew`. Earlier messages are not indexed and never reported
+- A message that turns up later with a date before `notifyFrom`, for example an old message moved into the folder, is indexed but produces no webhook
+- To run history through an account that already exists, [flush it](/docs/api/put-v-1-account-account-flush): `PUT /v1/account/{account}/flush` clears the cached index and re-syncs from scratch, and takes its own `notifyFrom` for that re-sync (default `now`, meaning nothing already in the mailbox is reported)
 
-**Gmail API / MS Graph:**
-- `notifyFrom` does NOT work (API limitation)
-- Only new messages trigger webhooks
-- Historical processing requires different approach
+**Gmail API and MS Graph accounts:**
+- `notifyFrom` is ignored. These accounts follow the provider's own change tracking from the moment they first connect, so only messages that arrive after that produce `messageNew`
+- To process history on such an account, run an [export](/docs/receiving/exporting) for the date range and feed its file through the same processing function
+
+### Watching account state, and polling
+
+Webhooks report messages. Whether an account is still connected and able to produce them is a separate feed: `GET /v1/changes` is a Server-Sent Events stream of account state transitions, the same one the admin dashboard uses, documented under [Streaming Account State Changes](/docs/api-reference/accounts-api#streaming-account-state-changes). It carries no message data, and a listener that was disconnected misses whatever happened in between, so treat it as a live signal and `GET /v1/account/{account}` as the record.
+
+If your endpoint cannot receive webhooks at all, the fallback is to poll the listing. `GET /v1/account/{account}/messages?path=INBOX&pageSize=100` returns the newest messages first, so a poller keeps the newest `uid` it has processed per folder and stops paging as soon as it reaches it. That covers new mail only; it does not see flag changes or deletions, and a busy account is cheaper to follow through webhooks.
 
 ### Duplicate Detection
 
-Messages can appear "new" in multiple scenarios:
+The same message can be reported more than once:
 
-**Moving messages:**
-- Moving a message creates a "new" message in destination folder
-- Use `emailId` to detect duplicates
+- **Retries.** A delivery that your endpoint did not acknowledge is retried with the same body. The `X-EE-Wh-Event-Id` request header is stable across retries of one event, so it is the key for exactly-once handling.
+- **Moves.** Moving a message into a monitored folder makes it a new message there, with a new `id`, and it is reported again. The payload's `seemsLikeNew` is `false` when EmailEngine can tell the message was moved or copied rather than delivered.
+- **Gmail labels over IMAP.** Gmail exposes every label as an IMAP folder, so a message that carries several labels is visible in several folders and is reported once per folder. Over the Gmail API the same message is one object with a `labels` array and is reported once.
 
-**Multiple labels (Gmail):**
-- A message with multiple labels appears in each labeled folder
-- EmailEngine sends separate webhooks for each location
+To collapse those into one record, key on the message rather than on its location: `emailId` where the server provides one (Gmail, and IMAP servers with the `OBJECTID` extension), and the `Message-ID` header in `messageId` otherwise.
 
 ```javascript
-const processedEmailIds = new Set();
+const processedEvents = new Set();
+const processedMessages = new Set();
+
+app.post('/webhooks/emailengine', async (req, res) => {
+  const eventId = req.get('X-EE-Wh-Event-Id');
+  res.status(200).json({ success: true });
+
+  if (processedEvents.has(eventId)) {
+    return;
+  }
+  processedEvents.add(eventId);
+
+  if (req.body.event === 'messageNew') {
+    await processMessage(req.body);
+  }
+});
 
 async function processMessage(event) {
   const { data } = event;
 
-  // Deduplicate by emailId
-  if (processedEmailIds.has(data.emailId)) {
-    console.log('Already processed this email');
+  if (data.seemsLikeNew === false) {
+    console.log('Moved or copied, already seen elsewhere');
     return;
   }
 
-  processedEmailIds.add(data.emailId);
+  const messageKey = data.emailId || data.messageId;
+  if (messageKey && processedMessages.has(messageKey)) {
+    console.log('Already processed this message');
+    return;
+  }
+  if (messageKey) {
+    processedMessages.add(messageKey);
+  }
 
   await processEmailContent({
     accountId: event.account,
     messageId: data.id,
     emailId: data.emailId,
     subject: data.subject,
-    content: data.text
+    from: data.from.address,
+    content: data.text?.plain || ''
   });
 
-  // Clean up old IDs periodically
-  if (processedEmailIds.size > 10000) {
-    const toRemove = Array.from(processedEmailIds).slice(0, 5000);
-    toRemove.forEach(id => processedEmailIds.delete(id));
+  // Keep the in-memory sets bounded
+  for (const set of [processedEvents, processedMessages]) {
+    if (set.size > 10000) {
+      for (const key of Array.from(set).slice(0, 5000)) {
+        set.delete(key);
+      }
+    }
   }
 }
 ```
 
+In-memory sets are lost on restart; a production pipeline keeps the same keys in its database.
+
 ## See Also
 
+- [messageNew webhook](/docs/webhooks/messagenew) - The payload every example on this page consumes
 - [Webhooks overview](/docs/webhooks/overview) - Delivery guarantees and retries for the events driving a pipeline
 - [IMAP indexers](/docs/accounts/imap-indexers) - Choosing how much change detection a pipeline needs
 - [Pre-processing](/docs/advanced/pre-processing) - Filtering events before they reach your endpoint

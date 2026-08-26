@@ -83,11 +83,11 @@ No `plain` field comes back with it: when a message carries no HTML part, the pl
 
 ## What the Processing Does
 
-**Sanitization.** The HTML goes through [DOMPurify](https://github.com/cure53/DOMPurify) twice, before and after style inlining. Scripts, event handlers, and embedding tags are removed: `script`, `iframe`, `frame`, `frameset`, `object`, `embed`, `applet`, `canvas`, `audio`, `video`, `noscript`, `dialog`, `template`, plus the document-level `title`, `meta`, `link`, and `base`.
+**Sanitization.** The HTML goes through [DOMPurify](https://github.com/cure53/DOMPurify) twice, before and after style inlining. Scripts, event handlers, and embedding tags are removed: `script`, `iframe`, `frame`, `frameset`, `noframes`, `object`, `embed`, `applet`, `canvas`, `audio`, `video`, `noscript`, `dialog`, `template`, plus the document-level `title`, `meta`, `link`, `base`, and `basefont`.
 
 **Structure repair.** Unclosed and malformed markup is normalized into valid HTML. The result is the content of the message body only, a fragment rather than a full document, so you can inject it into a container element.
 
-**Style inlining.** Stylesheets are inlined onto the elements they apply to with [juice](https://github.com/Automattic/juice), then the `style` tags themselves are dropped. This is what stops an email's global rules from reaching the rest of your page. CSS properties that could break out of the container are stripped from the surviving inline styles, including `position`, `float`, `clear`, `zoom`, `clip`, `all`, the `animation-*` family, and the `offset-*` family. Width and height constraints are removed from the outermost element and `overflow: auto` is set on it.
+**Style inlining.** Stylesheets are inlined onto the elements they apply to with [juice](https://github.com/Automattic/juice), then the `style` tags themselves are dropped. This is what stops an email's global rules from reaching the rest of your page. CSS properties that could break out of the container are stripped from the surviving inline styles, including `position`, `float`, `clear`, `zoom`, `clip`, `all`, `paint-order`, the `animation-*` family, the `offset-*` family, and the `scrollbar-*` family. Width and height constraints are removed from the outermost element and `overflow: auto` is set on it.
 
 **Links.** Every `a` element gets `target="_blank"`.
 
@@ -186,7 +186,7 @@ Folding is conservative. It is skipped, and the message renders whole, when any 
 - Nothing would be left visible. A message that is only quoted history stays expanded, because folding it would leave a button and no message.
 - The tail is shorter than 120 characters. Hiding two lines behind a click adds noise rather than removing it.
 - The cut point falls inside a table, where a wrapper element cannot be placed without the HTML parser moving it out of the table.
-- The bodies exceed 256 KB combined. Detection is skipped on very large messages to bound the work done per message.
+- The HTML and plain text bodies together exceed 256K characters. Detection is skipped on very large messages to bound the work done per message.
 - Only the plain text body could be analysed while a usable HTML part exists. Generating the body from text there would fold the history at the cost of discarding the sender's real HTML.
 
 Signatures are never folded. Only reply history, forwarded content, and disclaimers are, and only where detection was confident.
@@ -205,7 +205,7 @@ See [Environment Variables](/docs/configuration/environment-variables) for the f
 
 ## Web-Safe HTML in Webhooks
 
-Webhook payloads can carry the same processed HTML. Enable it in **Configuration > Webhooks** or through the settings API:
+Webhook payloads can carry the same processed HTML. Enable it in **Configuration > Webhooks** (the **Sanitize HTML for web display** checkbox) or through the settings API:
 
 ```bash
 curl -X POST "https://emailengine.example.com/v1/settings" \
@@ -219,7 +219,9 @@ curl -X POST "https://emailengine.example.com/v1/settings" \
 
 `notifyText` must be on as well, since `notifyWebSafeHtml` changes how the text content is rendered rather than whether it is included.
 
-With both enabled, `data.text.html` in a [messageNew](/docs/webhooks/messagenew) payload holds the web-safe version instead of the raw HTML, `data.text.webSafe` is `true`, and inline images are embedded. The collapse marker appears here too, so a webhook consumer that renders message HTML needs to handle it the same way.
+With both enabled, `data.text.html` in a [messageNew](/docs/webhooks/messagenew) payload holds the web-safe version instead of the raw HTML and `data.text.webSafe` is `true`. The collapse marker appears here too, so a webhook consumer that renders message HTML needs to handle it the same way.
+
+Inline images are the one difference from the API response. The web-safe rendering is captured before `cid:` references are rewritten, so the webhook body keeps them as `cid:` and a consumer that wants the images has to fetch them from [the attachment endpoint](/docs/receiving/attachments) or re-fetch the text with `webSafeHtml=true`.
 
 There is no separate field holding the raw HTML. If you need the original markup, fetch it from the API without `webSafeHtml`.
 

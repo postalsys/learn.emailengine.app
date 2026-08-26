@@ -1,6 +1,6 @@
 ---
 title: Translations
-sidebar_position: 12
+sidebar_position: 14
 description: Configure language settings for public-facing pages and contribute translations
 ---
 
@@ -38,20 +38,20 @@ EmailEngine determines the language to use based on the following priority order
 
 ### Per-Request Language (Query Parameter)
 
-Append `?locale={code}` to any public page URL:
+Append `locale=<code>` to the query string of any public page URL, for example a hosted authentication form URL returned by `POST /v1/authentication/form`:
 
-```
-https://emailengine.example.com/accounts/new?data=...&locale=fr
+```text
+https://emailengine.example.com/accounts/new?data=eyJhY2NvdW50Ijoi...&sig=Ah0z...&locale=fr
 ```
 
-When set via query parameter, the language selection is stored in a session cookie and persists until the session ends or a different language is selected.
+When set via query parameter, the language selection is stored in a session cookie and persists until the browser session ends or a different language is selected.
 
 ### Per-Request Language (Header)
 
-Set the `X-EE-Locale` header in your request:
+Set the `X-EE-Locale` header in your request. Here `FORM_URL` is the `url` returned by `POST /v1/authentication/form`:
 
 ```bash
-curl https://emailengine.example.com/accounts/new?data=... \
+curl "$FORM_URL" \
   -H "X-EE-Locale: de"
 ```
 
@@ -98,10 +98,10 @@ curl -X POST https://emailengine.example.com/v1/authentication/form \
   }'
 ```
 
-Then append `&locale=fr` to the returned URL before redirecting the user:
+Then append `&locale=fr` to the returned `url` before redirecting the user:
 
-```
-https://emailengine.example.com/accounts/new?data=eyJ...&locale=fr
+```text
+https://emailengine.example.com/accounts/new?data=eyJhY2NvdW50Ijoi...&sig=Ah0z...&locale=fr
 ```
 
 ## What Gets Translated
@@ -113,9 +113,9 @@ Translations apply to public-facing pages:
 **Hosted Authentication Forms:**
 
 - Account type selection ("Choose your email account provider")
-- "Sign in with Google" / "Sign in with Microsoft" buttons
-- IMAP/SMTP configuration form labels
-- Success/error messages
+- IMAP/SMTP configuration form labels and buttons ("Verify connection", "Save and continue")
+- Connection test results ("Couldn't connect to IMAP server", "Server response:")
+- Expired or invalid setup links ("Invalid or expired account setup URL")
 
 **Unsubscribe Pages:**
 
@@ -125,9 +125,8 @@ Translations apply to public-facing pages:
 
 **Error Pages:**
 
-- OAuth2 error messages
-- Session expired messages
-- Connection error descriptions
+- OAuth2 failures ("OAuth2 authentication failed") and missing-scope explanations
+- Connection errors ("Could not connect to server")
 
 **Redirect Pages:**
 
@@ -176,10 +175,26 @@ Response with German error messages:
 ```
 
 :::note Cookie Persistence
-For API requests (paths starting with `/v1/`), locale selection via query parameter or header does **not** set a session cookie. Each API request must explicitly specify the desired locale. Cookies are only set for UI page requests.
+For API requests (paths starting with `/v1/`) and for `/health`, locale selection via query parameter or header does **not** set a session cookie. Each API request must explicitly specify the desired locale. Cookies are only set for UI page requests, and only from the query parameter or the `X-EE-Locale` header, never from `Accept-Language`.
 :::
+
+## Contributing a translation
+
+The catalogs live in the [`translations/`](https://github.com/postalsys/emailengine/tree/master/translations) directory of the EmailEngine repository. `messages.pot` is the template listing every translatable string, each `<locale>.po` holds one language, and the `<locale>.mo` beside it is the compiled form EmailEngine loads at runtime. A locale is served only if it is also listed in `locales.json`.
+
+To add a language:
+
+1. Create a new catalog in [Poedit](https://poedit.net/) from `messages.pot` (**Update from POT**)
+2. Translate the strings and save the file as `<locale>.po`; Poedit compiles the `.mo` alongside it
+3. Open a pull request against the repository, or send the `.po` file to andris@postalsys.com
+
+The `README.md` in the same directory describes the equivalent GNU gettext command-line workflow, including how to refresh an existing catalog after strings change.
+
+Validation error messages come from a separate package. Their translations are maintained in the [joi-messages](https://github.com/postalsys/joi-messages/tree/master/translations) repository.
 
 ## See Also
 
-- [Hosted Authentication](/docs/accounts/hosted-authentication) - Public authentication forms
-- [Configuration Options](/docs/reference/configuration-options) - All configuration settings
+- [Hosted Authentication](/docs/accounts/hosted-authentication) - The public forms that translations apply to
+- [Virtual Mailing Lists](/docs/advanced/virtual-lists) - The hosted unsubscribe page, another localized public page
+- [API Reference Overview](/docs/api-reference/#error-handling) - The shape of the validation errors that are translated
+- [Configuration Options](/docs/reference/configuration-options) - The `locale` setting among all the others

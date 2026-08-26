@@ -14,29 +14,27 @@ keywords:
 
 # Monitoring and Observability
 
-Monitor EmailEngine health, performance, and activity with built-in health check endpoints, Prometheus metrics, and integrations with popular observability platforms.
+EmailEngine exposes a health check endpoint, a stats endpoint, a Prometheus metrics endpoint, and a queue dashboard. This page documents each of them, lists every Prometheus metric the current release registers, and shows how to wire them into Grafana and Alertmanager.
 
 ## Overview
 
-EmailEngine exposes three things worth monitoring:
-
-- **Health Check Endpoints** - Simple HTTP endpoints for uptime monitoring
-- **Prometheus Metrics** - Detailed metrics for Prometheus/Grafana stack
-- **Performance Indicators** - Track message processing, connections, and queue health
-- **Custom Alerting** - Set up alerts based on key metrics
-- **Bull Board Dashboard** - Visual queue monitoring (see [Webhooks Guide](/docs/webhooks/overview))
+| Signal | Where | Authentication |
+| ------ | ----- | -------------- |
+| Health check | `GET /health` | None |
+| Instance stats | `GET /v1/stats` | Access token |
+| Prometheus metrics | `GET /metrics` | Access token with the `metrics` scope |
+| Queue dashboard (Bull Board) | `/admin/bull-board` | Admin login |
+| Structured logs | stdout | See [Logging](/docs/advanced/logging) |
 
 ## Health Check Endpoints
 
 ### Basic Health Check
 
-Use the `/health` endpoint to verify EmailEngine is running:
+`GET /health` needs no authentication and is the endpoint to give an uptime monitor or a container orchestrator:
 
 ```bash
-curl http://localhost:3000/health
+curl https://emailengine.example.com/health
 ```
-
-Response when healthy:
 
 ```json
 {
@@ -44,32 +42,42 @@ Response when healthy:
 }
 ```
 
-The health check verifies:
-- All account workers are available
-- Redis database is accessible and responding
+The check passes when every configured account worker thread has started and Redis answers a write-read-delete round trip. Either failing returns HTTP 500 with a Boom error body (`Not all IMAP workers available` or `Database check failed`). During startup the endpoint returns 500 until the last worker is up, so give a readiness probe a few seconds of slack.
 
-### Detailed Status Check
+### Instance Stats
 
-Get more detailed status information:
+`GET /v1/stats` returns version information, connection state counts, queue depths and event counters for the instance:
 
 ```bash
-curl http://localhost:3000/v1/stats \
-  -H "Authorization: Bearer YOUR_TOKEN"
+curl "https://emailengine.example.com/v1/stats" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
-
-Response includes:
 
 ```json
 {
-  "version": "2.61.1",
-  "license": "MIT",
+  "version": "2.79.4",
+  "license": "LICENSE_EMAILENGINE",
   "accounts": 15,
-  "node": "24.0.0",
+  "node": "24.5.0",
   "redis": "7.2.4",
-  "counters": {
-    "events:messageNew": 1523,
-    "webhooks:messageNew": 1450,
-    "apiReq:GET /v1/stats": 234
+  "redisSoftware": "redis",
+  "redisCluster": false,
+  "redisWarnings": [],
+  "redisPing": 0.4,
+  "imapflow": "1.7.6",
+  "bullmq": "6.2.0",
+  "arch": "x64",
+  "connections": {
+    "init": 0,
+    "connected": 14,
+    "connecting": 1,
+    "syncing": 0,
+    "authenticationError": 0,
+    "connectError": 0,
+    "unset": 0,
+    "disconnected": 0,
+    "paused": 0,
+    "unassigned": 0
   },
   "queues": {
     "notify": {
@@ -97,45 +105,57 @@ Response includes:
       "total": 0
     }
   },
-  "connections": {
-    "connected": 14,
-    "connecting": 1
+  "counters": {
+    "events:messageNew": 1523,
+    "webhooks:success": 1450,
+    "webhooks:fail": 3,
+    "apiCall:success": 234,
+    "notify:success": 1450,
+    "submit:success": 12
   }
 }
 ```
+
+`counters` covers the last hour by default; the `seconds` query parameter widens or narrows the window. The keys are `events:<event>`, `webhooks:success|fail`, `apiCall:success|fail` and `<queue>:success|fail`. See the [stats endpoint reference](/docs/api/get-v-1-stats) for every field.
 
 ## Prometheus Metrics
 
 ### Setting Up Prometheus
 
-EmailEngine exposes Prometheus metrics at `/metrics` endpoint.
+EmailEngine exposes Prometheus metrics at `/metrics`. The endpoint requires an access token with the `metrics` scope; a token with that scope alone can read the metrics and nothing else.
 
-#### Step 1: Create Metrics Token
+#### Step 1: Create a Metrics Token
 
-1. Navigate to **Integrations** → **Access Tokens** in EmailEngine UI
-2. Click **Create new**
-3. Uncheck **All scopes**
-4. Check only **Metrics** scope
-5. Create token and save it
+1. Open **Integrations** > **Access Tokens** in the admin UI
+2. Click **Create access token**
+3. Untick **All scopes**
+4. Tick **Metrics**
+5. Create the token and copy it; it is shown once
+
+Or from the command line on the server:
+
+```bash
+emailengine tokens issue -d "Prometheus" -s "metrics"
+```
 
 #### Step 2: Configure Prometheus
 
-Add EmailEngine as a scraping target in `prometheus.yml`:
+Add EmailEngine as a scrape target in `prometheus.yml`:
 
 ```yaml
 scrape_configs:
   - job_name: 'emailengine'
     scrape_interval: 10s
     metrics_path: '/metrics'
-    scheme: 'http'
+    scheme: 'https'
     authorization:
       type: Bearer
-      credentials: 795f623527c16d617b106...  # Your metrics token
+      credentials: YOUR_METRICS_TOKEN
     static_configs:
-      - targets: ['127.0.0.1:3000']
+      - targets: ['emailengine.example.com']
 ```
 
-For multiple EmailEngine instances:
+For several instances, list them all under one job and label them:
 
 ```yaml
 scrape_configs:
@@ -148,495 +168,244 @@ scrape_configs:
       credentials: YOUR_METRICS_TOKEN
     static_configs:
       - targets:
-        - 'ee-prod-01.example.com:3000'
-        - 'ee-prod-02.example.com:3000'
-        - 'ee-prod-03.example.com:3000'
+        - 'ee-prod-01.example.com'
+        - 'ee-prod-02.example.com'
         labels:
           environment: 'production'
 ```
 
-#### Step 3: Restart Prometheus
+Keep the job name `emailengine`: the shipped Grafana dashboard selects instances with `label_values({job="emailengine"}, instance)`.
+
+#### Step 3: Restart Prometheus and Verify
 
 ```bash
-# SystemD
 sudo systemctl restart prometheus
-
-# Docker
-docker restart prometheus
 ```
 
-#### Step 4: Verify
+Open the Prometheus targets page (`/targets`) and confirm the EmailEngine job shows `UP`.
 
-Check Prometheus targets page:
+### Metric Reference
 
-```
-http://localhost:9090/targets
-```
-
-EmailEngine should appear with status `UP`.
-
-### Available Metrics
-
-EmailEngine exposes these Prometheus metrics:
-
-#### Connection Metrics
-
-```
-# IMAP connections by status
-imap_connections{status="connected"}
-imap_connections{status="connecting"}
-imap_connections{status="authenticationError"}
-imap_connections{status="connectError"}
-imap_connections{status="syncing"}
-imap_connections{status="disconnected"}
-
-# IMAP responses
-imap_responses{response="OK"}
-imap_responses{response="OK",code="CAPABILITY"}
-
-# IMAP traffic
-imap_bytes_sent
-imap_bytes_received
-```
-
-#### Webhook and Event Metrics
-
-```
-# Webhooks sent by event and status
-webhooks{event="messageNew",status="success"}
-webhooks{event="messageUpdated",status="success"}
-webhooks{event="messageDeleted",status="success"}
-
-# Events fired
-events{event="messageNew"}
-events{event="messageUpdated"}
-
-# Webhook request duration (buckets in milliseconds)
-webhook_req_bucket{le="100"}
-webhook_req_bucket{le="1000"}
-webhook_req_bucket{le="10000"}
-webhook_req_sum
-webhook_req_count
-```
-
-#### Queue Metrics
-
-```
-# Queue sizes by state
-queue_size{queue="notify",state="waiting"}
-queue_size{queue="submit",state="active"}
-queue_size{queue="documents",state="delayed"}
-
-# Processed job counts
-queues_processed{queue="notify"}
-queues_processed{queue="submit"}
-```
-
-#### API Metrics
-
-```
-# API calls by method and status
-api_call{method="post",route="/v1/account/:account/submit",statusCode="200"}
-api_call{method="get",route="/v1/account/:account",statusCode="200"}
-```
-
-#### System Metrics
-
-```
-# Worker threads
-threads{type="imap"}
-threads{type="webhooks"}
-
-# Configuration
-emailengine_config{version="v2.78.0"}
-emailengine_config{config="workersImap"}
-```
-
-Note: Memory usage, CPU usage, and uptime metrics are available through standard Node.js metrics exporters if needed.
-
-### Complete Prometheus Metrics Reference
-
-Every Prometheus metric EmailEngine exposes:
+The tables below list every metric EmailEngine registers, from `server.js`. The Prometheus client's default Node.js process metrics (`process_cpu_seconds_total`, `process_resident_memory_bytes`, `nodejs_heap_size_used_bytes`, `nodejs_eventloop_lag_seconds` and the rest of the `process_*` and `nodejs_*` family) are exposed alongside them; the Grafana dashboard's memory and CPU panels read those.
 
 #### Worker and Thread Metrics
 
-| Metric Name | Type | Labels | Description |
-|-------------|------|--------|-------------|
-| `thread_starts` | Counter | - | Total number of worker threads started |
-| `thread_stops` | Counter | - | Total number of worker threads stopped |
-| `threads` | Gauge | `type`, `recent` | Current worker thread count by type (api, imap, webhooks, documents, smtp, submit, main, imapProxy) |
-| `unresponsive_workers` | Gauge | - | Number of unresponsive worker threads |
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `thread_starts` | Counter | none | Worker threads started since the process began |
+| `thread_stops` | Counter | none | Worker threads that stopped |
+| `threads` | Gauge | `type`, `recent` | Running worker threads by type. `recent` is `yes` for threads started within the last 10 minutes, `no` otherwise |
+| `unresponsive_workers` | Gauge | none | Worker threads that did not answer the last resource-usage poll |
 
-#### IMAP Connection Metrics
+`type` is one of `main`, `api`, `imap`, `webhooks`, `submit`, `export`, `documents`, `smtp` and `imapProxy`; a type only appears once such a worker has run.
 
-| Metric Name | Type | Labels | Description |
-|-------------|------|--------|-------------|
-| `imap_connections` | Gauge | `status` | IMAP connection count by status (connected, connecting, authenticationError, connectError, syncing, disconnected) |
-| `imap_responses` | Counter | `response`, `code` | IMAP server response counts by response type and code |
-| `imap_bytes_sent` | Counter | - | Total bytes sent over IMAP connections |
-| `imap_bytes_received` | Counter | - | Total bytes received over IMAP connections |
+#### Connection Metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `imap_connections` | Gauge | `status` | Accounts by connection state. Despite the name it counts every account type. `status` takes the account states `init`, `connected`, `connecting`, `syncing`, `authenticationError`, `connectError`, `unset`, `disconnected` and `paused`, plus `unassigned` for an account a worker holds but has not created a connection for yet; accounts not yet handed to any worker are added to `disconnected` |
+| `imap_responses` | Counter | `response`, `code` | IMAP server responses by status (`OK`, `NO`, `BAD`) and response code (`CAPABILITY`, `PERMANENTFLAGS`, ...) |
+| `imap_bytes_sent` | Counter | none | Bytes written to IMAP servers |
+| `imap_bytes_received` | Counter | none | Bytes read from IMAP servers |
 
 #### OAuth2 Metrics
 
-| Metric Name | Type | Labels | Description |
-|-------------|------|--------|-------------|
-| `oauth2_token_refresh` | Counter | `status`, `provider`, `statusCode` | OAuth2 access token refresh attempts by status (success, error), provider, and HTTP status code |
-| `oauth2_api_request` | Counter | `status`, `provider`, `statusCode` | OAuth2 API requests (MS Graph, Gmail API) by status, provider, and HTTP status code |
-| `outlook_subscriptions` | Gauge | `status` | Microsoft Graph webhook subscription states (valid, expired, failed) |
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `oauth2_token_refresh` | Counter | `status`, `provider`, `statusCode` | Access token refresh attempts. `status` is `success` or `failure`; `provider` is `gmail`, the OAuth2 app's provider for Microsoft accounts (`outlook`), or `unknown` for a failed refresh requested through `GET /v1/account/{account}/oauth-token`; `statusCode` is the HTTP status of the token endpoint |
+| `oauth2_api_request` | Counter | `status`, `provider`, `statusCode` | Gmail API and MS Graph requests, with the same labels |
+| `outlook_subscriptions` | Gauge | `status` | MS Graph change-notification subscriptions by state: `valid`, `expired`, `unset`, `failed`, `pending` |
+
+The OAuth2 and subscription metrics, along with the Grafana dashboard, were added in EmailEngine v2.59.0.
 
 #### Webhook Metrics
 
-| Metric Name | Type | Labels | Description |
-|-------------|------|--------|-------------|
-| `webhooks` | Counter | `status`, `event` | Webhook delivery count by status (success, failure) and event type |
-| `events` | Counter | `event` | Internal events fired by event type |
-| `webhook_req` | Histogram | - | Webhook request duration histogram (buckets: 100, 250, 500, 750, 1000, 2500, 5000, 7500, 10000, 60000 ms) |
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `webhooks` | Counter | `status`, `event` | Webhook delivery attempts by outcome and event type. `status` is `success` or `fail`; a delivery that will be retried counts as `fail` on each attempt |
+| `events` | Counter | `event` | Events raised, whether or not a webhook was sent for them |
+| `webhook_req` | Histogram | none | Duration of the HTTP request to the webhook endpoint, in milliseconds. Buckets: 100, 250, 500, 750, 1000, 2500, 5000, 7500, 10000, 60000 |
 
 #### Queue Metrics
 
-| Metric Name | Type | Labels | Description |
-|-------------|------|--------|-------------|
-| `queue_size` | Gauge | `queue`, `state` | Queue size by queue name (notify, submit, documents) and state (waiting, active, delayed, paused) |
-| `queues_processed` | Counter | `queue`, `status` | Processed job count by queue and status (completed, failed) |
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `queue_size` | Gauge | `queue`, `state` | Jobs in the `notify`, `submit` and `documents` queues by state: `waiting`, `active`, `delayed`, `paused` |
+| `queues_processed` | Counter | `queue`, `status` | Jobs finished in the `notify` and `submit` queues, and in `documents` when the Document Store is enabled; `status` is `completed` or `failed` |
+
+Since v2.79.1 the gauges are read from BullMQ's own counters. A paused queue holds its jobs in `waiting`, so the `paused` series stays at 0 and is kept only so existing dashboards do not break.
 
 #### API Metrics
 
-| Metric Name | Type | Labels | Description |
-|-------------|------|--------|-------------|
-| `api_call` | Counter | `method`, `statusCode`, `route` | API call count by HTTP method, status code, and route pattern |
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `api_call` | Counter | `method`, `statusCode`, `route` | REST API calls by lowercase HTTP method, response status and route pattern, for example `route="/v1/account/{account}/submit"`. Admin UI requests are not counted |
 
-#### License Metrics
+#### License and Configuration Metrics
 
-| Metric Name | Type | Labels | Description |
-|-------------|------|--------|-------------|
-| `license_days_remaining` | Gauge | - | Days until license expires (-1 for lifetime, 0 for no license) |
-
-#### Configuration Metrics
-
-| Metric Name | Type | Labels | Description |
-|-------------|------|--------|-------------|
-| `emailengine_config` | Gauge | `version`, `config` | Configuration values including version and settings like `uvThreadpoolSize` |
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `license_days_remaining` | Gauge | none | Days until the license expires. `-1` for a license without an expiry, `0` when no license is registered |
+| `emailengine_config` | Gauge | `version`, `config` | Always `1` for the `version` series (`version="v2.79.4"`). The `config` series carry the values of `uvThreadpoolSize`, `workersImap`, `workersWebhooks` and `workersSubmission` |
 
 #### Redis Metrics
 
-| Metric Name | Type | Labels | Description |
-|-------------|------|--------|-------------|
-| `redis_version` | Gauge | `version` | Redis server version |
-| `redis_uptime_in_seconds` | Gauge | - | Redis server uptime in seconds |
-| `redis_latency` | Gauge | - | Redis PING latency in nanoseconds |
-| `redis_rejected_connections_total` | Gauge | - | Number of connections rejected by Redis |
-| `redis_config_maxclients` | Gauge | - | Maximum configured client connections for Redis |
-| `redis_connected_clients` | Gauge | - | Current number of connected Redis clients |
-| `redis_slowlog_length` | Gauge | - | Number of entries in the Redis slow log |
-| `redis_commands_duration_seconds_total` | Gauge | - | Total seconds spent processing Redis commands |
-| `redis_commands_processed_total` | Gauge | - | Total number of Redis commands processed |
-| `redis_keyspace_hits_total` | Gauge | - | Number of successful Redis key lookups |
-| `redis_keyspace_misses_total` | Gauge | - | Number of failed Redis key lookups |
-| `redis_evicted_keys_total` | Gauge | - | Number of keys evicted due to maxmemory limit |
-| `redis_memory_used_bytes` | Gauge | - | Total bytes allocated by Redis |
-| `redis_memory_max_bytes` | Gauge | - | Redis maxmemory configuration value |
-| `redis_mem_fragmentation_ratio` | Gauge | - | Ratio between used_memory_rss and used_memory |
-| `redis_key_count` | Gauge | `db` | Key count per Redis database |
-| `redis_last_save_time` | Gauge | - | Unix timestamp of the last RDB save |
-| `redis_instantaneous_ops_per_sec` | Gauge | - | Redis operations per second throughput |
-| `redis_command_runs` | Gauge | `command` | Redis command execution counts by command name |
-| `redis_command_runs_fail` | Gauge | `command`, `status` | Failed Redis command counts by command and status |
+Read from `INFO` on each scrape, so they describe the Redis server EmailEngine is connected to:
 
-#### Metric Labels Reference
-
-| Label | Values | Description |
-|-------|--------|-------------|
-| `status` | `connected`, `connecting`, `authenticationError`, `connectError`, `syncing`, `disconnected`, `success`, `failure`, `error` | Connection or operation status |
-| `event` | `messageNew`, `messageUpdated`, `messageDeleted`, `messageBounce`, `messageComplaint`, `accountAdded`, etc. | Webhook event type |
-| `queue` | `notify`, `submit`, `documents` | Queue name |
-| `state` | `waiting`, `active`, `delayed`, `paused` | Queue job state |
-| `type` | `api`, `imap`, `webhooks`, `documents`, `smtp`, `submit`, `main`, `imapProxy` | Worker thread type |
-| `provider` | `gmail`, `outlook`, `mailRu`, `gmailService` | OAuth2 provider |
-| `method` | `get`, `post`, `put`, `delete`, `patch` | HTTP method |
-| `route` | `/v1/account/:account`, `/v1/account/:account/submit`, etc. | API route pattern |
-| `response` | `OK`, `NO`, `BAD` | IMAP response type |
-| `code` | `CAPABILITY`, `PERMANENTFLAGS`, etc. | IMAP response code |
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `redis_version` | Gauge | `version` | Always `1`; the version is in the label |
+| `redis_uptime_in_seconds` | Gauge | none | Redis server uptime |
+| `redis_latency` | Gauge | none | `PING` round trip in nanoseconds |
+| `redis_rejected_connections_total` | Gauge | none | Connections Redis rejected because of `maxclients` |
+| `redis_config_maxclients` | Gauge | none | The `maxclients` setting |
+| `redis_connected_clients` | Gauge | none | Current client connections |
+| `redis_slowlog_length` | Gauge | none | Entries in the slow log |
+| `redis_commands_duration_seconds_total` | Gauge | none | Total time spent executing commands |
+| `redis_commands_processed_total` | Gauge | none | Commands processed |
+| `redis_keyspace_hits_total` | Gauge | none | Successful key lookups |
+| `redis_keyspace_misses_total` | Gauge | none | Failed key lookups |
+| `redis_evicted_keys_total` | Gauge | none | Keys evicted because of `maxmemory`. Anything above 0 means EmailEngine data has been lost |
+| `redis_memory_used_bytes` | Gauge | none | `used_memory` |
+| `redis_memory_max_bytes` | Gauge | none | `maxmemory`, or total system memory when `maxmemory` is 0 |
+| `redis_mem_fragmentation_ratio` | Gauge | none | `used_memory_rss` divided by `used_memory` |
+| `redis_key_count` | Gauge | `db` | Keys per logical database (`db="db8"`) |
+| `redis_last_save_time` | Gauge | none | Unix timestamp of the last RDB snapshot |
+| `redis_instantaneous_ops_per_sec` | Gauge | none | Commands per second |
+| `redis_command_runs` | Gauge | `command` | Calls per command from `INFO commandstats` |
+| `redis_command_runs_fail` | Gauge | `command`, `status` | Failed (`failed`) and rejected (`rejected`) calls per command |
 
 ## Grafana Dashboard
 
-EmailEngine ships a Grafana dashboard covering the metrics above. It lives in the EmailEngine repository and imports into Grafana as is.
+EmailEngine ships a Grafana dashboard covering the metrics above. It lives in the EmailEngine repository as `examples/grafana-dashboard.json`, and `https://go.emailengine.app/grafana-dashboard.json` redirects to the current copy.
 
 ![EmailEngine Grafana Dashboard](/img/grafana-dashboard.png)
 *EmailEngine monitoring dashboard showing system overview, worker threads, memory, and CPU usage*
 
-### Dashboard Features
+### Dashboard Rows
 
-The official EmailEngine Grafana dashboard includes the following sections:
-
-**System Overview**
-- Uptime with color-coded thresholds (yellow if under 1 hour, green if stable)
-- EmailEngine version and Node.js runtime version
-- Redis version
-- IMAP and webhook worker thread counts
-- Unresponsive workers alert indicator
-- License status with expiry warnings
-
-**Worker Threads**
-- Worker threads by type (API, IMAP, webhooks, documents, SMTP, submit, main, imapProxy)
-- Thread lifecycle monitoring (starts and stops over time)
-- Differentiation between recently started threads and established connections
-
-**Performance Metrics**
-- Process memory usage (RSS, heap total, heap used)
-- CPU usage per core
-
-**API Traffic**
-- Request distribution by HTTP method (GET, POST, PUT, DELETE)
-- Response status code breakdown (2xx, 4xx, 5xx)
-
-**Webhooks**
-- Webhook delivery success vs. failure rates
-- Events distribution by type
-- Request latency heatmap showing response time distribution
-
-**Queue Monitoring**
-- Webhook queue status (waiting, active, delayed jobs)
-- Webhook processing completion and failure rates
-- Email sending queue status
-- Email send attempt outcomes
-
-**Account Connections**
-- Account connection states (connected, connecting, error)
-- IMAP response codes (OK, NO, BAD)
-- Network bandwidth (inbound/outbound data rates)
-- Internal event rates
-
-**OAuth2 Integration**
-- Token refresh success/failure by provider (Microsoft Graph, Gmail)
-- API request rates and statuses
-- HTTP status code breakdown for failures
-- Microsoft Graph subscription status (valid, expired, failed)
-
-**Redis Performance**
-- Memory usage and limits
-- Connection pool utilization
-- Commands per second throughput
-- PING latency
-- Slow query log count
-- Cache hit ratio
-- Uptime and last save time
+- **System Overview** - Uptime, version, Node.js and Redis versions, IMAP and webhook worker counts, unresponsive workers, license status, worker threads by type, thread lifecycle, process memory, CPU usage
+- **API Traffic** - Requests by method, responses by status code
+- **Webhooks** - Delivery status, events by type, request latency
+- **Queues** - Webhook queue and processing rates, email sending queue and processing rates
+- **Account Connections** - Account states, IMAP response codes, network bandwidth, event rates
+- **OAuth2 API (MS Graph, Gmail)** - Token refreshes, API requests, failures by status code, MS Graph subscriptions
+- **Redis** - Memory used and limit, clients, throughput, latency, slowlog, uptime, last save, memory usage percentage, connection pool usage, cache hit ratio, average command time, key count, key evictions
 
 ### Installing the Dashboard
 
-#### Step 1: Add Prometheus Data Source
+#### Step 1: Add a Prometheus Data Source
 
-1. Go to **Configuration** (gear icon) -> **Data Sources**
-2. Click **Add data source**
-3. Select **Prometheus**
-4. Configure the connection:
-   - **URL**: `http://localhost:9090` (or your Prometheus server address)
-   - Leave other settings at defaults
-5. Click **Save & Test** to verify the connection
+1. In Grafana go to **Connections** > **Data sources** and click **Add data source**
+2. Select **Prometheus** and enter the server URL, for example `http://localhost:9090`
+3. Click **Save & test**
 
 #### Step 2: Download the Dashboard
-
-Download the dashboard JSON:
 
 ```bash
 curl -L -O https://go.emailengine.app/grafana-dashboard.json
 ```
 
-Or download directly from: [grafana-dashboard.json](https://go.emailengine.app/grafana-dashboard.json)
+#### Step 3: Import It
 
-#### Step 3: Import the Dashboard
+1. Go to **Dashboards** > **New** > **Import**
+2. Upload `grafana-dashboard.json`, or paste its contents into the import text area
+3. Pick a folder and select your Prometheus data source
+4. Click **Import**
 
-1. In Grafana, go to **Dashboards** (four squares icon) -> **Import**
-2. Click **Upload JSON file** and select the downloaded `grafana-dashboard.json`
-3. Or paste the JSON content directly into the **Import via panel json** text area
-4. Configure the import options:
-   - **Name**: EmailEngine (or customize)
-   - **Folder**: Select or create a folder
-   - **Prometheus**: Select your Prometheus data source
-5. Click **Import**
+#### Step 4: Pick an Instance
 
-#### Step 4: Configure the Instance Variable
+The dashboard has one variable, `host`, populated by `label_values({job="emailengine"}, instance)`. It appears as a dropdown at the top of the dashboard and filters every panel. If your scrape job is not called `emailengine`, edit the variable under **Dashboard settings** > **Variables**.
 
-The dashboard includes an `Instance` variable for filtering by EmailEngine instance. After importing:
+### Custom Panels
 
-1. Click the gear icon on the dashboard to access **Settings**
-2. Go to **Variables**
-3. Edit the `host` variable if needed to match your Prometheus labels
-4. The default query `label_values(emailengine_config, instance)` should auto-populate with your instances
+Queries that work well as extra panels:
 
-### Dashboard Variables
-
-The dashboard uses these variables for filtering:
-
-| Variable | Description | Default Query |
-|----------|-------------|---------------|
-| `$host` | EmailEngine instance filter | `label_values(emailengine_config, instance)` |
-
-Select different instances from the dropdown at the top of the dashboard to filter all panels.
-
-### Custom Dashboard Panels
-
-You can extend the dashboard with custom panels. Here are some useful queries:
-
-**Webhook Events Rate**
+**Webhooks per minute**
 
 ```promql
-rate(webhooks[5m]) * 60
+sum(rate(webhooks[5m])) * 60
 ```
-Shows webhooks per minute.
 
-**Webhook Success vs Failure**
+**Webhook success and failure rates**
 
 ```promql
-# Success rate
 sum(rate(webhooks{status="success"}[5m])) * 60
-
-# Failure rate
-sum(rate(webhooks{status="failure"}[5m])) * 60
+sum(rate(webhooks{status="fail"}[5m])) * 60
 ```
 
-**IMAP Connections by Status**
+**Accounts by state**
 
 ```promql
 sum by (status) (imap_connections)
 ```
-Use with a pie chart or stat panel.
 
-**Webhook Response Time (99th percentile)**
+**Webhook request time, 99th percentile (milliseconds)**
 
 ```promql
-histogram_quantile(0.99, rate(webhook_req_bucket[5m]))
+histogram_quantile(0.99, sum by (le) (rate(webhook_req_bucket[5m])))
 ```
-Result is in milliseconds.
 
-**Queue Health**
+**Queue depth**
 
 ```promql
 queue_size{queue="notify",state="waiting"}
 queue_size{queue="submit",state="waiting"}
 ```
-Alert if values exceed 100.
 
 ## Key Metrics to Monitor
 
-### Critical Metrics
-
-Monitor these metrics closely in production:
-
-#### 1. Account Connection Health
+### Account Health
 
 ```promql
-# Connected accounts
 imap_connections{status="connected"}
-
-# Disconnected or errored accounts
-imap_connections{status="authenticationError"}
-imap_connections{status="connectError"}
-imap_connections{status="disconnected"}
-
-# Alert if too many disconnected
+imap_connections{status=~"authenticationError|connectError|disconnected"}
 ```
 
-#### 2. Webhook Queue Size
+A rising `authenticationError` count is usually expired credentials; see [Account troubleshooting](/docs/accounts/troubleshooting).
+
+### Webhook Queue Depth
 
 ```promql
-# Alert if queue is backing up
 queue_size{queue="notify",state="waiting"} > 100
 ```
 
-#### 3. Webhook Failure Rate
+A growing `waiting` count means the webhook endpoint is slower than the event rate. Either speed up the handler or add [webhook workers](/docs/advanced/performance-tuning#webhook-configuration).
+
+### Webhook Failure Rate
 
 ```promql
-# Alert if failure rate > 5%
-(sum(rate(webhooks{status="failure"}[5m])) /
- sum(rate(webhooks[5m]))) * 100 > 5
+sum(rate(webhooks{status="fail"}[5m])) / sum(rate(webhooks[5m])) > 0.05
 ```
 
-#### 4. Webhook Processing Time
+### Webhook Request Time
 
 ```promql
-# Alert if webhooks are processing slowly (99th percentile > 5 seconds)
-# Note: webhook_req buckets are in milliseconds
-histogram_quantile(0.99,
-  rate(webhook_req_bucket[5m])
-) > 5000
+histogram_quantile(0.99, sum by (le) (rate(webhook_req_bucket[5m]))) > 5000
 ```
 
-#### 5. Queue Processing Rate
+The buckets are in milliseconds, so this fires when the slowest one percent of requests take more than five seconds.
+
+### Redis
 
 ```promql
-# Monitor queue processing rate
-rate(queues_processed{queue="notify"}[5m])
-rate(queues_processed{queue="submit"}[5m])
+redis_evicted_keys_total > 0
+redis_memory_used_bytes / redis_memory_max_bytes > 0.8
 ```
 
-### Performance Indicators
-
-Track these for performance optimization:
-
-```promql
-# Webhook events per minute
-rate(webhooks[5m]) * 60
-
-# Webhook processing time (median, in milliseconds)
-histogram_quantile(0.5,
-  rate(webhook_req_bucket[5m])
-)
-
-# Queue throughput
-rate(queues_processed[5m])
-
-# Active queue jobs
-queue_size{state="active"}
-
-# API call rate by endpoint
-rate(api_call[5m])
-```
+Evictions mean EmailEngine data is being discarded; see [Redis](/docs/configuration/redis) for the eviction policy to use.
 
 ## Alerting Setup
 
 ### Prometheus Alertmanager
 
-Configure alerts in `prometheus_rules.yml`:
+Rules in `prometheus_rules.yml`:
 
 ```yaml
 groups:
   - name: emailengine
     interval: 30s
     rules:
-      # IMAP connection errors
-      - alert: EmailEngineConnectionErrors
-        expr: |
-          imap_connections{status=~"authenticationError|connectError"} > 5
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Multiple IMAP connection errors"
-          description: "{{ $value }} accounts with {{ $labels.status }}"
-
-      # Webhook queue backing up
-      - alert: EmailEngineWebhookQueueHigh
-        expr: queue_size{queue="notify",state="waiting"} > 100
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Webhook queue is backing up"
-          description: "{{ $value }} webhooks waiting in queue"
-
-      # High webhook failure rate
-      - alert: EmailEngineWebhookFailureRate
-        expr: |
-          (sum(rate(webhooks{status="failure"}[5m])) /
-           sum(rate(webhooks[5m]))) > 0.1
-        for: 5m
-        labels:
-          severity: critical
-        annotations:
-          summary: "High webhook failure rate"
-          description: "{{ $value | humanizePercentage }} webhooks failing"
-
-      # EmailEngine down
       - alert: EmailEngineDown
         expr: up{job="emailengine"} == 0
         for: 1m
@@ -644,34 +413,70 @@ groups:
           severity: critical
         annotations:
           summary: "EmailEngine is down"
-          description: "EmailEngine on {{ $labels.instance }} is down"
+          description: "EmailEngine on {{ $labels.instance }} is not answering scrapes"
 
-      # Slow webhook processing (buckets are in milliseconds)
-      - alert: EmailEngineSlowWebhooks
+      - alert: EmailEngineConnectionErrors
         expr: |
-          histogram_quantile(0.99, rate(webhook_req_bucket[5m])) > 10000
+          imap_connections{status=~"authenticationError|connectError"} > 5
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "Webhooks processing slowly"
-          description: "99th percentile webhook duration: {{ $value }}ms"
+          summary: "Accounts in an error state"
+          description: "{{ $value }} accounts with {{ $labels.status }}"
 
-      # Queue not processing
+      - alert: EmailEngineWebhookQueueHigh
+        expr: queue_size{queue="notify",state="waiting"} > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Webhook queue is backing up"
+          description: "{{ $value }} webhooks waiting"
+
+      - alert: EmailEngineWebhookFailureRate
+        expr: |
+          sum(rate(webhooks{status="fail"}[5m])) / sum(rate(webhooks[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High webhook failure rate"
+          description: "{{ $value | humanizePercentage }} of webhook deliveries are failing"
+
+      - alert: EmailEngineSlowWebhooks
+        expr: |
+          histogram_quantile(0.99, sum by (le) (rate(webhook_req_bucket[5m]))) > 10000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Webhooks are slow"
+          description: "99th percentile webhook request time: {{ $value }}ms"
+
       - alert: EmailEngineQueueStalled
         expr: |
-          rate(queues_processed[5m]) == 0 and queue_size{state="waiting"} > 0
+          sum by (queue) (rate(queues_processed[5m])) == 0
+          and on (queue) queue_size{state="waiting"} > 0
         for: 10m
         labels:
           severity: critical
         annotations:
           summary: "Queue processing stalled"
-          description: "Queue {{ $labels.queue }} has jobs but no processing"
+          description: "Queue {{ $labels.queue }} has waiting jobs but nothing is completing"
+
+      - alert: EmailEngineRedisEvictions
+        expr: increase(redis_evicted_keys_total[10m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis is evicting keys"
+          description: "EmailEngine data is being discarded by the Redis eviction policy"
 ```
 
 ### Alertmanager Configuration
 
-Configure notification channels in `alertmanager.yml`:
+Notification routing in `alertmanager.yml`:
 
 ```yaml
 global:
@@ -679,8 +484,8 @@ global:
 
 route:
   group_by: ['alertname', 'instance']
-  group_wait: 10s
-  group_interval: 10s
+  group_wait: 30s
+  group_interval: 5m
   repeat_interval: 12h
   receiver: 'email-notifications'
   routes:
@@ -700,13 +505,9 @@ receivers:
   - name: 'pagerduty'
     pagerduty_configs:
       - service_key: 'YOUR_PAGERDUTY_KEY'
-
-  - name: 'slack'
-    slack_configs:
-      - api_url: 'https://hooks.slack.com/services/YOUR/WEBHOOK'
-        channel: '#emailengine-alerts'
-        title: 'EmailEngine Alert'
 ```
+
+Add a `runbook` annotation to each rule pointing at your own procedure for it; Alertmanager passes annotations through to every receiver.
 
 ## Integration with Observability Platforms
 
@@ -724,7 +525,7 @@ Use the Datadog Agent's OpenMetrics check to scrape the metrics endpoint:
 ```yaml
 # conf.d/openmetrics.d/conf.yaml
 instances:
-  - openmetrics_endpoint: http://emailengine:3000/metrics
+  - openmetrics_endpoint: https://emailengine.example.com/metrics
     namespace: emailengine
     metrics: ['.*']
     headers:
@@ -735,11 +536,11 @@ Ship the logs with the Agent's container or file tailing, as described in [Loggi
 
 ### Grafana
 
-Scrape the same endpoint with Prometheus and pair it with [Loki](/docs/advanced/logging#grafana-loki) for logs. This is the combination the [alerting rules](#prometheus-alertmanager) below are written against.
+Scrape the same endpoint with Prometheus and pair it with [Loki](/docs/advanced/logging#grafana-loki) for logs. This is the combination the [alerting rules](#prometheus-alertmanager) above are written against.
 
 ### Other Platforms
 
-New Relic, Elastic, Honeycomb, and similar tools all accept Prometheus metrics through their own collectors or an OpenTelemetry Collector configured with a `prometheus` receiver. Point the receiver at `/metrics` and the same dashboards and alerts apply.
+New Relic, Elastic, Honeycomb, and similar tools all accept Prometheus metrics through their own collectors or an OpenTelemetry Collector configured with a `prometheus` receiver. Point the receiver at `/metrics` with the bearer token and the same dashboards and alerts apply.
 
 :::note APM agents do not apply here
 Language-level APM agents instrument an application you build and run yourself. EmailEngine is a packaged service, so there is no place to load one, and the metrics endpoint already reports what an agent would have collected.
@@ -747,157 +548,13 @@ Language-level APM agents instrument an application you build and run yourself. 
 
 ## Bull Board Dashboard
 
-EmailEngine uses Bull queues. Monitor them visually with Bull Board.
+The webhook, submission and export queues are BullMQ queues, and EmailEngine bundles Bull Board for looking inside them. It is always available at `/admin/bull-board`, reachable from the admin menu under **System** > **Queues**, and requires an admin login like the rest of `/admin`.
 
-Bull Board is always enabled and available at:
-
-```
-http://localhost:3000/admin/bull-board
-```
-
-You can also access it from the dashboard sidebar under **System** → **Queues**.
-
-See detailed queue monitoring in [Webhooks Guide - Debugging Section](/docs/webhooks/overview#debugging-webhooks).
+Use it to inspect a stuck job's payload, retry failed deliveries, or pause a queue. [Queue management](/docs/advanced/queue-management) explains what each queue holds, and [Debugging webhooks](/docs/webhooks/overview#debugging-webhooks) walks through a failed delivery.
 
 ## Log-Based Monitoring
 
-### Structured Logging
-
-EmailEngine logs in JSON format (Pino). Parse logs for monitoring:
-
-```bash
-# Count errors per hour
-cat emailengine.log | \
-  grep '"level":50' | \
-  jq -r '.time' | \
-  cut -c1-13 | \
-  uniq -c
-
-# Track webhook failures
-cat emailengine.log | \
-  grep 'webhook.*failed' | \
-  jq -r '{time: .time, account: .account, error: .err.message}'
-```
-
-### ELK Stack Integration
-
-Ship logs to Elasticsearch:
-
-**Filebeat configuration:**
-
-```yaml
-filebeat.inputs:
-  - type: log
-    enabled: true
-    paths:
-      - /var/log/emailengine/*.log
-    json.keys_under_root: true
-    json.add_error_key: true
-    fields:
-      service: emailengine
-      environment: production
-
-output.elasticsearch:
-  hosts: ["localhost:9200"]
-  index: "emailengine-%{+yyyy.MM.dd}"
-```
-
-**Kibana Dashboard Queries:**
-
-```
-# Error rate over time
-level:50 AND service:emailengine
-
-# Webhook failures
-msg:"webhook failed" AND service:emailengine
-
-# Account connection issues
-msg:"connection error" AND service:emailengine
-```
-
-### Grafana Loki
-
-Ship logs to Loki with Promtail:
-
-```yaml
-server:
-  http_listen_port: 9080
-
-positions:
-  filename: /tmp/positions.yaml
-
-clients:
-  - url: http://loki:3100/loki/api/v1/push
-
-scrape_configs:
-  - job_name: emailengine
-    static_configs:
-      - targets:
-          - localhost
-        labels:
-          job: emailengine
-          __path__: /var/log/emailengine/*.log
-    pipeline_stages:
-      - json:
-          expressions:
-            level: level
-            message: msg
-            account: account
-      - labels:
-          level:
-          account:
-```
-
-## Monitoring Best Practices
-
-### 1. Set Appropriate Thresholds
-
-Don't alert on noise:
-
-```promql
-# Bad - too sensitive
-queue_size{state="waiting"} > 0
-
-# Good - meaningful threshold
-queue_size{state="waiting"} > 100 for 5m
-```
-
-### 2. Monitor Trends, Not Just Absolutes
-
-```promql
-# Track rate of change for webhooks
-rate(webhooks{status="failure"}[30m])
-```
-
-### 3. Create Composite Alerts
-
-```promql
-# Alert only if multiple conditions met
-(queue_size{queue="notify",state="waiting"} > 100) AND
-(sum(rate(webhooks{status="failure"}[5m])) > 0.1)
-```
-
-### 4. Use Alert Grouping
-
-Group related alerts to avoid alarm fatigue:
-
-```yaml
-route:
-  group_by: ['alertname', 'instance']
-  group_wait: 30s
-  group_interval: 5m
-```
-
-### 5. Document Runbooks
-
-Include runbook links in alert annotations:
-
-```yaml
-annotations:
-  summary: "Webhook queue backing up"
-  description: "{{ $value }} webhooks waiting"
-  runbook: "https://wiki.example.com/emailengine/webhook-queue-backup"
-```
+The log stream carries what the metrics cannot: which account failed, which webhook URL refused the request, what the error said. Shipping it to Elasticsearch, Loki or Datadog and the queries to alert on are covered on the [Logging](/docs/advanced/logging#log-aggregation) page; the two are meant to be read side by side.
 
 ## Health Check Scripts
 
@@ -907,7 +564,7 @@ annotations:
 #!/bin/bash
 # check-emailengine-health.sh
 
-RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/health)
+RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" https://emailengine.example.com/health)
 
 if [ "$RESPONSE" != "200" ]; then
   echo "EmailEngine health check failed: HTTP $RESPONSE"
@@ -922,37 +579,34 @@ exit 0
 
 ```bash
 #!/bin/bash
-# full-health-check.sh
+# full-health-check.sh <token> [base-url]
 
 TOKEN="$1"
-HOST="${2:-localhost:3000}"
+BASE_URL="${2:-https://emailengine.example.com}"
 
-# Check basic health endpoint (no auth required)
-HEALTH=$(curl -s http://$HOST/health)
-SUCCESS=$(echo $HEALTH | jq -r '.success')
+# Health endpoint, no authentication
+SUCCESS=$(curl -s "$BASE_URL/health" | jq -r '.success')
 
 if [ "$SUCCESS" != "true" ]; then
   echo "CRITICAL: EmailEngine health check failed"
   exit 2
 fi
 
-# Get detailed stats (requires token)
-STATS=$(curl -s -H "Authorization: Bearer $TOKEN" \
-  "http://$HOST/v1/stats")
+# Stats, needs a token
+STATS=$(curl -s -H "Authorization: Bearer $TOKEN" "$BASE_URL/v1/stats")
 
-# Check connected accounts
-CONNECTED=$(echo $STATS | jq -r '.connections.connected // 0')
-TOTAL=$(echo $STATS | jq -r '.accounts')
+CONNECTED=$(echo "$STATS" | jq -r '.connections.connected // 0')
+TOTAL=$(echo "$STATS" | jq -r '.accounts')
 
 if [ "$TOTAL" -gt 0 ]; then
   PERCENT=$(echo "scale=2; $CONNECTED * 100 / $TOTAL" | bc)
   if (( $(echo "$PERCENT < 95" | bc -l) )); then
-    echo "WARNING: Only $PERCENT% accounts connected ($CONNECTED/$TOTAL)"
+    echo "WARNING: Only $PERCENT% of accounts connected ($CONNECTED/$TOTAL)"
     exit 1
   fi
 fi
 
-echo "OK: EmailEngine healthy - $CONNECTED/$TOTAL accounts connected"
+echo "OK: EmailEngine healthy, $CONNECTED/$TOTAL accounts connected"
 exit 0
 ```
 
@@ -960,24 +614,22 @@ exit 0
 
 ```bash
 #!/bin/bash
-# check_emailengine
+# check_emailengine <token> [base-url]
 
 TOKEN="$1"
-HOST="${2:-localhost:3000}"
+BASE_URL="${2:-https://emailengine.example.com}"
 
-STATS=$(curl -s -H "Authorization: Bearer $TOKEN" \
-  "http://$HOST/v1/stats")
+STATS=$(curl -s -H "Authorization: Bearer $TOKEN" "$BASE_URL/v1/stats")
 
-# Check webhook queue (notify queue handles webhooks)
-QUEUE_WAITING=$(echo $STATS | jq -r '.queues.notify.waiting // 0')
-QUEUE_TOTAL=$(echo $STATS | jq -r '.queues.notify.total // 0')
+# The notify queue carries webhooks
+QUEUE_WAITING=$(echo "$STATS" | jq -r '.queues.notify.waiting // 0')
+QUEUE_TOTAL=$(echo "$STATS" | jq -r '.queues.notify.total // 0')
 if [ "$QUEUE_WAITING" -gt 100 ]; then
   echo "CRITICAL: Webhook queue size $QUEUE_WAITING | queue=$QUEUE_WAITING"
   exit 2
 fi
 
-# Check queue status
-QUEUE_PAUSED=$(echo $STATS | jq -r '.queues.notify.isPaused')
+QUEUE_PAUSED=$(echo "$STATS" | jq -r '.queues.notify.isPaused')
 if [ "$QUEUE_PAUSED" = "true" ]; then
   echo "WARNING: Webhook queue is paused | paused=1"
   exit 1
@@ -989,7 +641,7 @@ exit 0
 
 ## See Also
 
-- [Logging](/docs/advanced/logging) - The other half of observability, including per-account protocol logs
+- [Logging](/docs/advanced/logging) - The other half of observability, including per-account logs
 - [Queue management](/docs/advanced/queue-management) - What the queue metrics are counting
 - [Performance tuning](/docs/advanced/performance-tuning) - Acting on what the metrics show
 - [Redis](/docs/configuration/redis) - The Redis figures behind the `redis_*` metrics

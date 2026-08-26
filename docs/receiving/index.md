@@ -17,9 +17,9 @@ EmailEngine watches connected mailboxes and reports what arrives, so a support d
 ## Why EmailEngine for Receiving Emails?
 
 **Real-Time Processing**
-- Instant webhook notifications for new messages
-- No polling required - EmailEngine monitors mailboxes 24/7
-- Process messages as they arrive, not minutes or hours later
+- Webhook notifications for new messages
+- No polling required - EmailEngine keeps the mailbox connection open and watches for changes
+- Process messages as they arrive
 
 **Multi-Provider Support**
 - Works with any IMAP server
@@ -48,9 +48,9 @@ EmailEngine uses different mechanisms depending on the account type:
 For IMAP accounts, EmailEngine:
 
 1. **Establishes persistent connections** to the mail server
-2. **Uses IDLE command** when supported for real-time notifications
-3. **Falls back to polling** when IDLE is unavailable
-4. **Tracks message UIDs** to detect new messages, updates, and deletions
+2. **Uses the IDLE command** when the server supports it, so the server announces changes in the watched folder
+3. **Falls back to NOOP polling** when IDLE is unavailable
+4. **Tracks message UIDs** to detect new messages, updates, and deletions (see [IMAP indexers](/docs/accounts/imap-indexers) for what the fast indexer skips)
 5. **Emits webhooks** for all detected changes
 
 ### Gmail API Accounts
@@ -77,15 +77,13 @@ For Outlook/Office 365 accounts using Graph API:
 
 **Webhooks (Recommended)**
 - EmailEngine pushes notifications to your application
-- Real-time processing with minimal latency
+- Your application learns about a message as soon as EmailEngine sees it
 - No need to repeatedly check for new messages
-- Efficient and scalable
 
 **API Polling (Alternative)**
 - Your application periodically requests message lists
 - Useful when webhooks cannot be configured
-- Higher latency and less efficient
-- Still fully supported via REST API
+- Higher latency, and every poll costs a request against the mail server
 
 ### Message States
 
@@ -155,6 +153,7 @@ curl -X POST "https://emailengine.example.com/v1/settings" \
     "webhooks": "https://your-app.com/webhooks",
     "webhooksEnabled": true,
     "webhookEvents": ["*"],
+    "notifyText": true,
     "notifyWebSafeHtml": true
   }'
 ```
@@ -186,8 +185,8 @@ async function processNewMessage(event) {
   console.log(`Subject: ${subject}`);
   console.log(`Message ID: ${id}`);
 
-  // Text content is only included when webhook text payloads are enabled
-  // (the notifyText setting); HTML is available at text.html
+  // Text content is only included when the notifyText setting is on;
+  // with notifyWebSafeHtml also on, text.html is the sanitized version
   if (text && text.html) {
     console.log(`HTML content: ${text.html.length} characters`);
   }
@@ -198,12 +197,12 @@ async function processNewMessage(event) {
 
 ### 3. Fetch Full Message Details
 
-If you need more information than what's in the webhook using the [Get Message API endpoint](/docs/api/get-v-1-account-account-message-message):
+If you need more than the webhook carries, fetch the message with the [Get Message API endpoint](/docs/api/get-v-1-account-account-message-message). Add `textType=*` to include the body, which is not returned by default:
 
 ```javascript
 async function fetchFullMessage(accountId, messageId) {
   const response = await fetch(
-    `https://emailengine.example.com/v1/account/${accountId}/message/${messageId}`,
+    `https://emailengine.example.com/v1/account/${accountId}/message/${messageId}?textType=*`,
     {
       headers: {
         'Authorization': 'Bearer YOUR_ACCESS_TOKEN'

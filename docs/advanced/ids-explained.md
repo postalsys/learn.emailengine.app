@@ -6,133 +6,94 @@ description: Understand the different types of message identifiers in EmailEngin
 
 # Message IDs Explained
 
-Learn about EmailEngine's various message identifiers - `id`, `uid`, `emailId`, `messageId`, and sequence numbers - and understand when and why to use each one.
-
-## Overview
-
-If you've used EmailEngine for a while, you've probably noticed an abundance of different message identifiers: `id`, `emailId`, `uid`, `messageId`, and - under the hood - a sequence number.
-
-**Why so many identifiers?**
-
-The answer lies in 40 years of IMAP evolution and backward compatibility. Each identifier serves a distinct role for different use cases.
+A message returned by EmailEngine carries several identifiers: `id`, `uid`, `emailId`, `threadId` and `messageId`. Under the hood there is also an IMAP sequence number. Each one has a different scope and a different lifetime, and choosing the wrong one is the most common cause of a "message not found" error after a move.
 
 ## Quick Reference
 
-| Identifier    | Stability     | Scope           | Use Case                                   |
-| ------------- | ------------- | --------------- | ------------------------------------------ |
-| **id**        | Within folder | EmailEngine API | Primary identifier for API requests        |
-| **uid**       | Within folder | IMAP folder     | Range searches, IMAP operations            |
-| **emailId**   | Permanent     | Email entity    | Tracking across folders (Gmail/Yahoo only) |
-| **messageId** | Permanent     | Global          | Integration with external systems          |
-| **Sequence**  | Session only  | IMAP internal   | IMAP protocol (not exposed)                |
+| Identifier    | Stability                                | Scope              | Use it for                                          |
+| ------------- | ---------------------------------------- | ------------------ | --------------------------------------------------- |
+| **id**        | Stable while the message stays in its folder (IMAP); permanent (Gmail API, MS Graph) | This EmailEngine instance | Every API call that addresses a message |
+| **uid**       | Stable within a folder                   | One IMAP folder    | UID range searches on IMAP accounts                 |
+| **emailId**   | Permanent                                | The email entity   | Tracking a message across folders where available  |
+| **threadId**  | Permanent                                | The conversation   | Grouping messages into threads where available     |
+| **messageId** | Permanent                                | Global             | Integration with external systems, deduplication    |
+| **Sequence**  | Changes during a session                 | IMAP protocol      | Nothing; EmailEngine does not expose it            |
 
 ## The `id` Property
 
 ### What It Is
 
-The `id` is EmailEngine's primary identifier for API requests.
+The `id` is the identifier EmailEngine uses in every message URL: `GET /v1/account/{account}/message/{id}`, `DELETE`, `PUT .../move`, and so on.
 
 **Example**: `"AAAADAAAB40"`
 
-### Characteristics
+What it contains depends on the backend the account uses:
 
-- **Stable within folder**: Never changes while message remains in the same folder
-- **Changes on move**: Moving to another folder assigns a new `id`
-- **Encoded identifier**: Internally encodes folder path, `UIDValidity`, and `uid`
-- **API-friendly**: Short, URL-safe string
+| Backend | What `id` is | Survives a move? |
+| ------- | ------------ | ---------------- |
+| IMAP | A packed reference to the folder plus the message UID (see below) | No. The message gets a new `id` in the destination folder |
+| Gmail API | The Gmail message ID, the same value as `emailId` | Yes. A Gmail move is a label change |
+| MS Graph | The Graph message ID, the same value as `emailId`. EmailEngine requests immutable IDs from Graph | Yes |
 
-### When to Use
+### How the IMAP `id` Is Built
 
-Use `id` for most EmailEngine API operations:
-
-```bash
-# Get message details
-GET /v1/account/{account}/message/{id}
-
-# Delete message
-DELETE /v1/account/{account}/message/{id}
-
-# Move message
-PUT /v1/account/{account}/message/{id}/move
-```
-
-### How It Works
-
-EmailEngine encodes three components into the `id`:
-
-1. **Folder path**: Which folder contains the message
-2. **UIDValidity**: IMAP folder version identifier
-3. **uid**: IMAP unique identifier within folder
-
-This encoding allows EmailEngine to locate the message on the IMAP server quickly.
+For an IMAP account EmailEngine packs two 32-bit numbers into a URL-safe base64 string: a per-account folder number and the IMAP UID. The folder number is allocated the first time EmailEngine sees a folder, and the mapping from that number back to the folder path and its `UIDVALIDITY` is stored in Redis with the account. The string is short and lets EmailEngine locate the message on the server without a lookup by `Message-ID`.
 
 :::warning An `id` only means something to the instance that issued it
-The folder part of the `id` is a short numeric reference, and the mapping from that number back to a path and UIDValidity is stored in Redis alongside the account. An `id` therefore cannot be resolved by a different EmailEngine instance, and it stops resolving if that Redis database is flushed or restored from a backup taken before the folder was first seen.
+The folder number in an IMAP `id` is resolved through Redis. Another EmailEngine instance cannot resolve it, and it stops resolving if that Redis database is flushed or restored from a backup taken before the folder was first seen.
 
 Store `messageId` next to any `id` you persist for longer than a request. It is a property of the email itself, so it survives all of the above. See [Choosing an Identifier](#choosing-the-right-identifier) below.
 :::
 
-### Important Limitations
-
-**Old IDs become invalid after moves**:
+### Old IDs Become Invalid After a Move (IMAP)
 
 ```javascript
-// Get message in INBOX
+// The message is in INBOX
 const message = await getMessage("account1", "AAAADAAAB40");
-// id: AAAADAAAB40, path: "INBOX"
 
-// Move to Archive
-await moveMessage("account1", "AAAADAAAB40", "Archive");
+// Move it to Archive. The response carries the new id
+const moveResponse = await moveMessage("account1", "AAAADAAAB40", "Archive");
+const newId = moveResponse.id;
 
-// Original ID is now invalid!
-// GET /v1/account/account1/message/AAAADAAAB40
-// Returns 404 - message not found
-
-// Must use new ID from move response
-const newId = moveResponse.id; // New ID in Archive folder
+// The old id now returns 404 for this account
 ```
 
-**Workaround**: Use `emailId` or `messageId` for cross-folder tracking.
+The move response carries the new `id`; use it for any follow-up call. For cross-folder tracking that does not depend on the move response, use `emailId` or `messageId`.
 
 ## The `uid` Property
 
 ### What It Is
 
-The IMAP **Unique Identifier** (UID) is an auto-incrementing integer within each folder.
+The IMAP **Unique Identifier** (UID) is an integer assigned by the IMAP server within a folder. The API reports it as `uid` on IMAP accounts only.
 
 **Example**: `2240`
 
 ### Characteristics
 
 - **Folder-specific**: Each folder has its own UID sequence
-- **Auto-incrementing**: New messages get higher UIDs than existing ones
-- **Never reused**: Deleted UIDs cannot be reassigned within the same folder
-- **Changes on move**: Moving to another folder assigns a new UID
-- **IMAP only**: UIDs are an IMAP protocol concept and are not available for API backends
-
-:::warning IMAP Only
-UID is a native IMAP protocol concept. API backends (Gmail API, MS Graph) do not support UIDs, so range-based searches using `uid` are not available for accounts connected via OAuth2 API backends. For API accounts, use `id` or provider-specific identifiers like `emailId`.
-:::
+- **Ascending**: A new message always gets a higher UID than the messages already in the folder
+- **Not reused**: A deleted UID is not reassigned in that folder for as long as the folder's `UIDVALIDITY` value stays the same. If the server resets `UIDVALIDITY` (after a folder rebuild, for example), every UID in that folder changes, and so does every IMAP `id` that referenced it
+- **Changes on move**: A moved message gets a new UID in the destination folder
+- **IMAP only**: The Gmail API and MS Graph backends have no UIDs, so `uid` is absent from their messages and UID range searches return nothing useful for them
 
 ### When to Use
 
-Use `uid` for range-based operations (IMAP accounts only):
+Use `uid` for range-based operations on IMAP accounts:
 
-```json
-{
-  "search": {
-    "uid": "100:500"
-  }
-}
+```bash
+curl -X POST "https://emailengine.example.com/v1/account/user123/search?path=INBOX" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"search": {"uid": "100:500"}}'
 ```
 
-This searches all messages with UID values from 100 to 500.
+This matches every message whose UID is between 100 and 500. The search value accepts the IMAP sequence-set syntax, so `"150,200,250"` is valid too.
 
 ### How It Works
 
 Think of `uid` as a database table's auto-incrementing primary key:
 
-**Folder: INBOX (UIDValidity: 123456)**
+**Folder: INBOX (UIDVALIDITY: 123456)**
 
 | UID | Subject  | From    | Notes |
 |-----|----------|---------|-------|
@@ -141,15 +102,15 @@ Think of `uid` as a database table's auto-incrementing primary key:
 | 105 | Update   | bob@    | UIDs 102-104 were deleted |
 | 106 | Reminder | alice@  | |
 
-**Key point**: UIDs 102-104 were deleted and will never be reused in this folder.
+UIDs 102-104 were deleted and will not be reused in this folder.
 
 ### UID and Folder Moves
 
 When you move a message:
 
-1. Original UID is deleted (becomes invalid)
-2. Message appears in destination folder with new UID
-3. Both old and new UIDs are unique and never reused
+1. The original UID is expunged from the source folder
+2. The message appears in the destination folder with a new UID
+3. Neither UID is reused
 
 **Example: Move message UID 105 from INBOX to Archive**
 
@@ -158,116 +119,71 @@ When you move a message:
 | **INBOX** | UID 105 (to be moved) | UID 106<br/>UID 107 |
 | **Archive** | UID 50<br/>UID 51 | UID 50<br/>UID 51<br/>UID 52 (same message, new UID) |
 
-**What happened:**
-- INBOX: UID 105 was deleted
-- Archive: Message appeared as new UID 52
-
 ## The `emailId` Property
 
 ### What It Is
 
-A **stable identifier for the email entity itself** that never changes, even when moved or copied.
+A **stable identifier for the email entity itself** that does not change when the message is moved or copied.
 
 **Example**: `"187a29df5a2"`
 
-### Characteristics
+### Availability
 
-- **Permanent**: Never changes throughout email's lifetime
-- **Cross-folder**: Same ID for all copies of the message
-- **Provider-specific**: Requires special IMAP extensions
-- **Limited availability**: Gmail, Yahoo, Fastmail, some others
+`emailId` is present only when the backend provides one:
+
+| Backend | Source of `emailId` |
+| ------- | ------------------- |
+| IMAP server advertising `OBJECTID` (RFC 8474) | The `EMAILID` fetch item |
+| Gmail over IMAP (`X-GM-EXT-1`) | `X-GM-MSGID` |
+| Gmail API | The Gmail message ID (same value as `id`) |
+| MS Graph | The Graph message ID (same value as `id`) |
+
+Other IMAP servers, including most self-hosted ones, return no `emailId`. The same rule applies to `threadId`, which comes from `THREADID` (OBJECTID) or `X-GM-THRID` on IMAP and from the thread or conversation ID on the API backends. See [Threading](/docs/sending/threading) for what a `threadId` is good for.
+
+Always check for it before relying on it:
+
+```javascript
+const trackingId = message.emailId || message.messageId;
+```
 
 ### When to Use
 
-Use `emailId` when you need to track messages across folders:
+Use `emailId` when you need to recognise the same message in two folders:
 
 ```javascript
-// Track message regardless of folder location
 const message1 = await getMessage("account1", id1);
 const message2 = await getMessage("account1", id2);
 
-if (message1.emailId === message2.emailId) {
+if (message1.emailId && message1.emailId === message2.emailId) {
   console.log("Same email in different folders");
 }
 ```
 
-### Availability
-
-**Supported providers**:
-
-- Gmail (via X-GM-MSGID)
-- Yahoo
-- Fastmail
-- iCloud (sometimes)
-- Some modern IMAP servers
-
-**Not supported**:
-
-- Microsoft Exchange
-- Most traditional IMAP servers
-- Self-hosted email servers (unless using specific extensions)
-
-**Checking availability**:
-
-```javascript
-if (message.emailId) {
-  // Use emailId for tracking
-} else {
-  // Fall back to messageId
-}
-```
-
-### Example: Cross-Folder Tracking
-
-```javascript
-// User moves email from INBOX to Archive
-// Webhook 1: messageDeleted from INBOX
-{
-  "event": "messageDeleted",
-  "path": "INBOX",
-  "data": {
-    "id": "AAAADAAAB40",
-    "emailId": "187a29df5a2"
-  }
-}
-
-// Webhook 2: messageNew in Archive
-{
-  "event": "messageNew",
-  "path": "Archive",
-  "data": {
-    "id": "AAAAFAAAC12",  // Different id
-    "emailId": "187a29df5a2"  // Same emailId!
-  }
-}
-
-// Can detect this is a move, not delete+new
-```
+It is also a search term: `{"search": {"emailId": "187a29df5a2"}}` finds the message wherever it is. See [Searching messages](/docs/receiving/searching#uid-and-id-operators).
 
 ## The `messageId` Property
 
 ### What It Is
 
-The value from the email's `Message-ID` header, intended to be globally unique.
+The value of the email's `Message-ID` header, which the sending system generates to be globally unique.
 
 **Example**: `"<01000187a29df5a2@example.com>"`
 
 ### Characteristics
 
-- **From email header**: Standard RFC 5322 Message-ID header
-- **Globally unique** (in theory): Intended to be unique across all emails
-- **Permanent**: Never changes
-- **Not enforced**: Senders can reuse IDs or omit them
-- **Universally available**: Present in all standard emails
+- **From the email header**: RFC 5322 `Message-ID`
+- **Globally unique by convention**: Uniqueness is not enforced. Senders can reuse a value or omit the header, and a copy of the message in another mailbox carries the same value
+- **Permanent**: Travels with the message through moves, copies and forwards between accounts
+- **Available on every backend**: It is a property of the email, not of the server
 
 ### When to Use
 
 Use `messageId` for:
 
-1. **Integration with external systems**: Many systems use Message-ID
-2. **Deduplication**: Detect duplicate email processing
-3. **Thread tracking**: Link to `inReplyTo` and `references` headers
-4. **CRM integrations**: Track emails across multiple accounts
+1. **Integration with external systems**: Most mail-aware systems already key on `Message-ID`
+2. **Deduplication**: Detect the same message arriving twice, or in two accounts
+3. **Thread reconstruction**: `inReplyTo` and `references` on a message contain the `Message-ID` values of its parents
+4. **Persistence**: The one identifier that stays valid after an EmailEngine reinstall, a Redis restore, or a migration to another instance
 
 ### Example: Deduplication
 
@@ -277,75 +193,37 @@ const processedIds = new Set();
 function processWebhook(webhook) {
   const messageId = webhook.data.messageId;
 
-  // Skip if no messageId (spam indicator)
   if (!messageId) {
+    // No Message-ID header. Fall back to the EmailEngine id for this event
+    handleNewEmail(webhook.data);
     return;
   }
 
-  // Check if already processed
   if (processedIds.has(messageId)) {
-    console.log("Duplicate - already processed");
     return;
   }
 
-  // Process email
   processedIds.add(messageId);
   handleNewEmail(webhook.data);
 }
 ```
 
-### Reliability Considerations
-
-**Good indicators**:
-
-- Properly formatted: `<unique-id@domain.com>`
-- Domain matches sender domain
-- Unique across your system
-
-**Spam indicators**:
-
-- Missing Message-ID
-- Duplicate Message-ID across different emails
-- Malformed format
-- Suspiciously generic IDs
-
-```javascript
-function isValidMessageId(messageId) {
-  if (!messageId) {
-    return false; // Missing
-  }
-
-  if (!messageId.match(/^<.+@.+>$/)) {
-    return false; // Malformed
-  }
-
-  // Further validation...
-  return true;
-}
-```
-
 ### Searching by Message-ID
 
-Use header search to find emails by Message-ID:
+Use a header search to find a message by its `Message-ID`:
 
 ```bash
-POST /v1/account/{account}/search
-Content-Type: application/json
-
-{
-  "search": {
-    "header": {
-      "Message-ID": "<123@abc.example.com>"
-    }
-  }
-}
+curl -X POST "https://emailengine.example.com/v1/account/user123/search?path=INBOX" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"search": {"header": {"Message-ID": "<123@abc.example.com>"}}}'
 ```
 
 ### Thread Tracking
 
-The `messageId` property works with related headers:
+The `messageId` property works together with two related fields:
 
-```javascript
+```json
 {
   "messageId": "<current-message@example.com>",
   "inReplyTo": "<parent-message@example.com>",
@@ -356,46 +234,27 @@ The `messageId` property works with related headers:
 }
 ```
 
-**Building a thread**:
-
-1. Start with `messageId` of first message
-2. Find replies where `inReplyTo` matches
-3. Follow `references` chain
-4. Build complete conversation thread
+To rebuild a conversation without a `threadId`, start from the first message's `messageId`, find replies whose `inReplyTo` matches, and follow the `references` chain.
 
 ## Sequence Numbers
 
-### What They Are
+IMAP sequence numbers give a message's position within a folder (1, 2, 3, ...). They are part of the IMAP protocol and EmailEngine does not expose them, because they change whenever a message earlier in the folder is expunged:
 
-IMAP sequence numbers represent a message's position within a folder (1, 2, 3, ...).
-
-### Characteristics
-
-- **Core to IMAP protocol**: Used internally by IMAP
-- **Session-specific**: Can change between sessions
-- **Position-based**: Message at position 1, 2, 3, etc.
-- **Not stable**: Changes when messages are added/deleted
-- **Not exposed**: EmailEngine doesn't expose them through public API
-
-### Why EmailEngine Doesn't Use Them
-
-Sequence numbers are unreliable for API use:
-
-```
-INBOX before:           INBOX after delete:
-Seq 1: Message A        Seq 1: Message B  ← Was Seq 2!
-Seq 2: Message B        Seq 2: Message C  ← Was Seq 3!
-Seq 3: Message C        Seq 3: Message D  ← Was Seq 4!
+```text
+INBOX before:           INBOX after expunging 1:
+Seq 1: Message A        Seq 1: Message B  (was 2)
+Seq 2: Message B        Seq 2: Message C  (was 3)
+Seq 3: Message C        Seq 3: Message D  (was 4)
 Seq 4: Message D
 ```
 
-**Problem**: Deleting Seq 1 changes all subsequent sequence numbers.
-
-**Solution**: EmailEngine uses `uid` instead, which never changes.
-
 :::info Internal Implementation
-While EmailEngine doesn't expose sequence numbers through the API, it must still handle them internally. IMAP servers push update and delete notifications using sequence numbers (e.g., `123 EXPUNGE` means the message at position 123 was deleted, and message 124 is now 123). EmailEngine maintains sequence-to-UID mappings to correctly translate these notifications into stable UID-based operations.
+IMAP servers push untagged `EXPUNGE` and `FETCH` responses using sequence numbers. EmailEngine keeps an ordered list of each folder's UIDs in Redis and resolves the sequence number against that list before acting on the notification. This only happens with the `full` [IMAP indexer](/docs/accounts/imap-indexers); the `fast` indexer ignores these notifications, which is one reason it does not report flag changes or deletions.
 :::
+
+## Attachment and Text Identifiers
+
+Attachments and text bodies have their own opaque identifiers, returned in `attachments[].id` and `text.id` on message details. They are built on top of the message identifier: on IMAP the attachment `id` packs the same folder-and-UID reference as the message `id` together with the MIME part number, and on the API backends it packs the provider's message ID together with what the provider needs to fetch the part. Treat them as opaque strings, obtain them from a message details or webhook payload, and use them with `GET /v1/account/{account}/attachment/{attachment}` and `GET /v1/account/{account}/text/{text}` on the same instance. Like the IMAP message `id`, they are not portable between instances.
 
 ## Choosing the Right Identifier
 
@@ -403,17 +262,17 @@ While EmailEngine doesn't expose sequence numbers through the API, it must still
 
 ```mermaid
 graph TD
-    Start[What's your use case?]
-    Start --> API{EmailEngine API<br/>operations?}
-    Start --> Range{Range-based<br/>searches?}
-    Start --> Track{Track across<br/>folder moves?}
-    Start --> External{External system<br/>integration?}
+    Start[What do you need?]
+    Start --> API{Call the EmailEngine<br/>API for this message?}
+    Start --> Range{Select a UID range<br/>on an IMAP account?}
+    Start --> Track{Recognise the message<br/>after a move?}
+    Start --> External{Key an external<br/>system on it?}
 
     API -->|Yes| UseId[Use id]
     Range -->|Yes| UseUid[Use uid]
     External -->|Yes| UseMessageId1[Use messageId]
 
-    Track -->|Yes| Provider{Gmail/Yahoo<br/>account?}
+    Track -->|Yes| Provider{emailId present<br/>on this account?}
     Provider -->|Yes| UseEmailId[Use emailId]
     Provider -->|No| UseMessageId2[Use messageId]
 
@@ -427,55 +286,46 @@ graph TD
 
 ### Use Case Examples
 
-**1. Display message in UI**
+**1. Display a message in a UI**
 
 ```javascript
-// User clicks message in inbox
-const messageId = "AAAADAAAB40"; // From list API
+// The id comes from the message list
+const id = "AAAADAAAB40";
 
-// Fetch full details
-const message = await fetch(`/v1/account/${account}/message/${messageId}`);
-
-// Display to user
-showMessage(message);
+const response = await fetch(`https://emailengine.example.com/v1/account/user123/message/${id}`, {
+  headers: { Authorization: "Bearer YOUR_ACCESS_TOKEN" }
+});
+const message = await response.json();
 ```
 
 **Use**: `id`
 
-**2. Sync messages to database**
+**2. Sync messages to a database**
 
 ```javascript
-// Initial sync
-const messages = await listMessages(account, "INBOX");
-
-messages.forEach((msg) => {
+for (const msg of messages) {
   db.upsert({
     account: account,
-    messageId: msg.messageId, // Primary key
+    messageId: msg.messageId,
     emailId: msg.emailId || null,
-    subject: msg.subject,
-    // ... other fields
+    id: msg.id,
+    subject: msg.subject
   });
-});
+}
 ```
 
-**Use**: `messageId` (primary), `emailId` (if available)
+**Use**: `messageId` as the primary key, `emailId` when present, `id` for the next API call.
 
-**3. Track email in CRM**
+**3. Track email in a CRM**
 
 ```javascript
-// New email webhook
 function handleWebhook(webhook) {
   const messageId = webhook.data.messageId;
-
-  // Check if already in CRM
   const existing = crm.findEmail(messageId);
 
   if (existing) {
-    // Update existing record
     crm.updateEmail(messageId, webhook.data);
   } else {
-    // Create new record
     crm.createEmail(messageId, webhook.data);
   }
 }
@@ -483,95 +333,83 @@ function handleWebhook(webhook) {
 
 **Use**: `messageId`
 
-**4. Detect folder moves**
+**4. Tell a move from a delete**
+
+On an IMAP account a move produces two webhooks: `messageDeleted` from the source folder and `messageNew` in the destination. The `messageDeleted` payload carries only the `id` and `uid` of the removed message, so the link between the two events has to come from data you stored when the message first arrived:
 
 ```javascript
-// Gmail/Yahoo account
+// Populated from messageNew webhooks: id -> emailId
+const emailIdById = new Map();
+
+function handleMessageNew(webhook) {
+  const { id, emailId } = webhook.data;
+  if (emailId) {
+    emailIdById.set(id, emailId);
+  }
+}
+
 function handleMessageDeleted(webhook) {
-  const emailId = webhook.data.emailId;
+  const emailId = emailIdById.get(webhook.data.id);
+  emailIdById.delete(webhook.data.id);
 
-  // Wait briefly for messageNew event
+  // Give the messageNew for the destination folder time to arrive
   setTimeout(() => {
-    const newLocation = findByEmailId(emailId);
-
+    const newLocation = emailId ? findByEmailId(emailId) : null;
     if (newLocation) {
       console.log("Message moved to:", newLocation.path);
     } else {
-      console.log("Message permanently deleted");
+      console.log("Message deleted, or moved on a server without emailId");
     }
   }, 1000);
 }
 ```
 
-**Use**: `emailId` (Gmail/Yahoo only)
+Gmail API and MS Graph accounts keep the same `id` across a move, so no correlation is needed there.
 
-**5. Bulk operations**
+**Use**: `emailId` where available, otherwise `messageId` stored the same way.
+
+**5. Bulk operations on a UID range**
 
 ```bash
-# Delete all messages with UID between 100 and 500
-PUT /v1/account/{account}/messages/delete
-
-{
-  "search": {
-    "uid": "100:500"
-  }
-}
+curl -X PUT "https://emailengine.example.com/v1/account/user123/messages/delete?path=INBOX" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"search": {"uid": "100:500"}}'
 ```
 
 **Use**: `uid`
 
 ## Common Pitfalls
 
-### 1. Reusing Old IDs After Moves
+### 1. Reusing an IMAP `id` After a Move
 
 ```javascript
-// WRONG
-const message = await getMessage(account, oldId);
+// Fails: the id belonged to the source folder
 await moveMessage(account, oldId, "Archive");
+await updateMessage(account, oldId, { seen: true }); // 404
 
-// Try to update (will fail!)
-await updateMessage(account, oldId, { seen: true });
-// Error: Message not found
-
-// CORRECT
+// Works: take the id from the move response
 const moveResponse = await moveMessage(account, oldId, "Archive");
-const newId = moveResponse.id;
-
-await updateMessage(account, newId, { seen: true });
+await updateMessage(account, moveResponse.id, { seen: true });
 ```
 
-### 2. Assuming emailId is Always Available
+### 2. Assuming `emailId` Is Always Present
 
 ```javascript
-// WRONG
-function trackMessage(message) {
-  db.save({
-    id: message.emailId, // undefined for most providers!
-    // ...
-  });
-}
-
-// CORRECT
 function trackMessage(message) {
   const trackingId = message.emailId || message.messageId || message.id;
-  db.save({
-    id: trackingId,
-    // ...
-  });
+  db.save({ id: trackingId });
 }
 ```
 
-### 3. Not Validating messageId
+### 3. Not Checking for a Missing `messageId`
 
 ```javascript
-// WRONG - spam emails might have no messageId
-processedIds.add(message.messageId); // Adds 'undefined'!
-
-// CORRECT
 if (message.messageId) {
   processedIds.add(message.messageId);
 } else {
-  console.log("Skipping email with no Message-ID (likely spam)");
+  // No Message-ID header; key on the EmailEngine id for this account instead
+  processedIds.add(`${account}:${message.id}`);
 }
 ```
 
@@ -579,23 +417,24 @@ if (message.messageId) {
 
 | Identifier    | When to Use                 | Stability            | Availability         |
 | ------------- | --------------------------- | -------------------- | -------------------- |
-| **id**        | EmailEngine API calls       | Stable within folder | Always               |
-| **uid**       | Range searches, IMAP ops    | Stable within folder | IMAP only            |
-| **emailId**   | Cross-folder tracking       | Permanent            | Gmail/Yahoo/Fastmail |
-| **messageId** | External integration, dedup | Permanent            | Almost always        |
-| **Sequence**  | Don't use                   | Session-only         | Internal only        |
+| **id**        | EmailEngine API calls       | Per folder on IMAP; permanent on Gmail API and MS Graph | Always |
+| **uid**       | UID range searches          | Per folder, per `UIDVALIDITY` | IMAP only            |
+| **emailId**   | Cross-folder tracking       | Permanent            | OBJECTID or Gmail IMAP servers, Gmail API, MS Graph |
+| **messageId** | External integration, dedup | Permanent            | Whenever the header is present, which is almost always |
+| **Sequence**  | Nothing                     | Changes during a session | Not exposed      |
 
 **General guidance**:
 
-- **Use `id`** for most EmailEngine API operations
-- **Use `uid`** for range-based searches
-- **Use `emailId`** for cross-folder tracking (if available)
-- **Use `messageId`** for external integration and deduplication
-- **Store all identifiers** in your database for maximum flexibility
+- **Use `id`** for every EmailEngine API call, taking it from the latest response
+- **Use `uid`** for UID range searches on IMAP accounts
+- **Use `emailId`** for cross-folder tracking when the account provides one
+- **Use `messageId`** for external integration, deduplication, and anything you persist
+- **Store all of them** when you sync messages to your own database
 
 ## See Also
 
 - [Message operations](/docs/receiving/message-operations) - Where each identifier appears in practice
 - [Threading](/docs/sending/threading) - What a `threadId` is for, and which providers assign one
-- [Searching messages](/docs/receiving/searching) - Searching by `emailId` and `threadId`
+- [Searching messages](/docs/receiving/searching) - Searching by `uid`, `emailId`, `threadId` and headers
 - [Messages API](/docs/api-reference/messages-api) - The fields these identifiers occupy
+- [Webhooks overview](/docs/webhooks/overview) - The events whose payloads carry these identifiers

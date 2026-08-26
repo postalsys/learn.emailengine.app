@@ -32,17 +32,13 @@ The EmailEngine API is a RESTful HTTP API that:
 
 ## Base URL
 
-The default base URL for all API endpoints is:
-
-```
-http://localhost:3000/v1
-```
-
-For production deployments, replace with your EmailEngine instance URL:
+Every endpoint lives under `/v1` on your EmailEngine instance. The examples on this site use a placeholder host:
 
 ```
 https://emailengine.example.com/v1
 ```
+
+A freshly installed instance listens on port 3000, so on the machine you just started it on the same paths are reachable at `http://localhost:3000/v1`.
 
 ### Versioning
 
@@ -66,14 +62,14 @@ Authorization: Bearer YOUR_ACCESS_TOKEN
 
 1. Log in to the EmailEngine web interface
 2. Navigate to Integrations > Access Tokens
-3. Click "Generate new token"
-4. Assign a description and optional scope
-5. Copy the generated token
+3. Click **Create access token**
+4. Assign a description, choose the scopes, and optionally bind the token to an account or narrow what it may do
+5. Click **Generate a token** and copy the value, which is shown only once
 
-**Via API (Account-Specific Tokens Only):**
+**Via API (Narrowed Tokens Only):**
 
 ```bash
-curl -X POST http://localhost:3000/v1/tokens \
+curl -X POST https://emailengine.example.com/v1/tokens \
   -H "Authorization: Bearer EXISTING_SYSTEM_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -83,7 +79,7 @@ curl -X POST http://localhost:3000/v1/tokens \
   }'
 ```
 
-**Important:** Tokens created via API are ALWAYS account-specific. The `account` field is required.
+**Important:** A token minted over the API is always narrowed: either bind it to an `account`, or send a `permissions` record with `actions` and `groups` allowlists. The API refuses to mint an instance-wide token that could reach every account and every endpoint. Minting requires an instance-wide `*` or `api` token that is not itself narrowed.
 
 **Via CLI (System-Wide or Account-Specific):**
 
@@ -100,12 +96,12 @@ See [Access Tokens](/docs/api-reference/access-tokens) for complete documentatio
 ### Token Types
 
 **System-Wide Tokens:**
-- Created via web interface or CLI
-- Access all accounts and endpoints
-- Scopes: `"*"` (full), `"api"`, `"metrics"`, `"smtp"`, `"imap-proxy"`
+- Created via web interface or CLI, or via API with a `permissions` record
+- Access all accounts and endpoints, unless narrowed by `permissions`
+- Scopes: `"*"` (full), `"api"`, `"metrics"`, `"smtp"`, `"imap-proxy"`, `"mcp"`
 
 **Account-Specific Tokens:**
-- Created via API (requires `account` field)
+- Created via web interface, CLI, or API with the `account` field
 - Restricted to single account only
 - Cannot create other tokens
 - Recommended for multi-tenant applications
@@ -164,7 +160,7 @@ Use JSON for request bodies:
 <TabItem value="curl" label="cURL" default>
 
 ```bash
-curl http://localhost:3000/v1/accounts \
+curl https://emailengine.example.com/v1/accounts \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
 
@@ -172,7 +168,7 @@ curl http://localhost:3000/v1/accounts \
 <TabItem value="nodejs" label="Node.js">
 
 ```javascript
-const res = await fetch('http://localhost:3000/v1/accounts', {
+const res = await fetch('https://emailengine.example.com/v1/accounts', {
   headers: { Authorization: 'Bearer YOUR_ACCESS_TOKEN' }
 });
 
@@ -186,7 +182,7 @@ const { accounts } = await res.json();
 import requests
 
 res = requests.get(
-    'http://localhost:3000/v1/accounts',
+    'https://emailengine.example.com/v1/accounts',
     headers={'Authorization': 'Bearer YOUR_ACCESS_TOKEN'}
 )
 
@@ -198,7 +194,7 @@ accounts = res.json()['accounts']
 
 ```php
 <?php
-$ch = curl_init('http://localhost:3000/v1/accounts');
+$ch = curl_init('https://emailengine.example.com/v1/accounts');
 curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 curl_setopt($ch, CURLOPT_HTTPHEADER, ['Authorization: Bearer YOUR_ACCESS_TOKEN']);
 
@@ -234,19 +230,20 @@ Error requests return HTTP status codes in the 4xx or 5xx range:
 - **401 Unauthorized**: Missing or invalid authentication
 - **403 Forbidden**: Insufficient permissions
 - **404 Not Found**: Resource not found
+- **413 Payload Too Large**: The request body or an attachment exceeds the configured size limit
 - **422 Unprocessable Entity**: The request was understood but the mail server or provider refused the operation
 - **429 Too Many Requests**: Rate limit exceeded
 - **500 Internal Server Error**: Server error
 - **503 Service Unavailable**: Service temporarily unavailable
+- **504 Gateway Timeout**: A worker did not answer within `EENGINE_TIMEOUT` or the `x-ee-timeout` header
 
-Example error response:
+Example error response, from requesting an account that does not exist:
 
 ```json
 {
   "statusCode": 404,
   "error": "Not Found",
-  "message": "Account not found",
-  "code": "AccountNotFound"
+  "message": "Account record was not found for requested ID"
 }
 ```
 
@@ -279,10 +276,12 @@ Not every list is paginated. `GET /v1/account/{account}/mailboxes` returns the f
 | 401  | Unauthorized        | Verify authentication token  |
 | 403  | Forbidden           | Check token permissions      |
 | 404  | Not Found           | Verify resource exists       |
+| 413  | Payload Too Large   | Reduce the body or attachment size |
 | 422  | Unprocessable Entity | The provider refused the operation, not the request shape |
 | 429  | Too Many Requests   | Implement retry with backoff |
 | 500  | Server Error        | Retry after delay            |
 | 503  | Service Unavailable | Service restarting, retry    |
+| 504  | Gateway Timeout     | Retry, or raise `x-ee-timeout` for a long operation |
 
 ### Error Response Format
 
@@ -307,20 +306,22 @@ Not every list is paginated. `GET /v1/account/{account}/mailboxes` returns the f
 
 ### Common Error Codes
 
-| Code                     | Description                             | Solution                        |
-| ------------------------ | --------------------------------------- | ------------------------------- |
-| `InvalidToken`           | Missing or invalid API token            | Provide a valid token           |
-| `AccountNotFound`        | Account doesn't exist                   | Verify account ID               |
-| `MessageNotFound`        | Message doesn't exist                   | Check message ID                |
-| `AuthenticationFails`    | The mail server rejected the credentials | Re-authorize the account       |
-| `ConnectionError`        | Can't connect to mail server            | Check host, port, and network   |
-| `RateLimitExceeded`      | Too many requests                       | Back off for `ttl` seconds      |
+| Code                     | Status | Description                             | Solution                        |
+| ------------------------ | ------ | --------------------------------------- | ------------------------------- |
+| `AccountAlreadyExists`   | 400    | Another account uses the same OAuth2 user | Update the existing account instead |
+| `MessageNotFound`        | 404    | Message doesn't exist                   | Check message ID                |
+| `AuthenticationFails`    | 503    | The account is in `authenticationError`, so the request cannot reach the mailbox | Re-authorize the account |
+| `ConnectionError`        | 503    | The account is in `connectError`        | Check host, port, and network   |
+| `NotYetConnected`        | 503    | The account has not connected yet       | Retry once it has initialized   |
+| `IMAPUnavailable`        | 503    | No IMAP connection is up for the account | Retry later                    |
+| `SMTPUnavailable`        | 404    | The account has no usable SMTP configuration | Configure SMTP or a gateway |
+| `Timeout`                | 504    | A worker did not answer in time         | Retry, or raise `x-ee-timeout` |
 
-Validation failures do not carry a `code`. They return `400` with a `fields` array instead. See [Error Codes](/docs/reference/error-codes) for the full list.
+A missing or rejected token answers `401` with `Unauthorized` or `Bad token` as the message and no `code`. A missing account answers `404` with no `code`. A token that has exhausted its rate limit answers `429` with no `code` either, but with a `ttl` field carrying the seconds until the window resets. Validation failures do not carry a `code`. They return `400` with a `fields` array instead. See [Error Codes](/docs/reference/error-codes) for the full list.
 
 ### Retry Strategies
 
-For transient errors (429, 500, 503):
+For transient errors (429, 500, 503, 504):
 
 ```javascript
 async function requestWithRetry(url, options, maxRetries = 3) {
@@ -354,14 +355,14 @@ For endpoints that return lists (accounts, messages, etc.), use pagination param
 
 | Parameter  | Type   | Default | Description                                         |
 | ---------- | ------ | ------- | --------------------------------------------------- |
-| `page`     | number | 0       | Page number (0-indexed)                             |
+| `page`     | number | 0       | Page number (0-indexed). For message listings, only IMAP accounts support it |
 | `pageSize` | number | 20      | Items per page                                      |
-| `cursor`   | string | -       | Paging cursor from nextPageCursor or prevPageCursor |
+| `cursor`   | string | -       | Paging cursor from `nextPageCursor` or `prevPageCursor`, the way to page Gmail API and MS Graph accounts |
 
 ### Example Request
 
 ```bash
-curl "http://localhost:3000/v1/account/user@example.com/messages?path=INBOX&page=0&pageSize=50" \
+curl "https://emailengine.example.com/v1/account/user@example.com/messages?path=INBOX&page=0&pageSize=50" \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
 
@@ -382,7 +383,7 @@ Paginated responses include navigation metadata:
 
 ```javascript
 async function* eachMessage(account, path = 'INBOX') {
-  const base = `http://localhost:3000/v1/account/${encodeURIComponent(account)}/messages`;
+  const base = `https://emailengine.example.com/v1/account/${encodeURIComponent(account)}/messages`;
 
   for (let page = 0; ; page++) {
     const res = await fetch(`${base}?path=${encodeURIComponent(path)}&page=${page}&pageSize=100`, {
@@ -413,7 +414,7 @@ The messages list endpoint supports basic query parameters:
 
 ```bash
 # List messages in a specific mailbox
-curl "http://localhost:3000/v1/account/user@example.com/messages?path=INBOX" \
+curl "https://emailengine.example.com/v1/account/user@example.com/messages?path=INBOX" \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
 
@@ -423,7 +424,7 @@ Use the search endpoint for advanced queries including flag filtering:
 
 ```bash
 # Search for unread messages from a specific sender
-curl -X POST http://localhost:3000/v1/account/user@example.com/search \
+curl -X POST "https://emailengine.example.com/v1/account/user@example.com/search?path=INBOX" \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -460,23 +461,24 @@ Webhooks provide instant notifications when:
 Register a webhook endpoint:
 
 ```bash
-curl -X POST http://localhost:3000/v1/settings \
+curl -X POST https://emailengine.example.com/v1/settings \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "webhooks": "https://your-app.com/webhook",
+    "webhooksEnabled": true,
     "webhookEvents": ["messageNew", "messageSent"]
   }'
 ```
 
-Learn more in the [Webhooks API documentation](./webhooks-api.md).
+`webhooksEnabled` is the global switch, and `webhookEvents` is an allowlist with no default, so both are needed before anything is delivered. Learn more in the [Webhooks API documentation](./webhooks-api.md).
 
 ## Quick Start Example
 
 Register an account, send a message, and subscribe to new mail. Each step is one request:
 
 ```javascript
-const BASE = 'http://localhost:3000/v1';
+const BASE = 'https://emailengine.example.com/v1';
 const TOKEN = 'YOUR_ACCESS_TOKEN';
 
 const api = (path, body) =>
@@ -486,7 +488,7 @@ const api = (path, body) =>
     body: body && JSON.stringify(body)
   }).then(res => res.json());
 
-// 1. Register an account. EmailEngine verifies the credentials and starts syncing
+// 1. Register an account. EmailEngine stores it and connects in the background
 const { account } = await api('/account', {
   account: 'user@example.com',
   name: 'John Doe',
@@ -503,6 +505,7 @@ const { account } = await api('/account', {
 // 2. Subscribe to new mail before it can arrive
 await api('/settings', {
   webhooks: 'https://your-app.com/webhook',
+  webhooksEnabled: true,
   webhookEvents: ['messageNew']
 });
 
@@ -572,7 +575,7 @@ Configure webhooks and event notifications.
 
 Not part of the REST API, but the same functionality for a different caller: `POST /mcp` serves the Model Context Protocol, so an AI agent can call a curated tool set with an access token you narrow and revoke like any other.
 
-- 15 tools over accounts, folders, messages, sending and templates
+- A curated tool set over accounts, folders, messages, sending and templates
 - Every tool call is dispatched as the equivalent REST request, with the same permission checks
 - Off by default
 
@@ -597,9 +600,8 @@ The machine-readable document behind the reference above, served by every EmailE
 ## Support
 
 - **Documentation**: Browse the complete [documentation](/docs)
-- **GitHub Issues**: Report bugs or request features
-- **Community**: Join discussions on GitHub
-- **Professional Support**: Contact for enterprise support options
+- **GitHub Issues**: Report bugs or request features at [postalsys/emailengine](https://github.com/postalsys/emailengine/issues)
+- **Support channels**: See [Support](/docs/support) for the options available to license holders
 
 ## See Also
 

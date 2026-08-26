@@ -16,17 +16,16 @@ EmailEngine offers **field-level encryption** that encrypts all sensitive fields
 
 - Account passwords
 - OAuth access and refresh tokens
-- Google OAuth client secrets
-- Other sensitive configuration values
+- OAuth2 application client secrets and service account keys
+- The settings and TLS private keys listed below
 
 ## Why Enable Encryption?
 
 ### Security Benefits
 
-1. **Data at Rest Protection**: Even if Redis is compromised, encrypted data remains secure
-2. **Compliance**: Meets security requirements for many regulations
-3. **Defense in Depth**: Additional security layer beyond network security
-4. **Peace of Mind**: Production-ready security posture
+1. **Data at rest protection**: A copy of the Redis database, or of its backups, does not expose the stored credentials without the secret
+2. **Compliance**: Encryption of stored credentials is a requirement of many security standards
+3. **Defense in depth**: An additional layer beyond network access control on Redis
 
 ### What Gets Encrypted
 
@@ -37,20 +36,33 @@ EmailEngine offers **field-level encryption** that encrypts all sensitive fields
 - OAuth access tokens
 - OAuth refresh tokens
 
-**Configuration**:
+**OAuth2 applications** (`clientSecret`, `serviceKey`, `externalAccount` and `accessToken` in the app record):
 
-- OAuth client secrets (Gmail, Outlook)
-- SMTP server password
-- Gmail service account key
-- Document store password
-- OpenAI API key
+- Client secrets
+- Service account keys and external-account (workload identity federation) configurations
+- The app-level access token of an application-access (client credentials) app
+
+**SMTP gateways**:
+
+- Gateway passwords
+
+**Settings** (`smtpServerPassword`, `imapProxyServerPassword`, `serviceSecret`, `cookiePassword`, `totpSeed`, `openAiAPIKey`, `documentStorePassword`, and the legacy `gmailClientSecret`, `outlookClientSecret`, `mailRuClientSecret`, `gmailServiceKey` and `gmailServiceExternalAccount` values):
+
+- The SMTP server and IMAP proxy global passwords
+- The `serviceSecret` used for signing, the admin session cookie password and the admin TOTP seed
+- The OpenAI API key and the Document Store password
+
+**TLS private keys**:
+
+- The ACME account key and the private key of every certificate EmailEngine provisions for its own listeners
 
 **Not encrypted**:
 
 - Email content (not stored by default)
 - Metadata (subject lines, senders, etc.)
-- Account IDs
-- Configuration settings
+- Account IDs, and the rest of the account record: the IMAP and SMTP host names, the account's webhook URL and its custom headers, including an authorization header set there
+- Every other setting
+- Access tokens, which are not stored at all: only their SHA-256 hashes are, so the stored value cannot be used as a token
 
 ## Important Considerations
 
@@ -66,7 +78,7 @@ When you enable `EENGINE_SECRET` on an instance with existing accounts:
 - **Existing credentials remain unencrypted** - They are not automatically migrated
 - **New accounts get encrypted credentials** - Any account added after enabling encryption stores credentials encrypted
 - **OAuth2 tokens encrypt on renewal** - When EmailEngine refreshes an OAuth2 access token, the new tokens are stored encrypted
-- **IMAP/SMTP passwords stay unencrypted** - Until you run the migration tool, these remain in cleartext
+- **IMAP/SMTP passwords stay unencrypted** - They are encrypted the next time the account's credentials are saved, or when you run the migration tool; until then they remain in cleartext
 
 This means you can enable encryption without downtime, but for full protection you should run the `emailengine encrypt` migration tool to encrypt all existing credentials.
 
@@ -88,7 +100,7 @@ Or generate a random secret:
 echo "EENGINE_SECRET=$(openssl rand -hex 32)" > .env
 ```
 
-**Note:** EmailEngine automatically loads environment variables from `.env` file in the current working directory.
+**Note:** EmailEngine loads environment variables from a `.env` file in the current working directory (through `dotenv`), so this file is read on the next start.
 
 ### 2. Start EmailEngine
 
@@ -96,7 +108,7 @@ echo "EENGINE_SECRET=$(openssl rand -hex 32)" > .env
 emailengine
 ```
 
-That's it! All new accounts will have encrypted secrets automatically.
+Every credential stored from now on is encrypted.
 
 ### Environment Variable Best Practices
 
@@ -187,10 +199,12 @@ The `encrypt` command only needs Redis connectivity. You can run it from your lo
 The tool will:
 
 - Connect to Redis
-- Find all unencrypted secrets
+- Find all unencrypted secrets in every store listed under [What Gets Encrypted](#what-gets-encrypted)
 - Encrypt them with the provided secret
 - Store encrypted values back to Redis
 - Exit
+
+`EENGINE_SECRET_FILE` and `EENGINE_REDIS_FILE` work here the same way as for the server, so the secret can be read from a mounted file rather than passed on the command line.
 
 #### 3. Start EmailEngine
 
@@ -243,21 +257,27 @@ This will:
 - Re-encrypt using new secret
 - Store updated values
 
-The command reports what it rotated, and it covers every store that holds an encrypted value:
+The command reports what it rotated, and it covers every store that holds an encrypted value. Settings holding secrets come first, one line per setting that changed, then one line per account, gateway, app and certificate entry that was rewritten, each store closing with a count:
 
 ```
-Updated 42/42 accounts
-Updated 3/3 SMTP gateways
-Updated 2/2 OAuth2 apps
+smtpServerPassword: Updated setting value
+user123: updated
+user456: updated
+Updated 2/2 accounts
+Gateway sendgrid: updated
+Updated 1/1 SMTP gateways
+OAuth2 App AAABhaBPHscAAAAI: updated
+Updated 1/1 OAuth2 apps
+Certificate entry domain:emailengine.example.com:privateKey: updated
 Updated 1 TLS private keys
 ```
 
-Settings holding secrets are rotated as well, each reported individually.
+The first number in each count is how many records were rewritten, the second how many exist. A record that held nothing to change, because it stores no secret or was already encrypted with the new secret, is not counted, so a lower first number is not an error on its own.
 
-:::warning Check the counts before starting EmailEngine again
-A count lower than the total means something did not re-encrypt, and those values remain readable only with the **old** secret. Whatever owns them breaks on next use, with no self-healing path. Keep the old secret until every count reads `n/n`.
+:::warning Check for "Could not process" lines before starting EmailEngine again
+A value that none of the supplied secrets could decrypt is reported on stderr as `Could not process "imap.auth.pass" for user123. Check decryption secrets.` (the field and record vary) and is left untouched, so it remains readable only with the **old** secret. Whatever owns it breaks on next use, with no self-healing path. Keep the old secret until a run completes without such lines.
 
-Rotating everything requires EmailEngine v2.77.0 or newer. Earlier versions silently skipped SMTP gateways entirely and dropped the `externalAccount` field of OAuth2 apps using workload identity federation, while still reporting success.
+Rotating everything requires EmailEngine v2.77.0 or newer. Earlier versions reported `Updated 0/0 SMTP gateways` because they read the wrong index and never visited a gateway, left the `externalAccount` field of OAuth2 apps using workload identity federation under the old secret, and never touched the TLS private keys, while exiting successfully.
 :::
 
 #### 3. Start EmailEngine with New Secret
@@ -313,6 +333,8 @@ emailengine encrypt \
 
 This decrypts all secrets and stores them in cleartext.
 
+The tool takes the encryption secret from `EENGINE_SECRET` first, including the value a `.env` file in the working directory sets, and falls back to `--service.secret`. Clear `EENGINE_SECRET` from the environment and from `.env` before this run, otherwise the values are re-encrypted with it instead of being written back in cleartext.
+
 #### 3. Start EmailEngine Without Secret
 
 Remove `EENGINE_SECRET` from your EmailEngine configuration, then start:
@@ -333,12 +355,7 @@ openssl rand -base64 32
 pwgen -s 64 1
 ```
 
-**Requirements**:
-
-- Minimum 32 characters
-- Mix of uppercase, lowercase, numbers, symbols
-- Not reused elsewhere
-- Not based on dictionary words
+EmailEngine derives the AES-256 key from the secret with scrypt (Node.js defaults: N=16384, r=8, p=1) and a random 16-byte salt per stored value, and does not enforce a minimum length. Treat a 32-byte random value as the floor, and do not reuse the secret anywhere else.
 
 ### 2. Secret Rotation
 
@@ -456,7 +473,7 @@ The `_FILE` suffix tells EmailEngine to read the secret from the specified file 
 3. **Schedule maintenance**
 
    - Choose low-traffic period
-   - Allow 15-30 minutes for migration
+   - The tool rewrites one Redis hash per account, gateway and app, so the run is short even for large instances, but EmailEngine is stopped for its duration
    - Have team on standby
 
 4. **Execute migration**
@@ -497,9 +514,7 @@ If migration fails:
 
 2. **Restore Redis backup**
 
-   ```bash
-   redis-cli --rdb /backup/redis-backup-20231001.rdb
-   ```
+   `redis-cli --rdb` only takes a snapshot; it cannot load one. Restoring means stopping Redis, replacing its `dump.rdb` with the backup, and starting Redis again. See [Redis Configuration](/docs/configuration/redis) for where that file lives on your install.
 
 3. **Start without encryption**
 
@@ -514,7 +529,7 @@ If migration fails:
 
 - Set `EENGINE_SECRET` before an instance stores any credentials, so nothing is ever written in the clear
 - EmailEngine must be stopped while enabling, rotating, or removing the secret
-- Keep the old secret until a rotation reports `n/n` for every store
+- Keep the old secret until a rotation completes without a `Could not process` line
 - Back up Redis before any migration, and rehearse it against a copy first
 - Store the secret where it survives the loss of the server: without it, every stored credential is unrecoverable
 

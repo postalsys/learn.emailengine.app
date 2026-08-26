@@ -1,7 +1,7 @@
 ---
 title: Working with Attachments
 sidebar_position: 7
-description: "Complete guide to handling email attachments - downloading, uploading, inline images, and file management"
+description: "Listing and downloading email attachments, inline images and cid references, attachment metadata, and attachments in webhook payloads"
 keywords:
   - email attachments
   - download attachments
@@ -15,7 +15,7 @@ import TabItem from '@theme/TabItem';
 
 # Working with Attachments
 
-Attachments are listed with the message and fetched on demand. This page covers [downloading them](/docs/api/get-v-1-account-account-attachment-attachment), the inline images an HTML body references, and the metadata that comes with each one.
+Attachments are listed with the message and fetched on demand. This page covers [downloading them](/docs/api/get-v-1-account-account-attachment-attachment), the inline images an HTML body references, the metadata that comes with each one, and how attachments reach a webhook payload. Attaching files to an outgoing message is covered in [Basic sending](/docs/sending/basic-sending).
 
 ## Understanding Attachments
 
@@ -55,49 +55,55 @@ Each attachment includes:
 }
 ```
 
-**id** - Unique attachment identifier (use for downloading)
-**contentType** - MIME type of the file
-**filename** - Original filename (may be null)
-**encodedSize** - Size in email (base64 encoded, actual file size will be smaller)
-**embedded** - True if the attachment is embedded in HTML content
-**inline** - True if the attachment should be displayed inline rather than as a download
-**encodedInMessage** - True if the attachment is part of an enclosed message/rfc822 attachment rather than the top-level message itself
-**contentId** - Content-ID header value for embedding images in HTML
-**method** - Calendar method (REQUEST, REPLY, CANCEL, etc.) for iCalendar attachments
+| Field | Type | Meaning |
+|-------|------|---------|
+| `id` | string | Attachment identifier. This is the value the download endpoint takes. It encodes the message and the MIME part, so it changes when the message moves; see [EmailEngine IDs Explained](/docs/advanced/ids-explained) |
+| `contentType` | string | MIME type of the part |
+| `filename` | string | Original filename. Absent when the part carries none |
+| `encodedSize` | integer | Size as stored in the message, that is base64-encoded. The decoded file is roughly 75% of this |
+| `embedded` | boolean | Referenced from the HTML body by a `cid:` URL |
+| `inline` | boolean | The part is marked `Content-Disposition: inline` rather than `attachment` |
+| `encodedInMessage` | boolean | The part belongs to an enclosed `message/rfc822` attachment rather than the message itself |
+| `contentId` | string | The `Content-ID` header, angle brackets included, for example `<unique-image-id@localhost>`. `cid:` references in the HTML use the value without the brackets |
+| `method` | string | Calendar method (`REQUEST`, `REPLY`, `CANCEL` and so on) for iCalendar attachments |
+
+Attachment content is never part of a message response. The list carries metadata only; the bytes come from the download endpoint below, or, for webhooks, from the [attachment options](#attachments-in-webhook-payloads).
 
 ## Listing Attachments
 
 ### Get Message with Attachments
 
-Fetch a message to see its attachments:
+Fetch a message to see its attachments. The `getMessage` helper defined here is reused by the later examples on this page:
 
 ```javascript
-async function getMessageAttachments(accountId, messageId) {
+const fs = require('fs');
+
+const BASE_URL = 'https://emailengine.example.com';
+const HEADERS = { Authorization: 'Bearer YOUR_ACCESS_TOKEN' };
+
+async function getMessage(accountId, messageId) {
   const response = await fetch(
-    `https://emailengine.example.com/v1/account/${accountId}/message/${messageId}`,
-    {
-      headers: { 'Authorization': 'Bearer YOUR_ACCESS_TOKEN' }
-    }
+    `${BASE_URL}/v1/account/${accountId}/message/${messageId}`,
+    { headers: HEADERS }
   );
 
-  const message = await response.json();
+  if (!response.ok) {
+    throw new Error(`Fetching the message failed: ${response.status}`);
+  }
 
-  return {
-    messageId: message.id,
-    subject: message.subject,
-    attachments: message.attachments || [],
-    hasAttachments: message.attachments && message.attachments.length > 0
-  };
+  return await response.json();
 }
 
-const info = await getMessageAttachments('example', 'AAAAAQAAAeE');
-console.log(`Message: ${info.subject}`);
-console.log(`Attachments: ${info.attachments.length}`);
+const message = await getMessage('example', 'AAAAAQAAAeE');
+console.log(`Message: ${message.subject}`);
+console.log(`Attachments: ${(message.attachments || []).length}`);
 
-info.attachments.forEach(att => {
-  console.log(`- ${att.filename} (${formatBytes(att.encodedSize)})`);
-});
+for (const att of message.attachments || []) {
+  console.log(`- ${att.filename || '(no filename)'} ${att.contentType}, ${att.encodedSize} bytes encoded`);
+}
 ```
+
+Listings from `GET /v1/account/{account}/messages` and search results carry the same `attachments` array, so a folder can be scanned for attachments without fetching each message.
 
 ### Filter by Attachment Type
 
@@ -154,22 +160,20 @@ curl "https://emailengine.example.com/v1/account/example/attachment/AAAAAgAAAeEB
   --output invoice.pdf
 ```
 
+The response body is the decoded file, streamed as it is read from the mail server. `Content-Type` is the part's MIME type (`application/octet-stream` when the part declares none) and `Content-Disposition` is `attachment` with the original filename, RFC 2231 encoded when it is not plain ASCII. There is no size limit on the endpoint itself; the request timeout (`EENGINE_TIMEOUT`, or the `x-ee-timeout` header) and the mail server decide how long a large download may take. Errors are `404` when the attachment ID does not resolve and `503` when the account's connection is unavailable.
+
 <Tabs groupId="programming-language">
 <TabItem value="nodejs" label="Node.js">
 
 ```javascript
-const fs = require('fs');
-
-async function downloadAttachment(accountId, messageId, attachmentId, outputPath) {
+async function downloadAttachment(accountId, attachmentId, outputPath) {
   const response = await fetch(
-    `https://emailengine.example.com/v1/account/${accountId}/attachment/${attachmentId}`,
-    {
-      headers: { 'Authorization': 'Bearer YOUR_ACCESS_TOKEN' }
-    }
+    `${BASE_URL}/v1/account/${accountId}/attachment/${attachmentId}`,
+    { headers: HEADERS }
   );
 
   if (!response.ok) {
-    throw new Error(`Download failed: ${response.statusText}`);
+    throw new Error(`Download failed: ${response.status}`);
   }
 
   const buffer = Buffer.from(await response.arrayBuffer());
@@ -184,7 +188,6 @@ async function downloadAttachment(accountId, messageId, attachmentId, outputPath
 // Download attachment
 const result = await downloadAttachment(
   'example',
-  'AAAAAQAAAeE',
   'AAAAAgAAAeEBAAAAAQAAAeE',
   './downloads/invoice.pdf'
 );
@@ -198,7 +201,7 @@ console.log(`Downloaded to ${result.path} (${result.size} bytes)`);
 ```python
 import requests
 
-def download_attachment(account_id, message_id, attachment_id, output_path):
+def download_attachment(account_id, attachment_id, output_path):
     url = f"https://emailengine.example.com/v1/account/{account_id}/attachment/{attachment_id}"
     headers = {"Authorization": "Bearer YOUR_ACCESS_TOKEN"}
 
@@ -216,7 +219,6 @@ def download_attachment(account_id, message_id, attachment_id, output_path):
 # Download attachment
 result = download_attachment(
     'example',
-    'AAAAAQAAAeE',
     'AAAAAgAAAeEBAAAAAQAAAeE',
     './downloads/invoice.pdf'
 )
@@ -259,12 +261,7 @@ async function downloadAllAttachments(accountId, messageId, outputDir) {
     const outputPath = `${outputDir}/${safeName}`;
 
     try {
-      const result = await downloadAttachment(
-        accountId,
-        messageId,
-        attachment.id,
-        outputPath
-      );
+      const result = await downloadAttachment(accountId, attachment.id, outputPath);
 
       downloads.push({
         ...result,
@@ -296,16 +293,14 @@ console.log(`Downloaded ${downloads.length} attachments`);
 For processing without saving to disk:
 
 ```javascript
-async function downloadToMemory(accountId, messageId, attachmentId) {
+async function downloadToMemory(accountId, attachmentId) {
   const response = await fetch(
-    `https://emailengine.example.com/v1/account/${accountId}/attachment/${attachmentId}`,
-    {
-      headers: { 'Authorization': 'Bearer YOUR_ACCESS_TOKEN' }
-    }
+    `${BASE_URL}/v1/account/${accountId}/attachment/${attachmentId}`,
+    { headers: HEADERS }
   );
 
   if (!response.ok) {
-    throw new Error(`Download failed: ${response.statusText}`);
+    throw new Error(`Download failed: ${response.status}`);
   }
 
   const buffer = Buffer.from(await response.arrayBuffer());
@@ -319,13 +314,17 @@ async function downloadToMemory(accountId, messageId, attachmentId) {
 }
 
 // Process attachment in memory
-const data = await downloadToMemory('example', 'AAAAAQAAAeE', 'AAAAAgAAAeEBAAAAAQAAAeE');
+const data = await downloadToMemory('example', 'AAAAAgAAAeEBAAAAAQAAAeE');
 
 // Parse PDF, analyze image, etc.
 console.log(`Loaded ${data.size} bytes of ${data.contentType}`);
 ```
 
 ## Working with Inline Images
+
+An HTML body refers to an embedded image as `<img src="cid:unique-image-id@localhost">`, and the matching attachment carries `contentId: "<unique-image-id@localhost>"` and `embedded: true`.
+
+If you are going to display the HTML, let EmailEngine do the substitution: `GET /v1/account/{account}/message/{message}?webSafeHtml=true` returns sanitized HTML with every `cid:` reference replaced by a data URI, and `embedAttachedImages=true` does the substitution without the sanitizing. See [Web-safe HTML](/docs/receiving/web-safe-html). The rest of this section is for the case where you want the images as files.
 
 ### Identify Inline Images
 
@@ -370,7 +369,7 @@ async function downloadInlineImages(accountId, messageId, outputDir) {
     const outputPath = `${outputDir}/${safeName}`;
 
     try {
-      await downloadAttachment(accountId, messageId, image.id, outputPath);
+      await downloadAttachment(accountId, image.id, outputPath);
 
       downloads.push({
         path: outputPath,
@@ -388,30 +387,27 @@ async function downloadInlineImages(accountId, messageId, outputDir) {
 
 ### Replace CID References in HTML
 
-Convert HTML with inline images to use local files:
+Convert HTML with inline images to use local files. The `contentId` value includes the angle brackets and the `cid:` reference does not, so strip them before matching:
 
 ```javascript
-async function convertHtmlWithInlineImages(message, imageDir) {
-  // message.text.html is a string containing the HTML content
-  // (only present when the message was fetched with ?textType=* or ?textType=html)
+function convertHtmlWithInlineImages(message, imageDir) {
+  // message.text.html is only present when the message was fetched
+  // with ?textType=* or ?textType=html
   let html = message.text && message.text.html ? message.text.html : '';
 
   if (!html) return html;
 
-  const inlineImages = getInlineImages(message);
+  for (const image of getInlineImages(message)) {
+    if (!image.contentId) continue;
 
-  for (const image of inlineImages) {
-    if (image.contentId) {
-      // Find cid: references
-      const cidPattern = new RegExp(`cid:${image.contentId}`, 'gi');
+    const cid = image.contentId.replace(/^<|>$/g, '');
+    const escaped = cid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const cidPattern = new RegExp(`cid:${escaped}`, 'gi');
 
-      // Generate filename
-      const ext = image.contentType.split('/')[1] || 'bin';
-      const filename = `inline-${image.contentId}.${ext}`;
+    const ext = image.contentType.split('/')[1] || 'bin';
+    const filename = `inline-${cid}.${ext}`.replace(/[^a-zA-Z0-9.-]/g, '_');
 
-      // Replace with local path
-      html = html.replace(cidPattern, `${imageDir}/${filename}`);
-    }
+    html = html.replace(cidPattern, `${imageDir}/${filename}`);
   }
 
   return html;
@@ -420,12 +416,12 @@ async function convertHtmlWithInlineImages(message, imageDir) {
 // Usage
 // Fetch the message with ?textType=* so text.html is included in the response
 const message = await fetch(
-  `https://emailengine.example.com/v1/account/example/message/AAAAAQAAAeE?textType=*`,
-  { headers: { 'Authorization': 'Bearer YOUR_ACCESS_TOKEN' } }
+  `${BASE_URL}/v1/account/example/message/AAAAAQAAAeE?textType=*`,
+  { headers: HEADERS }
 ).then(r => r.json());
 
 await downloadInlineImages('example', message.id, './images');
-const convertedHtml = await convertHtmlWithInlineImages(message, './images');
+const convertedHtml = convertHtmlWithInlineImages(message, './images');
 
 // Save HTML file
 fs.writeFileSync('./message.html', convertedHtml);
@@ -469,7 +465,7 @@ async function saveAttachmentsByType(accountId, messageId, baseDir) {
     const safeName = filename.replace(/[^a-zA-Z0-9.-]/g, '_');
     const outputPath = `${outputDir}/${safeName}`;
 
-    await downloadAttachment(accountId, messageId, attachment.id, outputPath);
+    await downloadAttachment(accountId, attachment.id, outputPath);
     console.log(`Saved to ${outputPath}`);
   }
 }
@@ -480,66 +476,71 @@ await saveAttachmentsByType('example', 'AAAAAQAAAeE', './organized');
 
 ### Process Large Attachments
 
-Handle large attachments with streaming:
+Handle large attachments with streaming instead of buffering the whole file. `fetch` in Node.js returns a web `ReadableStream`, so convert it with `Readable.fromWeb` before piping it into a file:
 
 ```javascript
-async function downloadLargeAttachment(accountId, messageId, attachmentId, outputPath) {
+const { Readable } = require('stream');
+const { pipeline } = require('stream/promises');
+
+async function downloadLargeAttachment(accountId, attachmentId, outputPath) {
   const response = await fetch(
-    `https://emailengine.example.com/v1/account/${accountId}/attachment/${attachmentId}`,
-    {
-      headers: { 'Authorization': 'Bearer YOUR_ACCESS_TOKEN' }
-    }
+    `${BASE_URL}/v1/account/${accountId}/attachment/${attachmentId}`,
+    { headers: HEADERS }
   );
 
   if (!response.ok) {
-    throw new Error(`Download failed: ${response.statusText}`);
+    throw new Error(`Download failed: ${response.status}`);
   }
 
-  // Stream to file
-  const fileStream = fs.createWriteStream(outputPath);
+  await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(outputPath));
 
-  return new Promise((resolve, reject) => {
-    response.body.pipe(fileStream);
-
-    response.body.on('error', reject);
-    fileStream.on('finish', () => {
-      resolve({
-        path: outputPath,
-        size: fs.statSync(outputPath).size
-      });
-    });
-    fileStream.on('error', reject);
-  });
+  return {
+    path: outputPath,
+    size: fs.statSync(outputPath).size
+  };
 }
 ```
 
 ### Extract Attachment Metadata
 
+The listing endpoint already includes the `attachments` array for every message, so this needs one request per page rather than one per message:
+
 ```javascript
 async function extractAttachmentMetadata(accountId, folderPath) {
-  const messages = await listAllMessages(accountId, folderPath);
-
   const metadata = [];
+  const pageSize = 100;
 
-  for (const message of messages) {
-    if (!message.attachments || !message.attachments.length) continue;
+  for (let page = 0; ; page++) {
+    const url = new URL(`${BASE_URL}/v1/account/${accountId}/messages`);
+    url.searchParams.set('path', folderPath);
+    url.searchParams.set('page', page);
+    url.searchParams.set('pageSize', pageSize);
 
-    const fullMessage = await getMessage(accountId, message.id);
-
-    for (const attachment of fullMessage.attachments || []) {
-      if (attachment.embedded) continue;
-
-      metadata.push({
-        messageId: message.id,
-        messageSubject: message.subject,
-        messageDate: message.date,
-        messageFrom: message.from.address,
-        attachmentId: attachment.id,
-        filename: attachment.filename,
-        contentType: attachment.contentType,
-        encodedSize: attachment.encodedSize
-      });
+    const response = await fetch(url, { headers: HEADERS });
+    if (!response.ok) {
+      throw new Error(`Listing failed: ${response.status}`);
     }
+
+    const listing = await response.json();
+
+    for (const message of listing.messages) {
+      for (const attachment of message.attachments || []) {
+        if (attachment.embedded) continue;
+
+        metadata.push({
+          messageId: message.id,
+          messageSubject: message.subject,
+          messageDate: message.date,
+          messageFrom: message.from && message.from.address,
+          attachmentId: attachment.id,
+          filename: attachment.filename,
+          contentType: attachment.contentType,
+          encodedSize: attachment.encodedSize
+        });
+      }
+    }
+
+    if (page + 1 >= listing.pages) break;
   }
 
   return metadata;
@@ -566,20 +567,20 @@ fs.writeFileSync('./attachments.csv', csv);
 
 ### Virus Scanning
 
-Scan attachments before downloading:
+Scan a downloaded file before keeping it. This example uses the `clamscan` package against a local ClamAV installation:
 
 ```javascript
-const ClamScan = require('clamscan');
+const NodeClam = require('clamscan');
 
-async function downloadWithVirusScan(accountId, messageId, attachmentId, outputPath) {
+async function downloadWithVirusScan(accountId, attachmentId, outputPath) {
   // Download to temporary location
   const tempPath = `${outputPath}.tmp`;
 
-  await downloadAttachment(accountId, messageId, attachmentId, tempPath);
+  await downloadAttachment(accountId, attachmentId, tempPath);
 
   // Scan with ClamAV
-  const clamscan = await new ClamScan().init();
-  const { isInfected, viruses } = await clamscan.isInfected(tempPath);
+  const clamscan = await new NodeClam().init();
+  const { isInfected, viruses } = await clamscan.scanFile(tempPath);
 
   if (isInfected) {
     // Delete infected file
@@ -594,26 +595,28 @@ async function downloadWithVirusScan(accountId, messageId, attachmentId, outputP
 }
 
 try {
-  await downloadWithVirusScan('example', 'AAAAAQAAAeE', 'AAAAAgAAAeEBAAAAAQAAAeE', './file.pdf');
+  await downloadWithVirusScan('example', 'AAAAAgAAAeEBAAAAAQAAAeE', './file.pdf');
   console.log('File is safe');
 } catch (err) {
   console.error('Security issue:', err.message);
 }
 ```
 
-## Handling Attachment Size Limits
+## Handling Large Attachments
+
+EmailEngine does not cap attachment downloads. If your own pipeline has a limit, `encodedSize` is known before any download starts, so check it first.
 
 ### Check Size Before Downloading
 
 ```javascript
-async function downloadIfSmallEnough(accountId, messageId, attachment, maxSize, outputPath) {
-  // Note: encodedSize is the base64 encoded size; actual file will be smaller
+async function downloadIfSmallEnough(accountId, attachment, maxSize, outputPath) {
+  // encodedSize is the base64-encoded size; the decoded file is roughly 75% of it
   if (attachment.encodedSize > maxSize) {
     console.log(`Skipping ${attachment.filename}: too large (${attachment.encodedSize} > ${maxSize})`);
     return null;
   }
 
-  return await downloadAttachment(accountId, messageId, attachment.id, outputPath);
+  return await downloadAttachment(accountId, attachment.id, outputPath);
 }
 
 // Download only attachments under 10MB
@@ -624,64 +627,69 @@ const message = await getMessage('example', 'AAAAAQAAAeE');
 for (const attachment of message.attachments || []) {
   await downloadIfSmallEnough(
     'example',
-    message.id,
     attachment,
     MAX_SIZE,
-    `./downloads/${attachment.filename}`
+    `./downloads/${attachment.filename || attachment.id}`
   );
 }
 ```
 
 ### Download with Progress
 
-Track download progress for large files:
+Track download progress for large files. The response is streamed, so it carries no `Content-Length`; use the decoded size estimated from `encodedSize` as the total:
 
 ```javascript
-async function downloadWithProgress(accountId, messageId, attachmentId, outputPath, onProgress) {
+async function downloadWithProgress(accountId, attachment, outputPath, onProgress) {
   const response = await fetch(
-    `https://emailengine.example.com/v1/account/${accountId}/attachment/${attachmentId}`,
-    {
-      headers: { 'Authorization': 'Bearer YOUR_ACCESS_TOKEN' }
-    }
+    `${BASE_URL}/v1/account/${accountId}/attachment/${attachment.id}`,
+    { headers: HEADERS }
   );
 
   if (!response.ok) {
-    throw new Error(`Download failed: ${response.statusText}`);
+    throw new Error(`Download failed: ${response.status}`);
   }
 
-  const totalSize = parseInt(response.headers.get('content-length'), 10);
+  const estimatedTotal = Math.round(attachment.encodedSize * 0.75);
   let downloadedSize = 0;
 
   const fileStream = fs.createWriteStream(outputPath);
 
-  response.body.on('data', (chunk) => {
+  for await (const chunk of Readable.fromWeb(response.body)) {
     downloadedSize += chunk.length;
-    const progress = (downloadedSize / totalSize) * 100;
-
     if (onProgress) {
-      onProgress(downloadedSize, totalSize, progress);
+      onProgress(downloadedSize, estimatedTotal);
     }
-  });
+    if (!fileStream.write(chunk)) {
+      await new Promise(resolve => fileStream.once('drain', resolve));
+    }
+  }
 
-  return new Promise((resolve, reject) => {
-    response.body.pipe(fileStream);
-    response.body.on('error', reject);
-    fileStream.on('finish', () => resolve({ path: outputPath, size: downloadedSize }));
-    fileStream.on('error', reject);
-  });
+  await new Promise((resolve, reject) => fileStream.end(err => (err ? reject(err) : resolve())));
+
+  return { path: outputPath, size: downloadedSize };
 }
 
 // Usage
-await downloadWithProgress(
-  'example',
-  'AAAAAQAAAeE',
-  'AAAAAgAAAeEBAAAAAQAAAeE',
-  './large-file.zip',
-  (downloaded, total, progress) => {
-    console.log(`Progress: ${progress.toFixed(1)}% (${downloaded}/${total})`);
-  }
-);
+const message = await getMessage('example', 'AAAAAQAAAeE');
+const largest = message.attachments.reduce((a, b) => (b.encodedSize > a.encodedSize ? b : a));
+
+await downloadWithProgress('example', largest, './large-file.zip', (downloaded, total) => {
+  console.log(`Downloaded ${downloaded} of about ${total} bytes`);
+});
 ```
+
+## Attachments in Webhook Payloads
+
+The `messageNew` webhook carries the same `attachments` array as the API, metadata only, unless you turn content inclusion on:
+
+| Setting | Default | Effect |
+|---------|---------|--------|
+| `notifyAttachments` | `false` | Add a base64 `content` field to every attachment in the payload |
+| `notifyAttachmentSize` | unset | With `notifyAttachments` on, skip the content of any attachment whose `encodedSize` is above this many bytes. Unset means no limit |
+
+Inline images are a separate rule: when the payload includes the HTML body, every attachment the HTML references by `cid:` gets its `content` filled in as well, up to 2 MB encoded per attachment, whether or not `notifyAttachments` is set. That is what lets a webhook consumer render the body without a second request.
+
+Anything not included stays reachable by `id` through the download endpoint. The [messageNew reference](/docs/webhooks/messagenew#attachment-options) documents the payload and the related text options.
 
 ## Utility Functions
 
@@ -725,5 +733,6 @@ function getFileExtension(contentType) {
 
 - [Message operations](/docs/receiving/message-operations) - Where the attachment list comes from
 - [Web-safe HTML](/docs/receiving/web-safe-html) - Inline images, and when to leave them out
+- [messageNew webhook](/docs/webhooks/messagenew#attachment-options) - Attachment content in webhook payloads
 - [Basic sending](/docs/sending/basic-sending) - Attaching files to an outgoing message
 - [Attachment API](/docs/api/get-v-1-account-account-attachment-attachment) - The endpoint reference

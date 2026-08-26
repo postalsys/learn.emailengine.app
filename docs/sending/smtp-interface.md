@@ -9,34 +9,32 @@ import TabItem from '@theme/TabItem';
 
 # SMTP Server
 
-EmailEngine provides an SMTP interface that allows you to send emails using standard SMTP protocol instead of the REST API. EmailEngine acts as an SMTP proxy - it accepts messages via SMTP and routes them through the appropriate email account. This is useful for legacy applications or when you need to integrate with tools that only support SMTP.
+EmailEngine includes an SMTP submission server. A client connects to it with the standard SMTP protocol, authenticates as one of the registered accounts, and hands over a message; EmailEngine queues that message and delivers it through the account's own SMTP server (or an [SMTP gateway](./transactional-service.md)), exactly as if it had arrived through the [submit API](./basic-sending.md). The server announces itself as `EmailEngine MSA`.
 
-## Why Use the SMTP Server
-
-The SMTP interface is beneficial when:
-
-- **Legacy applications**: Integration with older systems that only support SMTP
-- **Email clients**: Using desktop or mobile email clients
-- **Third-party tools**: Tools that require SMTP configuration
-- **Standard libraries**: Using standard SMTP libraries in your code
-- **Drop-in replacement**: Replacing an existing SMTP server without code changes
+This is the way in for tools that speak SMTP and nothing else: desktop mail clients, legacy applications, and libraries that take an SMTP host and port.
 
 ## How It Works
 
-When the SMTP interface is enabled:
+1. EmailEngine listens on the configured port (default 2525, on `127.0.0.1` unless changed)
+2. The client authenticates with an account ID and either the global SMTP password or an access token
+3. The client submits the message
+4. EmailEngine strips its own `X-EE-*` control headers, derives the SMTP envelope, and adds the message to the outbox queue
+5. The submit worker delivers it through the account's SMTP server, with the same retries and webhooks as an API submission
 
-1. EmailEngine listens on an SMTP port (default: 2525)
-2. Clients connect using SMTP protocol
-3. Authentication determines which account to use
-4. EmailEngine routes the message to the appropriate account's SMTP server
-5. Messages are queued just like with the Submit API
-6. Delivery status tracked via webhooks
+The SMTP reply to a successful `DATA` command names the queue entry, for example `250 Message queued for delivery as 1869c5692565f756b33 (2026-08-26T09:12:23.000Z)`. The queue ID is the one `GET /v1/outbox/{queueId}` takes.
 
 ## Enabling the SMTP Server
 
-### Via Settings API (Recommended)
+### Via Web Interface
 
-Configure the SMTP interface using the Settings API:
+Open **Configuration > SMTP Server** in the admin interface, tick **Enable SMTP Server**, and save. Saving from this page restarts the SMTP worker when the enabled flag, port, listen address, or TLS setting changed, so the new values apply without restarting EmailEngine.
+
+![SMTP Server configuration page](/img/screenshots/smtp-interface-config.png)
+_Enable the SMTP server and set the listen address, port and authentication options_
+
+### Via Settings API
+
+The same keys are settable through the [Settings API](/docs/api/post-v-1-settings):
 
 ```bash
 curl -XPOST "https://emailengine.example.com/v1/settings" \
@@ -51,33 +49,34 @@ curl -XPOST "https://emailengine.example.com/v1/settings" \
   }'
 ```
 
-### Via Web Interface
-
-Navigate to **Configuration > SMTP Server** in the EmailEngine admin panel to configure the settings.
-
-![SMTP Server configuration page](/img/screenshots/smtp-interface-config.png)
-_Enable the SMTP server and set the listen address, port and authentication options_
+The Settings API stores the values but does not restart the SMTP worker. After changing `smtpServerEnabled`, `smtpServerPort`, `smtpServerHost`, or `smtpServerTLSEnabled` through the API, restart EmailEngine (or save the admin page once). The authentication settings and the PROXY protocol flag are read on every new connection, so those take effect immediately either way.
 
 ### Configuration Options
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| `smtpServerEnabled` | Enable/disable SMTP interface | `false` |
-| `smtpServerPort` | Port to listen on | `2525` |
-| `smtpServerHost` | Host/interface to bind | `0.0.0.0` |
-| `smtpServerAuthEnabled` | Require authentication | `false` |
-| `smtpServerPassword` | Optional global password | - |
-| `smtpServerTLSEnabled` | Enable TLS (implicit) | `false` |
+| `smtpServerEnabled` | Start the SMTP server | `false` |
+| `smtpServerPort` | TCP port to listen on | `2525` |
+| `smtpServerHost` | IP address to bind to. `0.0.0.0` or empty accepts connections on every interface | `127.0.0.1` |
+| `smtpServerAuthEnabled` | Require `AUTH` before accepting a message | `true` |
+| `smtpServerPassword` | Global password accepted for any account ID. Leave unset to accept access tokens only | not set |
+| `smtpServerTLSEnabled` | Serve implicit TLS instead of plaintext | `false` |
+| `smtpServerProxy` | Expect the PROXY protocol header, for HAProxy `send-proxy` and similar | `false` |
 
-### Restart EmailEngine
-
-After changing configuration, restart EmailEngine for changes to take effect.
+On the first start, `EENGINE_SMTP_ENABLED`, `EENGINE_SMTP_PORT`, `EENGINE_SMTP_HOST`, `EENGINE_SMTP_SECRET`, and `EENGINE_SMTP_PROXY` seed these settings when they have no stored value yet. They are documented under [environment variables](/docs/configuration/environment-variables); once a value is stored, the setting wins.
 
 ## Authentication
 
-### Using Account ID and API Token
+### Username and Password
 
-Authenticate with the account ID as the username and an [API token](/docs/api-reference/access-tokens) as the password. The message is then sent through that account, using whatever transport it is configured with.
+The SMTP username is always the **account ID**, the identifier given when the account was registered, not the mailbox address. An email address works as the username only when the account ID happens to be that string.
+
+The password is one of:
+
+- The global password set in `smtpServerPassword`, which unlocks any account ID
+- An [access token](/docs/api-reference/access-tokens) that carries the `smtp` scope. A token bound to an account is accepted for that account only; a token with restricted permissions must include the SMTP surface
+
+A token without the `smtp` scope is refused with `Access denied, invalid scope`.
 
 | SMTP setting | Value |
 |--------------|-------|
@@ -85,13 +84,13 @@ Authenticate with the account ID as the username and an [API token](/docs/api-re
 | Port | `2525` by default, set by `smtpServerPort` |
 | Encryption | None, unless you [enable TLS](#enabling-tls) |
 | Username | The account ID |
-| Password | An EmailEngine API token |
+| Password | The global SMTP password, or an access token with the `smtp` scope |
 
-:::warning The SMTP username is always the account ID
-EmailEngine matches the SMTP `AUTH` username against the **account ID** - the identifier you assigned when registering the account, not the mailbox email address. An email address only works as the username if the account ID happens to be that exact string. Always authenticate with the account ID.
-:::
+`PLAIN` and `LOGIN` are the supported `AUTH` mechanisms. Without TLS the server still allows them over the plaintext connection, so put a TLS-terminating proxy in front of it or enable TLS when the port is reachable from outside the host.
 
-See [Programming Languages](#programming-languages) below for a worked example in Node.js, Python, PHP, or Ruby.
+### Without Authentication
+
+When `smtpServerAuthEnabled` is off, the server does not offer `AUTH`, and the message itself has to say which account sends it: set an `X-EE-Account` header to the account ID. A message without that header is refused with `451 Sender account ID not provided, can not send mail`. The header is removed before delivery.
 
 ## Configuration Examples
 
@@ -100,7 +99,7 @@ See [Programming Languages](#programming-languages) below for a worked example i
 <Tabs groupId="mail-client">
 <TabItem value="thunderbird" label="Thunderbird" default>
 
-1. Go to **Account Settings → Outgoing Server (SMTP)**
+1. Go to **Account Settings > Outgoing Server (SMTP)**
 2. Click **Add**
 3. Configure:
    - **Server Name**: emailengine.example.com
@@ -108,26 +107,26 @@ See [Programming Languages](#programming-languages) below for a worked example i
    - **Connection security**: None (or SSL/TLS if TLS is enabled on the server)
    - **Authentication method**: Normal password
    - **Username**: Account ID (the identifier assigned when registering the account)
-   - **Password**: API token
+   - **Password**: Access token with the `smtp` scope, or the global SMTP password
 
 </TabItem>
 <TabItem value="apple-mail" label="Apple Mail">
 
-1. Go to **Mail → Preferences → Accounts**
+1. Go to **Mail > Settings > Accounts**
 2. Select your account
 3. Go to **Server Settings**
 4. Configure **Outgoing Mail Server**:
    - **Host Name**: emailengine.example.com
    - **Port**: 2525
    - **User Name**: Account ID (the identifier assigned when registering the account)
-   - **Password**: API token
+   - **Password**: Access token with the `smtp` scope, or the global SMTP password
 
 </TabItem>
 </Tabs>
 
 ### Programming Languages
 
-Point any SMTP client at the server. The credentials are the same in every case: the account ID as the user name and an API token as the password.
+Point any SMTP client at the server. The credentials are the same in every case: the account ID as the user name and an access token with the `smtp` scope as the password.
 
 <Tabs groupId="language">
 <TabItem value="nodejs" label="Node.js" default>
@@ -293,11 +292,11 @@ mail.deliver!
 </TabItem>
 </Tabs>
 
-## TLS/SSL Support
+## TLS Support
 
 ### Enabling TLS
 
-Enable TLS for encrypted connections using the Settings API or web interface:
+Set `smtpServerTLSEnabled` on the admin page or through the Settings API:
 
 ```bash
 curl -XPOST "https://emailengine.example.com/v1/settings" \
@@ -308,43 +307,59 @@ curl -XPOST "https://emailengine.example.com/v1/settings" \
   }'
 ```
 
-When TLS is enabled, the SMTP server uses implicit TLS (clients must connect with SSL from the start).
+TLS is implicit: the client opens a TLS connection from the first byte, the way port 465 works. `STARTTLS` is not offered in either mode.
 
-### Certificate Configuration
+### Certificate
 
-Provide custom TLS certificate using environment variables:
+With TLS enabled, EmailEngine uses the certificate it provisions for the hostname of `serviceUrl`, the same one the hosted pages use. To supply your own, set the PEM content (not a file path) in the environment before starting EmailEngine:
 
 ```bash
-EENGINE_SMTP_TLS_KEY=/path/to/private.key
-EENGINE_SMTP_TLS_CERT=/path/to/certificate.crt
+EENGINE_SMTP_TLS_KEY="$(cat /path/to/private.key)"
+EENGINE_SMTP_TLS_CERT="$(cat /path/to/certificate.crt)"
 ```
 
-Additional TLS options available with the `EENGINE_SMTP_TLS_` prefix:
-- `EENGINE_SMTP_TLS_CA` - CA certificate
-- `EENGINE_SMTP_TLS_CIPHERS` - TLS ciphers
-- `EENGINE_SMTP_TLS_MIN_VERSION` - Minimum TLS version
-- `EENGINE_SMTP_TLS_MAX_VERSION` - Maximum TLS version
+Every variable with the `EENGINE_SMTP_TLS_` prefix maps onto the Node.js TLS option of the same name:
+
+| Variable | TLS option |
+|----------|------------|
+| `EENGINE_SMTP_TLS_KEY` | `key`, the private key in PEM |
+| `EENGINE_SMTP_TLS_CERT` | `cert`, the certificate chain in PEM |
+| `EENGINE_SMTP_TLS_CA` | `ca` |
+| `EENGINE_SMTP_TLS_DHPARAM` | `dhparam` |
+| `EENGINE_SMTP_TLS_PASSPHRASE` | `passphrase` for an encrypted key |
+| `EENGINE_SMTP_TLS_CIPHERS` | `ciphers` |
+| `EENGINE_SMTP_TLS_ECDH_CURVE` | `ecdhCurve` |
+| `EENGINE_SMTP_TLS_MIN_VERSION` | `minVersion`, for example `TLSv1.2` |
+| `EENGINE_SMTP_TLS_MAX_VERSION` | `maxVersion` |
+| `EENGINE_SMTP_TLS_REJECT_UNAUTHORIZED` | `rejectUnauthorized`, a boolean |
+| `EENGINE_SMTP_TLS_REQUEST_CERT` | `requestCert`, a boolean |
 
 ## Features and Limitations
 
 ### What Works
 
-- Standard SMTP submission, with PLAIN and LOGIN authentication
-- TLS, implicit when the server is configured for it
+- Standard SMTP submission, with `PLAIN` and `LOGIN` authentication
+- Implicit TLS when the server is configured for it
 - Multiple recipients across To, Cc, and Bcc
 - Attachments, custom headers, HTML and plain text
 - The same outbox queue, retries, and webhooks as an API submission
 
+Messages larger than 25 MB are refused with `552 Message exceeds fixed maximum message size`. `EENGINE_MAX_SMTP_MESSAGE_SIZE` changes the limit.
+
 ### EmailEngine Options as Headers
 
-Four submit-API options have header equivalents, because SMTP has no other way to pass them. EmailEngine strips each one from the message before delivering it:
+Some submit-API options have header equivalents, because SMTP has no other way to pass them. EmailEngine reads each one and removes it from the message before delivery, so none of them reaches the recipient:
 
-| Header | Equivalent field | Value |
-|--------|------------------|-------|
-| `X-EE-Send-At` | `sendAt` | An ISO 8601 timestamp or a millisecond epoch. The `Date` header is rewritten to match |
+| Header | Equivalent | Value |
+|--------|------------|-------|
+| `X-EE-Account` | The account path parameter | The account ID. Read only when authentication is disabled; with authentication on, the account is the one that logged in |
+| `X-EE-Idempotency-Key` | The `Idempotency-Key` request header | Any string of up to 1024 characters. A repeated key returns the earlier queue entry instead of queueing a second copy |
+| `X-EE-Send-At` | `sendAt` | An ISO 8601 timestamp or a millisecond epoch. For a time in the future, the `Date` header is rewritten to match |
 | `X-EE-Delivery-Attempts` | `deliveryAttempts` | A number |
 | `X-EE-Gateway` | `gateway` | A gateway ID |
-| `X-EE-Tracking-Enabled` | `trackOpens` and `trackClicks` together | A boolean |
+| `X-EE-Tracking-Enabled` | `trackOpens` and `trackClicks` together | `true`, `yes`, or `1` to enable; anything else disables |
+
+`X-EE-Idempotency-Key` was added in v2.52.0.
 
 ### What Is Not Available
 
@@ -358,12 +373,12 @@ For those, use the [REST API](./basic-sending.md).
 
 ## Monitoring and Webhooks
 
-Messages sent via the SMTP interface are treated the same as messages sent via REST API:
+Messages sent via the SMTP interface are treated the same as messages sent via the REST API:
 
-- Queued in the outbox queue
+- Queued in the outbox queue, with `source` set to `smtp` in the outbox entry
 - Automatic retry logic
 - Webhook notifications (`messageSent`, `messageDeliveryError`, `messageFailed`)
-- Visible in Bull Board queue UI
+- Visible in Bull Board under **System > Queues**
 
 Query queue status (the outbox is a single global queue, not scoped per account):
 
@@ -385,7 +400,7 @@ curl "https://emailengine.example.com/v1/outbox" \
 ### Use REST API When:
 
 - Building new applications
-- Need advanced features (mail merge, templates, scheduled sending)
+- Need advanced features (mail merge, templates, replies and forwards)
 - Need programmatic control
 - Want detailed delivery tracking
 
@@ -395,3 +410,4 @@ curl "https://emailengine.example.com/v1/outbox" \
 - [Transactional email](/docs/sending/transactional-service) - Using the SMTP server as a relay for an existing application
 - [Outbox queue](/docs/sending/outbox-queue) - Where an accepted message goes next
 - [Access tokens](/docs/api-reference/access-tokens) - Minting the token used as the SMTP password
+- [Environment variables](/docs/configuration/environment-variables) - The `EENGINE_SMTP_*` variables that seed these settings

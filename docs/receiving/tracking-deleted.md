@@ -1,7 +1,7 @@
 ---
 title: Tracking Deleted Messages
 sidebar_position: 9
-description: "How EmailEngine detects and tracks message deletions across IMAP accounts"
+description: "How EmailEngine detects message deletions on IMAP, Gmail API and Microsoft Graph accounts, and how to tell a deletion from a move"
 keywords:
   - deleted messages
   - IMAP EXPUNGE
@@ -12,79 +12,74 @@ keywords:
 
 # Tracking Deleted Messages
 
-Tracking deleted messages on an IMAP account is one of the more challenging aspects of email synchronization. While it's straightforward to detect new messages, identifying deletions requires careful handling of IMAP's complexity.
+Detecting that a message is gone is harder than detecting that one arrived. A new message announces itself; a deleted one leaves a gap that has to be noticed by comparing what the server has now with what EmailEngine saw before. This page explains how EmailEngine does that on each backend, what the `messageDeleted` webhook carries, and how to tell a deletion from a move.
 
 ## Why Deletion Tracking is Challenging
 
 **IMAP Connection Limitations**
-- IDLE/NOOP only monitors one folder at a time
-- Connection limits prevent opening one connection per folder
-- Gmail heavily limits simultaneous connections (3-15 connections typically)
+- An IMAP connection can watch one selected folder at a time with IDLE or NOOP
+- Providers cap the number of simultaneous connections per account, so one connection per folder is not an option
+- Changes in every other folder can only be found by asking
 
 **Reconnection Issues**
 - Network interruptions cause disconnects
-- Forced logouts lose notification state
-- No notifications for events while disconnected
+- Forced logouts lose the notification state
+- Nothing is announced for events while disconnected
 
 **Sequence Number Complexity**
-- EXPUNGE notifications use sequence numbers, not UIDs
-- Sequence numbers change as messages are deleted
-- Must maintain accurate sequence-to-UID mapping
+- EXPUNGE responses use sequence numbers, not UIDs
+- Sequence numbers shift as messages are removed
+- An accurate sequence-to-UID mapping has to be maintained to know which message went
 
 ## How EmailEngine Tracks Deletions
 
-EmailEngine solves these challenges by:
+### IMAP Accounts
 
-1. **Monitoring folder state** via UIDNEXT and message counts
-2. **Using MODSEQ** when available (CONDSTORE extension)
-3. **Maintaining UID sequences** for accurate tracking
-4. **Sending webhooks** when deletions are detected
+EmailEngine keeps an index of every folder it syncs: the UID, flags and a few headers of each message, plus the folder's UIDVALIDITY, UIDNEXT, message count and, where the server supports CONDSTORE, HIGHESTMODSEQ. Deletions are found in two ways.
 
-### Detection Methods
+**In the watched folder, as they happen.** The folder EmailEngine keeps selected (INBOX, or All Mail on Gmail) reports removals immediately as untagged `EXPUNGE` responses, or `VANISHED` responses when the server supports QRESYNC. EmailEngine resolves the sequence number or UID against its index, removes the entry, and emits `messageDeleted`.
 
-**Method 1: UIDNEXT + Message Count**
-
-The UIDNEXT value predicts the next message UID (usually highest UID + 1). By tracking both UIDNEXT and message count:
+**In every folder, on the resync cycle.** Every `imap.resyncDelay` seconds (default 900) EmailEngine runs `STATUS` on each folder and compares the result with the stored values:
 
 ```
-Before: messages=100, UIDNEXT=150
-After:  messages=95, UIDNEXT=150
+Before: messages=100, UIDNEXT=150, HIGHESTMODSEQ=12345
+After:  messages=95,  UIDNEXT=150, HIGHESTMODSEQ=12351
 
-Conclusion: 5 messages were deleted
+Conclusion: the folder changed, and since UIDNEXT did not move,
+nothing was added - 5 messages were removed
 ```
 
-If both values are unchanged, no messages were deleted.
-
-**Method 2: MODSEQ (if supported)**
-
-The MODSEQ value increments whenever folder content changes:
+If the counts, UIDNEXT and HIGHESTMODSEQ all match the stored values, nothing changed and the folder is skipped. Otherwise the folder is opened and synced. When the drift can be explained by additions alone, a partial sync fetches only the new messages. When it cannot, a full sync walks the server's message list and compares it against the index:
 
 ```
-Before: MODSEQ=12345
-After:  MODSEQ=12345
-
-Conclusion: No changes (no deletions)
-```
-
-Note: MODSEQ changes for any modification (flags, deletions, additions), so it's more sensitive than UIDNEXT.
-
-**Method 3: UID Sequence Comparison**
-
-Compare the list of message UIDs before and after:
-
-```
-Before: [100, 101, 102, 103, 104, 105]
-After:  [100, 102, 104, 105, 106]
+Index:  [100, 101, 102, 103, 104, 105]
+Server: [100, 102, 104, 105, 106]
 
 Deleted: [101, 103]
-Added: [106]
+Added:   [106]
 ```
+
+Each UID missing from the server produces a `messageDeleted` event. On a server without CONDSTORE, a full sync also runs at least every 30 minutes for a folder whose counts did not change, because such a server cannot report flag changes any other way.
+
+**UIDVALIDITY change.** If a folder's UIDVALIDITY differs from the stored one, the server has invalidated every UID EmailEngine knows. The index is rebuilt silently and a single [`mailboxReset`](/docs/webhooks/mailboxreset) event is emitted instead of a `messageDeleted` per message.
+
+:::warning Fast indexer
+Deletion tracking needs the full indexer, which is the default. An account set to the fast indexer keeps no per-message index, ignores EXPUNGE responses, and never emits `messageDeleted`. See [IMAP indexers](/docs/accounts/imap-indexers).
+:::
+
+### Gmail API Accounts
+
+EmailEngine reads the account's history log, which lists each message that was permanently removed. Moving a message to Trash, or between labels, is a label change in Gmail and arrives as [`messageUpdated`](/docs/webhooks/messageupdated) with the label difference; `messageDeleted` is emitted only when the message is gone from the account.
+
+### Microsoft Graph Accounts
+
+Graph sends a `deleted` change notification for a message that was removed from a folder. Before emitting `messageDeleted`, EmailEngine checks whether the message still exists in the mailbox. A message that was moved rather than deleted still exists, so no `messageDeleted` is sent for it; the destination folder reports it as a new message instead.
 
 ## Deletion Webhooks
 
 ### messageDeleted Event
 
-When EmailEngine detects a deleted message, it sends a [`messageDeleted` webhook](/docs/reference/webhook-events):
+When EmailEngine detects a deleted message, it sends a [`messageDeleted` webhook](/docs/webhooks/messagedeleted):
 
 ```json
 {
@@ -92,6 +87,7 @@ When EmailEngine detects a deleted message, it sends a [`messageDeleted` webhook
   "account": "example",
   "date": "2025-01-15T10:30:00.000Z",
   "path": "INBOX",
+  "specialUse": "\\Inbox",
   "event": "messageDeleted",
   "data": {
     "id": "AAAAAQAAAeE",
@@ -101,16 +97,22 @@ When EmailEngine detects a deleted message, it sends a [`messageDeleted` webhook
 ```
 
 **Important Fields:**
-- `path` - Folder where message was deleted (at root level, not inside data)
-- `data.id` - EmailEngine's message ID (now deleted)
-- `data.uid` - IMAP UID of deleted message
+- `path` - Folder the message was deleted from (at root level, not inside `data`)
+- `data.id` - EmailEngine's message ID of the deleted message
+- `data.uid` - IMAP UID of the deleted message
 
 :::note Provider Differences
 The payload varies by account type:
 - **IMAP accounts**: `data` contains `id` and `uid`
 - **Gmail API accounts**: `data` contains `id`, `threadId`, `flags`, `labels`, and `category`
-- **Outlook API accounts**: `data` contains only `id`
+- **Microsoft Graph accounts**: `data` contains only `id`
 :::
+
+The message itself can no longer be fetched. Keep whatever you need about a message from its `messageNew` event.
+
+### messageMissing Event
+
+A related event, [`messageMissing`](/docs/webhooks/messagemissing), is emitted when EmailEngine was told about a new message but could not fetch it, because it was removed before the fetch. It carries `id`, plus `uid`, `missingRetries` and `missingDelay` for IMAP accounts, and no message content. Treat it as "this message existed briefly"; there will be no `messageNew` for it.
 
 ### Handling Deletion Webhooks
 
@@ -173,6 +175,7 @@ const messageSchema = {
   uid: Number,                 // IMAP UID
   emailId: String,             // Unique email ID
   threadId: String,            // Thread ID
+  messageId: String,           // Message-ID header
   subject: String,
   from: Object,
   date: Date,
@@ -246,34 +249,41 @@ async function onMessageDeleted(message) {
 
 ### Distinguishing Moves from Deletions
 
-A message might appear "deleted" from one folder because it was moved to another. The ability to detect moves depends on the account type:
+A message might appear "deleted" from one folder because it was moved to another. What you see depends on the account type:
 
-**Gmail API accounts:** The `messageDeleted` event includes the Gmail message `id`, which you can use to correlate with a subsequent `messageNew` event (Gmail assigns the same ID to moved messages).
+**Gmail API accounts:** A move is a label change and arrives as `messageUpdated`, not `messageDeleted`. If you receive `messageDeleted`, the message is gone.
 
-**IMAP accounts:** The `messageDeleted` event only includes `id` (packed UID) and `uid`, which are folder-specific. When a message is moved, it gets a new UID in the destination folder, so direct correlation is not possible. However, if your IMAP server supports the OBJECTID extension, you can use `emailId` from `messageNew` events to detect moves by matching against previously stored message data.
+**Microsoft Graph accounts:** A move produces no `messageDeleted` at all, only a `messageNew` in the destination folder carrying the same `emailId` as before. If you receive `messageDeleted`, the message is gone.
+
+**IMAP accounts:** A move is a `messageDeleted` in the source folder followed by a `messageNew` in the destination, and the message gets a new UID and a new EmailEngine `id` there. The two events have to be correlated by something that survives the move:
+
+- `emailId`, when the server supports the OBJECTID extension (RFC 8474) or is Gmail. It is in the `messageNew` payload and identifies the message across folders
+- Otherwise the `messageId` field, the Message-ID header. Copies of one message share it, so also check that the original is the one that was just reported deleted
+
+**Gmail over IMAP** is the exception among IMAP accounts. EmailEngine syncs `[Gmail]/All Mail`, `[Gmail]/Spam` and `[Gmail]/Trash` rather than every label, so a move between labels is a label change on the All Mail copy and arrives as `messageUpdated`. Only moving a message to Trash or Spam removes it from All Mail, and that produces the `messageDeleted` and `messageNew` pair described above.
 
 ```javascript
-// Track moved messages using emailId from messageNew events
-// Note: This requires storing emailId when messages are first received
+// Track moved messages by matching messageNew events against recent deletions.
+// This requires storing emailId (or messageId) when messages are first received.
 const recentDeletions = new Map();
 
 async function handleMessageDeleted(event) {
   const { path, data } = event;
 
-  // Look up the emailId from our stored message data
+  // Look up the stored copy of the deleted message
   const storedMessage = await db.messages.findOne({ emailEngineId: data.id });
-  if (storedMessage && storedMessage.emailId) {
-    // Store deletion temporarily using emailId
-    recentDeletions.set(storedMessage.emailId, {
+  const key = storedMessage && (storedMessage.emailId || storedMessage.messageId);
+
+  if (key) {
+    recentDeletions.set(key, {
       id: data.id,
       path: path,
-      emailId: storedMessage.emailId,
       timestamp: Date.now()
     });
 
     // Clean up old entries after 60 seconds
     setTimeout(() => {
-      recentDeletions.delete(storedMessage.emailId);
+      recentDeletions.delete(key);
     }, 60000);
   }
 
@@ -283,8 +293,9 @@ async function handleMessageDeleted(event) {
 async function handleMessageNew(event) {
   const { path, data } = event;
 
-  // Check if this is a moved message (using emailId from the new message)
-  const recentDeletion = data.emailId ? recentDeletions.get(data.emailId) : null;
+  // A moved message carries the same emailId (or Message-ID) as the one just deleted
+  const key = data.emailId || data.messageId;
+  const recentDeletion = key ? recentDeletions.get(key) : null;
 
   if (recentDeletion) {
     console.log('Message was moved, not deleted');
@@ -292,19 +303,18 @@ async function handleMessageNew(event) {
     console.log(`To: ${path}`);
 
     // Update status to moved
-    await updateMessageStatus(recentDeletion.id, 'moved');
-    await updateMessageLocation(data.emailId, path, data.id);
+    await updateMessageLocation(recentDeletion.id, path, data.id);
 
-    recentDeletions.delete(data.emailId);
+    recentDeletions.delete(key);
   } else {
     // Genuinely new message
     await createMessage(data);
   }
 }
 
-async function updateMessageLocation(emailId, newPath, newId) {
+async function updateMessageLocation(oldId, newPath, newId) {
   await db.messages.update(
-    { emailId: emailId },
+    { emailEngineId: oldId },
     {
       $set: {
         status: 'active',
@@ -320,9 +330,7 @@ async function updateMessageLocation(emailId, newPath, newId) {
 }
 ```
 
-:::note
-The `emailId` field is only available if the IMAP server supports the OBJECTID extension (RFC 8474). Not all IMAP servers support this extension.
-:::
+The 60 second window covers a move inside the watched folder's connection. A move between two folders that are both found on the resync cycle can report the deletion and the arrival up to a cycle apart, so widen the window when moves between non-watched folders matter.
 
 ## Batch Deletion Detection
 
@@ -379,6 +387,8 @@ async function alertMassDeletion(info) {
   });
 }
 ```
+
+A folder that is emptied while EmailEngine is disconnected, or one that is not the watched folder, reports all of its deletions in one burst when the next sync runs, so a burst is not by itself evidence that the deletions happened together.
 
 ## Recovery and Audit
 
@@ -567,6 +577,7 @@ Create appropriate database indexes:
 await db.messages.createIndex({ emailEngineId: 1 });
 await db.messages.createIndex({ accountId: 1, status: 1 });
 await db.messages.createIndex({ emailId: 1 });
+await db.messages.createIndex({ messageId: 1 });
 await db.messages.createIndex({ status: 1, deletedAt: 1 });
 await db.deletionLog.createIndex({ accountId: 1, deletedAt: -1 });
 ```
@@ -575,5 +586,6 @@ await db.deletionLog.createIndex({ accountId: 1, deletedAt: -1 });
 
 - [IMAP indexers](/docs/accounts/imap-indexers) - The fast indexer does not detect deletions at all
 - [messageDeleted](/docs/webhooks/messagedeleted) - The event and its payload
+- [messageMissing](/docs/webhooks/messagemissing) - A message that vanished before EmailEngine could fetch it
 - [Message operations](/docs/receiving/message-operations) - Deleting a message yourself
 - [mailboxReset](/docs/webhooks/mailboxreset) - When the server invalidates the index rather than the message

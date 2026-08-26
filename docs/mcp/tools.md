@@ -417,5 +417,4 @@ Modern-revision clients can also subscribe to an account resource and be notifie
 - [Protocol Reference](/docs/mcp/protocol) - `tools/list`, `tools/call` and the rest of the wire format
 - [Web Safe HTML](/docs/receiving/web-safe-html) - the rendering both body tools return
 - [Messages API](/docs/api-reference/messages-api) - the REST endpoints behind the reading and organizing tools
-- [Sending Emails](/docs/sending/basic-sending) - what `send_message` does under the hood
 - [EmailEngine IDs Explained](/docs/advanced/ids-explained) - message ids, text ids and how they change

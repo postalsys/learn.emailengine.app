@@ -1,6 +1,6 @@
 ---
 title: Local IP Address Binding
-sidebar_position: 9
+sidebar_position: 11
 description: Configure EmailEngine to use multiple local IP addresses for outbound IMAP and SMTP connections
 keywords:
   - local addresses
@@ -13,63 +13,78 @@ keywords:
 
 # Local IP Address Binding
 
-If your server has multiple IP addresses or network interfaces, configure EmailEngine to use specific local addresses for outbound IMAP and SMTP connections. This helps distribute connections across IPs and avoid rate limiting.
+If the server EmailEngine runs on has more than one IP address, EmailEngine can bind its outbound IMAP and SMTP connections to specific addresses instead of leaving the choice to the operating system. This spreads connections across addresses, which matters when a provider counts connections per source IP, and lets an account keep a stable source address.
 
 ## Overview
 
-**Use cases:**
+Three settings control the behaviour. All three are runtime settings stored in Redis, changed through the admin UI or the [Settings API](/docs/api/post-v-1-settings):
 
-- **Rate limiting avoidance** - Distribute connections across multiple IPs to avoid per-IP rate limits
-- **Dedicated IPs per account** - Assign specific IPs to specific accounts
-- **IP reputation management** - Use clean IPs for important accounts
-- **Load distribution** - Spread connection load across network interfaces
-- **Compliance requirements** - Use specific IPs for regulatory compliance
+| Setting | Type | Default | Purpose |
+| ------- | ---- | ------- | ------- |
+| `localAddresses` | array of IP addresses | `[]` | The pool of local addresses EmailEngine may bind to |
+| `imapStrategy` | `default`, `dedicated` or `random` | `default` | How an address is picked for IMAP connections |
+| `smtpStrategy` | `default`, `dedicated` or `random` | `default` | How an address is picked for SMTP connections |
 
-EmailEngine can bind to specific local IP addresses when making outbound connections to email servers.
+The strategies:
 
-### 1. Multiple IP Addresses
+- `default` - Let the operating system pick the source address
+- `dedicated` - Reuse the same local address for an account, so the remote server sees a stable IP. The address is chosen by rendezvous hashing of the account ID over the pool, so adding or removing an address only moves the accounts that hashed to it
+- `random` - Pick a random local address for every connection
 
-Your server must have multiple IP addresses configured:
+The pool is applied to:
+
+- IMAP connections opened by account workers, including sub-connections
+- SMTP connections made when [sending a message](/docs/sending/basic-sending) through an account
+- The upstream IMAP connections opened by the [IMAP proxy](/docs/configuration/environment-variables#imap-proxy-server)
+
+Gmail API and MS Graph accounts talk HTTPS to the provider and are not affected.
+
+### How an Address Is Chosen
+
+For every connection EmailEngine evaluates the pool in this order:
+
+1. Entries that are not IPv4, or are not configured on a local network interface at that moment, are dropped. IPv6 addresses are accepted by the settings schema but are not used for binding
+2. If nothing is left, the operating system default is used
+3. If exactly one address is left, it is used regardless of the strategy
+4. Otherwise the protocol's strategy decides: `dedicated` or `random` as described above, and `default` hands the choice back to the operating system
+5. The chosen address is looked up in the interface list that **Scan for IPs** builds (see [Admin UI](#admin-ui) below). An address that has never been scanned cannot be bound; the connection falls back to the operating system default and the log entry described under [Watch the Selection in the Logs](#watch-the-selection-in-the-logs) records `selector: "error"`
+
+A submitted message can also name an address directly with the `localAddress` field of [`POST /v1/account/{account}/submit`](/docs/api/post-v-1-account-account-submit). That address is used when it is in the scanned interface list and configured on the host, and falls through to the rules above when it is not.
+
+## Prerequisites
+
+The addresses must exist on the host before EmailEngine can bind to them:
 
 ```bash
-# Check available IP addresses
 ip addr show
-
-# Example output:
-# eth0: inet 192.168.1.100/24
-# eth0:0: inet 192.168.1.101/24
-# eth0:1: inet 192.168.1.102/24
 ```
 
-### 2. Network Configuration
-
-Ensure IPs are properly configured and routable:
+Confirm each one can reach the outside world, and that the provider sees the address you expect, by forcing a request out of it:
 
 ```bash
-# Test connectivity from specific IP
-curl --interface 192.168.1.101 https://www.google.com
+curl --interface 192.168.1.101 https://ifconfig.me
 ```
 
-### 3. Firewall Rules
+If a firewall filters outbound traffic by source address, allow ports 993 and 465 (or 143 and 587) from each address in the pool.
 
-Allow outbound connections from all configured IPs:
+## Configuration
+
+### Admin UI
+
+Open **Configuration** > **Network**:
+
+- The **IP Address Strategy** card has a row for each protocol, **IMAP** and **SMTP**, with a **Selection Method** dropdown offering **Dedicated**, **Random** and **Default** (the card's description calls the last one the server default)
+- The **Available IP Addresses** card lists the IPv4 addresses found by the last scan. **Scan for IPs** probes each interface on the host, records the public address it reaches the internet from, and stores the result in Redis; tick the addresses EmailEngine may use. Ticked addresses that later disappear from the host are skipped and the server default applies
+
+The scan is the only thing that builds the interface list: EmailEngine does not scan at startup, and neither the Settings API nor `EENGINE_SETTINGS` does it for you. After adding an address to the host, open this page and click **Scan for IPs** once; the list survives restarts.
+
+### Settings API
+
+The same three values through `POST /v1/settings`:
 
 ```bash
-# Example iptables rules
-iptables -A OUTPUT -s 192.168.1.100 -j ACCEPT
-iptables -A OUTPUT -s 192.168.1.101 -j ACCEPT
-iptables -A OUTPUT -s 192.168.1.102 -j ACCEPT
-```
-
-## Configuration Methods
-
-### Method 1: Global Settings via API
-
-Configure local addresses via the Settings API or web interface (**Configuration** > **Network**). Local addresses are configured globally and EmailEngine selects IPs from this pool based on the configured strategy:
-
-```bash
-curl -X POST "http://localhost:3000/v1/settings" \
-  -H "Authorization: Bearer YOUR_TOKEN" \
+curl -X POST "https://emailengine.example.com/v1/settings" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "localAddresses": ["192.168.1.100", "192.168.1.101", "192.168.1.102"],
@@ -78,146 +93,66 @@ curl -X POST "http://localhost:3000/v1/settings" \
   }'
 ```
 
-**Configuration options:**
+The response lists the keys that changed:
 
-- `localAddresses` - Array of local IP addresses to use for outbound connections
-- `imapStrategy` - IP selection strategy for IMAP connections (`default`, `dedicated`, or `random`)
-- `smtpStrategy` - IP selection strategy for SMTP connections (`default`, `dedicated`, or `random`)
+```json
+{
+  "updated": ["localAddresses", "imapStrategy", "smtpStrategy"]
+}
+```
 
-**Strategy options:**
+### Preconfiguring at Startup
 
-- `default` - Use the server's default network configuration
-- `dedicated` - Each account consistently uses the same IP from the pool (based on account ID hashing)
-- `random` - Each connection uses a randomly selected IP from the pool
-
-Note: These settings are runtime settings stored in Redis - they cannot be set via the TOML configuration file. To preconfigure them at startup, use the `EENGINE_SETTINGS` environment variable with a JSON value, for example `EENGINE_SETTINGS='{"localAddresses":["192.168.1.100","192.168.1.101"],"smtpStrategy":"dedicated"}'`.
-
-### Method 2: Dedicated Strategy (Recommended)
-
-Use the `dedicated` strategy for consistent IP assignment per account. EmailEngine automatically assigns each account to a specific IP from your pool using consistent hashing based on the account ID:
+These are runtime settings, so they cannot be set in the TOML configuration file. To seed them before the first start, pass them as JSON in the `EENGINE_SETTINGS` environment variable:
 
 ```bash
-curl -X POST "http://localhost:3000/v1/settings" \
-  -H "Authorization: Bearer YOUR_TOKEN" \
+EENGINE_SETTINGS='{"localAddresses":["192.168.1.100","192.168.1.101"],"imapStrategy":"dedicated","smtpStrategy":"dedicated"}' emailengine
+```
+
+See [Prepared settings](/docs/configuration/prepared-settings) for how `EENGINE_SETTINGS` is applied. The seeded addresses are still only used once they appear in the scanned interface list, so run **Scan for IPs** on **Configuration** > **Network** after the first start.
+
+## Choosing a Strategy
+
+### Spreading Accounts Across Addresses
+
+Providers that limit concurrent IMAP connections count them per source address as well as per account. With `imapStrategy: "dedicated"` and five addresses, one hundred accounts settle at roughly twenty per address, and each account keeps its address across reconnects:
+
+```bash
+curl -X POST "https://emailengine.example.com/v1/settings" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "localAddresses": ["192.168.1.100", "192.168.1.101", "192.168.1.102"],
+    "localAddresses": ["192.168.1.100", "192.168.1.101", "192.168.1.102", "192.168.1.103", "192.168.1.104"],
     "imapStrategy": "dedicated",
     "smtpStrategy": "dedicated"
   }'
 ```
 
-With this configuration:
-- Each account consistently uses the same IP from the pool
-- IP assignment is automatic based on account ID hashing
-- Load is distributed across all configured IPs
-- No manual IP assignment needed per account
+### Rotating Addresses for Sending
 
-### Method 3: Random Strategy
-
-Use the `random` strategy for connections that don't require consistency:
+For outbound mail where no single address should carry all the volume, keep IMAP on `dedicated` and let SMTP pick a random address per connection:
 
 ```bash
-curl -X POST "http://localhost:3000/v1/settings" \
-  -H "Authorization: Bearer YOUR_TOKEN" \
+curl -X POST "https://emailengine.example.com/v1/settings" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "localAddresses": ["192.168.1.100", "192.168.1.101", "192.168.1.102"],
-    "imapStrategy": "random",
-    "smtpStrategy": "random"
-  }'
-```
-
-With this configuration:
-- Each new connection randomly selects an IP from the pool
-- Good for distributing load when consistency isn't required
-
-## Use Cases
-
-### 1. Avoiding Gmail Rate Limits
-
-Gmail limits IMAP connections per IP. Use the `dedicated` strategy to automatically distribute accounts across multiple IPs:
-
-```bash
-# Configure multiple IPs with dedicated strategy
-curl -X POST "http://localhost:3000/v1/settings" \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "localAddresses": [
-      "192.168.1.100",
-      "192.168.1.101",
-      "192.168.1.102",
-      "192.168.1.103",
-      "192.168.1.104"
-    ],
-    "imapStrategy": "dedicated",
-    "smtpStrategy": "dedicated"
-  }'
-```
-
-With 5 IPs and 100 Gmail accounts:
-- Accounts are automatically distributed across all 5 IPs
-- Each account consistently uses the same IP
-- Approximately 20 accounts per IP
-
-### 2. IP Rotation for High Volume
-
-Use the `random` strategy to distribute load across IPs for high-volume sending:
-
-```bash
-curl -X POST "http://localhost:3000/v1/settings" \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "localAddresses": [
-      "192.168.1.100",
-      "192.168.1.101",
-      "192.168.1.102",
-      "192.168.1.103"
-    ],
+    "localAddresses": ["192.168.1.100", "192.168.1.101", "192.168.1.102", "192.168.1.103"],
     "imapStrategy": "dedicated",
     "smtpStrategy": "random"
   }'
 ```
 
-This configuration:
-- Uses consistent IPs for IMAP (receiving) connections
-- Randomly distributes SMTP (sending) connections across all IPs
-- Helps avoid per-IP sending rate limits
-
-### 3. Separate Strategies for IMAP and SMTP
-
-Configure different strategies for receiving vs sending:
-
-```bash
-curl -X POST "http://localhost:3000/v1/settings" \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "localAddresses": ["192.168.1.100", "192.168.1.101", "192.168.1.102"],
-    "imapStrategy": "dedicated",
-    "smtpStrategy": "random"
-  }'
-```
-
-This is useful when:
-- You need consistent IMAP connections (to maintain session state)
-- You want to distribute SMTP load across multiple IPs
+The two strategies are independent, so any combination is valid.
 
 ## Verifying Configuration
 
-### Check Global Settings
-
-Verify local addresses and strategies are configured:
+### Check the Settings
 
 ```bash
-curl "http://localhost:3000/v1/settings" \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  | jq '{localAddresses, imapStrategy, smtpStrategy}'
+curl "https://emailengine.example.com/v1/settings?localAddresses=true&imapStrategy=true&smtpStrategy=true" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
-
-Expected output:
 
 ```json
 {
@@ -227,86 +162,29 @@ Expected output:
 }
 ```
 
-### Test Connectivity
+### Watch the Selection in the Logs
 
-Verify your server can connect using the configured IPs:
-
-```bash
-# Check IMAP connection from specific IP
-telnet --bind-address 192.168.1.101 imap.gmail.com 993
-
-# Check SMTP connection from specific IP
-telnet --bind-address 192.168.1.101 smtp.gmail.com 587
-```
-
-### Monitor Active Connections
-
-Check which IPs are being used:
+Each IMAP and SMTP connection logs the address it was bound to at the `debug` level, so the process log level must be `debug` or `trace` (the default) for the entry to appear:
 
 ```bash
-# View active connections
-netstat -an | grep ESTABLISHED | grep 993  # IMAP
-netstat -an | grep ESTABLISHED | grep 587  # SMTP
-
-# Count connections per local IP
-netstat -an | grep ESTABLISHED | grep 993 | awk '{print $4}' | cut -d: -f1 | sort | uniq -c
+emailengine | jq -c 'select(.msg == "Selected local address")'
 ```
 
-### EmailEngine Logs
+```text
+{"level":20,"time":1697123456789,"pid":12345,"hostname":"server-01","tid":3,"msg":"Selected local address","account":"user123","proto":"IMAP","address":"192.168.1.101","name":"mail.example.com","selector":"dedicated"}
+```
 
-Check logs for IP selection info:
+`selector` records which rule produced the address: `dedicated`, `random`, `single` (only one usable address in the pool), `hint` (an address named on the submit request), `default` (empty pool), `unknown` (several addresses with the `default` strategy) or `error` (the chosen address is not in the scanned interface list, so the operating system default was used). `name` is the hostname EmailEngine presents in the SMTP `EHLO` greeting, taken from the `smtpEhloName` setting.
+
+### Count Connections per Address
 
 ```bash
-# View connection logs showing selected local address
-# Look for "Selected local address" log entries
-tail -f /var/log/emailengine.log | grep "Selected local address"
+ss -tn state established '( dport = :993 or dport = :465 )' | awk 'NR > 1 {split($3, a, ":"); print a[1]}' | sort | uniq -c
 ```
 
-The logs show which IP was selected for each connection, including the selection strategy used.
+## Updating the Pool
 
-## Updating Configuration
-
-Update the global IP pool or strategy:
-
-```bash
-curl -X POST "http://localhost:3000/v1/settings" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  -d '{
-    "localAddresses": ["192.168.1.100", "192.168.1.101", "192.168.1.102", "192.168.1.103"],
-    "imapStrategy": "random",
-    "smtpStrategy": "dedicated"
-  }'
-```
-
-Changes take effect for new connections. Existing connections continue using their current IP until they reconnect.
-
-## Performance Considerations
-
-### Connection Overhead
-
-Each IP adds slight overhead:
-
-- DNS lookups
-- TCP handshakes
-- TLS negotiations
-
-**Impact:** Minimal (less than 100ms per connection)
-
-### Memory Usage
-
-Multiple IPs don't significantly increase memory:
-
-- ~1MB per account regardless of IP
-- IP binding is just a socket option
-
-### Throughput
-
-Properly distributed IPs can improve throughput:
-
-- Avoid per-IP rate limits
-- Parallel connections across IPs
-- Better load distribution
+Changing any of the three settings affects connections opened after the change. Existing IMAP sessions keep their address until they reconnect; to move an account immediately, request a reconnect with [`PUT /v1/account/{account}/reconnect`](/docs/api/put-v-1-account-account-reconnect).
 
 ## See Also
 
@@ -314,3 +192,4 @@ Properly distributed IPs can improve throughput:
 - [Inbox placement testing](/docs/advanced/inbox-placement-testing) - Checking how a sending address is received
 - [Email authentication testing](/docs/advanced/email-authentication-testing) - SPF, DKIM, and DMARC for the addresses you send from
 - [Proxying connections](/docs/accounts/proxying-connections) - Routing through a proxy instead of a local address
+- [Settings API](/docs/api/post-v-1-settings) - Reading and writing `localAddresses` and the strategies

@@ -6,127 +6,82 @@ description: Understanding EmailEngine's message queue system for reliable email
 
 # Outbox Queue
 
-EmailEngine uses queues to process background tasks including email sending. Understanding the queue system helps you monitor delivery, troubleshoot issues, and optimize performance.
+A submitted message is not sent inside the API call. EmailEngine stores it, answers with a queue ID, and a separate worker delivers it. This page covers what happens between "queued" and "sent": the states a message passes through, how retries are timed, what the outbox API shows, and which settings control it.
 
 ## Why Queues Matter
 
-When you submit an email, EmailEngine doesn't send it immediately. Instead, it:
+When you submit an email, EmailEngine:
 
 1. Validates your request
-2. Adds the message to a queue
+2. Stores the message and adds a job to the submit queue
 3. Returns immediately with a queue ID
-4. Processes the queue asynchronously
-5. Handles retries automatically
-6. Notifies you via webhooks
+4. Delivers the message from a worker, independently of the API request
+5. Retries a failed delivery on a schedule
+6. Reports the outcome through webhooks
 
-This approach provides:
-- **Reliability**: Automatic retries on failures
-- **Scalability**: Handle high-volume sending
-- **Monitoring**: Track delivery status
-- **Resilience**: Survive crashes and restarts
+Because the job lives in Redis rather than in the API process, a scheduled or retrying message survives an EmailEngine restart.
 
 ## Queue Technology
 
-EmailEngine uses [BullMQ](https://docs.bullmq.io/) for queue management, backed by Redis. BullMQ provides:
-
-- Persistent job storage
-- Automatic retry logic
-- Priority queues
-- Delayed jobs (scheduled sending)
-- Job progress tracking
-
-## Queue Types
-
-EmailEngine maintains four queues, of which the first one carries outbound mail:
-
-### 1. Submit Queue
-
-Handles all email sending jobs.
-
-- **Purpose**: Process outbound email
-- **Jobs**: Individual send requests
-- **Lifecycle**: Waiting -> Active -> Completed/Failed/Delayed
-
-### 2. Notify Queue
-
-Handles all webhook delivery jobs.
-
-- **Purpose**: Send webhook notifications
-- **Jobs**: Webhook HTTP requests
-- **Retries**: Automatic retry on webhook failures
-
-### 3. Documents Queue
-
-Handles document indexing jobs.
-
-- **Purpose**: Index emails for search functionality
-- **Jobs**: Document indexing tasks
-- **Used when**: Document Store/Elasticsearch integration is enabled
-
-### 4. Export Queue
-
-Handles [mailbox exports](/docs/receiving/exporting).
-
-- **Purpose**: Write an account's messages out to a downloadable file
-- **Jobs**: One per export request
-- **Used when**: An export has been requested
+EmailEngine uses [BullMQ](https://docs.bullmq.io/) for its queues, backed by Redis. Outbound mail is the `submit` queue; webhooks, exports, and the deprecated Document Store have queues of their own. The [queue management](/docs/advanced/queue-management) page describes the queues as a set, along with Bull Board and worker concurrency. This page stays with the submit queue.
 
 ## Job Lifecycle
 
-Jobs in the submit queue move through different states:
+A job in the submit queue moves through these states:
 
 ### 1. Waiting
 
-**Description**: Jobs ready to be processed immediately.
+**Description**: Jobs ready to be processed.
 
 **How jobs get here**:
-- New submissions without `sendAt` property
-- Delayed jobs whose `sendAt` time has been reached
-- Jobs moved from *Paused* when queue is unpaused
+- New submissions without a `sendAt` in the future
+- Delayed jobs whose time has come
 
-**What happens**: Jobs are picked up one by one and moved to *Active*.
+**What happens**: A submit worker picks the job up and moves it to *Active*.
 
 ### 2. Active
 
 **Description**: Jobs currently being processed.
 
 **What happens**:
-- EmailEngine connects to SMTP server
+- EmailEngine connects to the account's SMTP server (or the gateway named in the submission)
 - Transmits the message
-- Waits for SMTP response
+- Waits for the SMTP response
 
 **Outcomes**:
 - **Success** - Moved to *Completed*
-- **Temporary failure** - Moved to *Delayed* (will retry)
-- **Permanent failure** - Moved to *Failed* (no retry, even if attempts remain)
-- **Retries exhausted** - Moved to *Failed* after all attempts used
+- **Temporary failure** - Moved to *Delayed* and retried
+- **Permanent failure** - Moved to *Failed*, even if attempts remain
+- **Retries exhausted** - Moved to *Failed* after the last attempt
 
 ### 3. Completed
 
-**Description**: Successfully delivered jobs.
+**Description**: The SMTP server accepted the message.
 
 **What happens**:
-- SMTP server accepted the message (250 OK)
 - `messageSent` webhook is emitted
-- Message content is removed from Redis
+- The stored message content is removed from Redis
 
-By default, completed jobs are immediately removed from the queue. To keep them for debugging, configure the **Job History Limit** setting (see [Configuration](#keep-completedfailed-jobs) below). Even with retention enabled, the message content is no longer stored - only the job metadata remains in BullMQ.
+By default a completed job is removed from the queue as soon as it finishes. To keep completed jobs for debugging, set the **Job History Limit** described under [Configuration](#keep-completed-and-failed-jobs). Even then only the job metadata remains; the message content is gone.
 
 ### 4. Failed
 
 **Description**: Jobs that will not be retried.
 
 **How jobs get here**:
-- All `deliveryAttempts` exhausted (default: 10) with retriable errors
-- A permanent (non-retriable) error occurred, even on the first attempt
+- Every attempt allowed by `deliveryAttempts` (default 10) failed with a retriable error
+- A permanent error occurred, on any attempt
 
 **What happens**:
 - `messageFailed` webhook is emitted
-- Message content is removed from Redis
+- The stored message content is removed from Redis
 
-By default, failed jobs are immediately removed from the queue, just like completed jobs. To keep them for debugging, configure the **Job History Limit** setting. Even with retention enabled, the message content is no longer stored - only the job metadata remains in BullMQ.
+Failed jobs are kept, unlike completed ones: a failure is the only record that a delivery was given up on. By default the last 500 failed entries are retained for 7 days; `EENGINE_QUEUE_KEEP_FAILED` and `EENGINE_QUEUE_KEEP_FAILED_AGE` (seconds) change those bounds. The retained entry holds the job metadata and the last error, not the message itself.
 
-**Permanent (non-retriable) errors** cause immediate failure regardless of remaining attempts:
+**How EmailEngine decides that an error is permanent:**
+
+1. When the SMTP server replied with a status code, that code decides: a 5xx reply is permanent, except 503, which is retried. A 4xx reply is retried
+2. When there was no SMTP reply (the connection or the handshake failed), the error code decides. These codes are permanent:
 
 | Error Code | Meaning |
 |---|---|
@@ -138,53 +93,44 @@ By default, failed jobs are immediately removed from the queue, just like comple
 | `EMESSAGE` | Message content error |
 | `EPROTOCOL` | SMTP protocol mismatch |
 
-Additionally, any SMTP response with status code 500 or above (except 503, which is treated as transient) is considered permanent.
-
-**Retriable errors** (temporary network issues, server timeouts, 4xx SMTP responses, etc.) move the job to *Delayed* for retry with exponential backoff.
+Everything else (network timeouts, connection resets, a server that closed the connection) is retried.
 
 ### 5. Delayed
 
-**Description**: Jobs waiting for future processing.
+**Description**: Jobs waiting for a future time.
 
 **How jobs get here**:
-- New submissions with `sendAt` property (scheduled sending)
-- Failed delivery attempts that will be retried (exponential backoff)
+- New submissions with a `sendAt` in the future
+- Failed delivery attempts that will be retried
 
 **What happens**:
-- Job waits until the delay time
-- Then moved to *Waiting*
+- The job waits until its time
+- Then it moves to *Waiting*
 - A `messageDeliveryError` webhook is emitted for every failed delivery attempt, including the final one
 
-**Retry schedule** (exponential backoff with 5-second base delay and 20% jitter, computed as 2^(attemptsMade-1) x 5s):
-- Attempt 1: Immediate
-- Attempt 2: ~5 seconds (2^0 x 5s)
-- Attempt 3: ~10 seconds (2^1 x 5s)
-- Attempt 4: ~20 seconds (2^2 x 5s)
-- Attempt 5: ~40 seconds (2^3 x 5s)
-- Attempt 6: ~80 seconds (2^4 x 5s)
-- And so on, doubling each time
+**Retry schedule**: BullMQ's exponential backoff with a 5 second base. The delay before retry *n* is 2^(n-1) x 5 s, reduced by a random amount of up to 20% (the jitter), so each retry lands between 80% and 100% of the nominal delay:
 
-The 20% jitter randomizes retry times slightly to prevent multiple failed jobs from retrying at exactly the same moment.
+| Attempt | Nominal delay after the previous failure |
+|---|---|
+| 1 | Immediate |
+| 2 | 5 s |
+| 3 | 10 s |
+| 4 | 20 s |
+| 5 | 40 s |
+| 6 | 80 s |
+| 10 | about 21 minutes |
 
-:::info nextAttempt estimate
-The `nextAttempt` value reported by the outbox API is computed as 2^attempts x 5s, so it shows a later time than when the actual retry happens.
+With the default of 10 attempts, a message that keeps failing with a retriable error is given up on roughly 43 minutes after the first attempt. The jitter keeps a batch of messages that failed together from retrying at the same instant.
+
+:::info nextAttempt is the nominal time
+The `nextAttempt` value in the outbox API and in the `messageDeliveryError` payload is computed from the nominal delay without the jitter, so it is the latest moment the retry can happen; the actual retry is up to 20% earlier. Before v2.70.0 the outbox API doubled the delay once too often and reported a time later than the nominal one.
 :::
 
-### 6. Paused
+### Pausing the queue
 
-**Description**: Jobs held when queue is paused.
+BullMQ 6 (EmailEngine v2.79.0 and later) has no separate "paused" job state. Pausing the queue stops workers from taking new jobs; the jobs that are already waiting stay in *Waiting*, an active job finishes, and new submissions join *Waiting* too. Resuming lets the workers continue.
 
-**How to pause**: Use the Bull Board UI or API to pause the queue.
-
-**What happens**:
-- New jobs go to *Paused* instead of *Waiting*
-- Active jobs finish processing
-- When unpaused, jobs move to *Waiting*
-
-**Use cases**:
-- Maintenance windows
-- Debugging issues
-- Rate limit management
+Pause and resume from Bull Board, or through the [queue settings API](/docs/api/put-v-1-settings-queue-queue):
 
 ```bash
 # Pause queue
@@ -200,25 +146,27 @@ curl -XPUT "https://emailengine.example.com/v1/settings/queue/submit" \
   -d '{"paused": false}'
 ```
 
+Use it for maintenance windows, for debugging, or to hold outgoing mail while a provider rate limit clears.
+
 ## Monitoring the Queue
 
 ### Bull Board UI
 
 EmailEngine includes [Bull Board](https://github.com/felixmosh/bull-board), a web UI for BullMQ queues.
 
-**Access**: Navigate to **System -> Queues** in EmailEngine UI, or go directly to `/admin/bull-board`.
+**Access**: **System > Queues** in the admin menu, or `/admin/bull-board` directly.
 
 **Features**:
 - View job counts by state
 - Inspect individual jobs
 - Retry failed jobs
 - Delete jobs
-- Pause/resume queues
+- Pause and resume queues
 - View job logs
 
 ### Outbox API
 
-The outbox API lists messages across all active queue states: waiting, active, delayed, paused, and failed.
+The [outbox API](/docs/api/get-v-1-outbox) lists the jobs in the delayed, waiting, active, and failed states, in that order. Completed jobs never appear here, even when the Job History Limit retains them; they are visible in Bull Board only.
 
 #### List queued messages
 
@@ -245,9 +193,12 @@ curl "https://emailengine.example.com/v1/outbox" \
         "to": ["recipient@example.com"]
       },
       "subject": "Test message",
+      "gateway": null,
+      "proxy": null,
+      "localAddress": null,
       "created": "2025-05-14T10:00:00.000Z",
       "scheduled": "2025-05-14T10:00:00.000Z",
-      "nextAttempt": "2025-05-14T10:10:35.465Z",
+      "nextAttempt": "2025-05-14T10:00:15.465Z",
       "attemptsMade": 2,
       "attempts": 10,
       "progress": {
@@ -263,69 +214,38 @@ curl "https://emailengine.example.com/v1/outbox" \
 }
 ```
 
-Use the `page` and `pageSize` query parameters for pagination:
+Use the `page` and `pageSize` query parameters for pagination (`pageSize` defaults to 20 and goes up to 1000):
 
 ```bash
 curl "https://emailengine.example.com/v1/outbox?page=0&pageSize=10" \
   -H "Authorization: Bearer <token>"
 ```
 
+`source` says how the message entered the queue: `api`, `smtp` (the [SMTP server](./smtp-interface.md)), `ui` (a test message from the admin interface), or `test` (a [delivery test](/docs/advanced/inbox-placement-testing)).
+
 The `progress` field tracks the delivery status of each message:
 
 | Status | Meaning |
 |---|---|
-| `queued` | Waiting to be processed |
-| `processing` | Currently being sent |
-| `submitted` | Successfully delivered (includes SMTP `response`) |
-| `error` | Last attempt failed (includes `error` details) |
+| `queued` | Accepted and waiting for a delivery attempt |
+| `processing` | A submit worker has picked the message up |
+| `smtp-starting` | Opening the SMTP connection |
+| `smtp-completed` | The SMTP transaction finished and the message was handed over (includes `response` and `messageId`, plus `originalMessageId` when the server assigned a new Message-ID) |
+| `submitted` | Delivered to the receiving server (includes the SMTP `response`) |
+| `error` | The last attempt failed (includes `error` with `message`, `code`, and the SMTP `statusCode`) |
 
-The `nextAttempt` field shows when the next delivery attempt is scheduled. It is `false` when no more attempts remain.
-
-:::info Completed and failed jobs
-By default, completed and failed jobs are removed from the queue immediately. The list endpoint only queries jobs in the waiting, active, delayed, paused, and failed states - completed jobs never appear here. To keep failed jobs visible in the list, configure the [Job History Limit](#keep-completedfailed-jobs) setting. Retained completed jobs are only visible in Bull Board.
-:::
+`nextAttempt` is when the next delivery attempt is due, or `false` when no attempts remain. `attemptsMade` against `attempts` shows how much of the retry budget is left.
 
 #### Get a specific message
 
-Retrieve details for a single queued message by its queue ID:
+Retrieve a single queued message by its queue ID with the [get outbox entry API](/docs/api/get-v-1-outbox-queueid):
 
 ```bash
 curl "https://emailengine.example.com/v1/outbox/4646ac53857fd2b2" \
   -H "Authorization: Bearer <token>"
 ```
 
-**Response**:
-
-```json
-{
-  "queueId": "4646ac53857fd2b2",
-  "account": "example",
-  "source": "api",
-  "messageId": "<test123@example.com>",
-  "envelope": {
-    "from": "sender@example.com",
-    "to": ["recipient@example.com"]
-  },
-  "subject": "Test message",
-  "created": "2025-05-14T10:00:00.000Z",
-  "scheduled": "2025-05-14T10:00:00.000Z",
-  "nextAttempt": "2025-05-14T10:10:35.465Z",
-  "attemptsMade": 2,
-  "attempts": 10,
-  "progress": {
-    "status": "error",
-    "error": {
-      "message": "Connection timeout",
-      "code": "ETIMEDOUT",
-      "statusCode": null
-    }
-  }
-}
-```
-
-:::warning
-This endpoint only works for messages that are still queued (waiting, active, delayed, or paused). Once a message is completed or has permanently failed, its content is removed from Redis and this endpoint returns a 404 error - even if the job metadata is retained in BullMQ via the Job History Limit setting.
-:::
+The response is one entry in the same shape as the list. The endpoint works while the message content is still stored, which means the waiting, active, and delayed states. Once a message has completed or failed for good, its content is removed and the endpoint returns 404, even when the Job History Limit keeps the job's metadata in Bull Board.
 
 ## Managing Queue Jobs
 
@@ -346,26 +266,30 @@ curl -XDELETE "https://emailengine.example.com/v1/outbox/4646ac53857fd2b2" \
 }
 ```
 
+This removes both the stored message and the job. It works for waiting, delayed, and failed jobs; a job that a worker holds at that moment (active) cannot be removed and the response carries `"deleted": false`, as does an unknown queue ID.
+
 Useful for:
-- Removing stuck jobs
-- Canceling scheduled sends
-- Clearing failed jobs (if retention is enabled)
+- Cancelling a scheduled send
+- Clearing a retained failed job
 
 :::info Retrying Failed Jobs
-To retry a failed job, you need to delete it from the queue and resubmit the message using the submit API. The outbox API does not support automatic retry of individual jobs. Alternatively, use the **Retry** button in Bull Board to retry failed jobs directly.
+The outbox API has no retry call. To send a failed message again, resubmit it through the submit API, or use the **Retry** button in Bull Board, which puts the same job back into *Waiting*.
 :::
 
 ## Configuration
 
 ### Delivery Attempts
 
-Configure maximum retry attempts via the web UI or API:
+The maximum number of delivery attempts is set per instance, and can be overridden per message.
 
-**Via Web UI**:
-1. Navigate to **Configuration -> Email Processing**
-2. Set "Retry Attempts" under the Email Delivery card (default: 10)
+**Instance default**:
+1. Open **Configuration > Email Processing**
+2. Set **Retry Attempts** in the **Email Delivery** card (default: 10)
 
-**Via API when submitting a message**:
+The same value is the `deliveryAttempts` key in the [Settings API](/docs/api/post-v-1-settings).
+
+**Per message**, in the submit payload:
+
 ```json
 {
   "to": [{"address": "recipient@example.com"}],
@@ -375,37 +299,32 @@ Configure maximum retry attempts via the web UI or API:
 }
 ```
 
-Default: 10 attempts
+Permanent errors (see [Failed](#4-failed)) end the job immediately regardless of this setting.
 
-Note that [permanent errors](#4-failed) (such as authentication failures or invalid recipients) cause immediate failure regardless of this setting.
+### Keep Completed and Failed Jobs
 
-### Keep Completed/Failed Jobs
+Completed jobs are removed as soon as they finish, to save Redis memory. To keep them:
 
-By default, completed and failed jobs are removed from the queue immediately to save Redis memory. When removed, they no longer appear in the outbox API or Bull Board.
+1. Open **Configuration > General**
+2. Set **Job History Limit** (`queueKeep`) to the number of completed jobs to keep. 0 disables the history
 
-**Enable retention**:
-
-1. Navigate to **Configuration -> General**
-2. Set **Job History Limit** (`queueKeep`) to the number of completed/failed jobs to keep
-3. Example: Set to 100 to keep the last 100 completed and 100 failed jobs
-
-Retained jobs are also automatically removed after 24 hours, whichever limit is reached first.
+Retained completed jobs are also dropped after 24 hours, whichever limit is reached first. Failed jobs have their own floor, described under [Failed](#4-failed): at least 500 entries for 7 days, or the Job History Limit when that is higher.
 
 :::warning
-This setting only affects new jobs created after the change. Existing jobs keep their original retention policy. Also note that even with retention enabled, the `GET /v1/outbox/{queueId}` endpoint returns 404 for completed and failed jobs because the message content is cleaned up on completion/failure. Retained failed jobs are visible through the `GET /v1/outbox` list endpoint and Bull Board; retained completed jobs are only visible in Bull Board.
+The retention policy is attached to a job when it is created, so a change applies to jobs queued after the change. Retained jobs are visible in Bull Board, and retained failed jobs also in `GET /v1/outbox`; `GET /v1/outbox/{queueId}` returns 404 for a finished job either way, because the message content is removed on completion or failure.
 :::
 
 ### SMTP Timeout
 
-The SMTP socket timeout is set to 2 minutes (120 seconds). This is the maximum time allowed for SMTP operations before timing out.
+The SMTP socket timeout during delivery is 2 minutes. A server that stays silent longer than that fails the attempt with a retriable error.
 
 ## Webhook Events
 
-The queue system triggers webhooks at key points:
+The queue emits three events. Each has a page of its own with the full payload; the examples here show the fields that relate to the queue.
 
 ### messageSent
 
-Emitted when a job completes successfully:
+Emitted when a job completes:
 
 ```json
 {
@@ -426,7 +345,7 @@ Emitted when a job completes successfully:
 
 ### messageDeliveryError
 
-Emitted on every failed delivery attempt - including the final one, where `messageFailed` is then also emitted. The `job.nextAttempt` field shows when the next retry is scheduled:
+Emitted on every failed delivery attempt, including the final one, where `messageFailed` follows. `job.nextAttempt` is the nominal time of the next retry, or `false` after the last attempt:
 
 ```json
 {
@@ -442,7 +361,7 @@ Emitted on every failed delivery attempt - including the final one, where `messa
     "job": {
       "attemptsMade": 2,
       "attempts": 10,
-      "nextAttempt": "2025-05-14T10:10:35.465Z"
+      "nextAttempt": "2025-05-14T10:05:55.465Z"
     },
     "envelope": {
       "from": "sender@example.com",
@@ -454,7 +373,7 @@ Emitted on every failed delivery attempt - including the final one, where `messa
 
 ### messageFailed
 
-Emitted when a job permanently fails (all retries exhausted or a non-retriable error):
+Emitted when a job is finished for good, after the last attempt or on a permanent error:
 
 ```json
 {
@@ -464,17 +383,15 @@ Emitted when a job permanently fails (all retries exhausted or a non-retriable e
   "data": {
     "messageId": "<message-id@example.com>",
     "queueId": "4646ac53857fd2b2",
-    "error": "Error: Invalid login: 535 5.7.8 Error: authentication failed",
-    "envelope": {
-      "from": "sender@example.com",
-      "to": ["recipient@example.com"]
-    }
+    "error": "Error: Invalid login: 535 5.7.8 Error: authentication failed"
   }
 }
 ```
 
 ## See Also
 
-- [Queue Management](/docs/advanced/queue-management) - Detailed guide on BullMQ internals, Bull Board, and performance tuning
-- [Basic Sending](/docs/sending/basic-sending) - How to submit emails via the API
-- [Webhook Events](/docs/webhooks/overview) - Complete webhook event reference
+- [Queue Management](/docs/advanced/queue-management) - Every queue, Bull Board, worker concurrency, and Redis tuning
+- [Basic Sending](/docs/sending/basic-sending) - How a message enters the queue
+- [messageDeliveryError](/docs/webhooks/messagedeliveryerror) and [messageFailed](/docs/webhooks/messagefailed) - The full payloads of the failure events
+- [Sending API](/docs/api-reference/sending-api) - The outbox endpoints in the API reference
+- [Bounces](/docs/advanced/bounces) - A failure that arrives by mail after the queue reported success

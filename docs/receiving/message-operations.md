@@ -13,7 +13,7 @@ keywords:
 
 # Message Operations
 
-Message operations allow you to list, fetch, move, delete, and update email messages programmatically. These operations work consistently across IMAP, Gmail API, and Microsoft Graph backends.
+Message operations allow you to list, fetch, move, delete, and update email messages programmatically. The same endpoints serve IMAP, Gmail API, and Microsoft Graph accounts; where a backend behaves differently, the difference is called out below.
 
 ## Listing Messages
 
@@ -60,7 +60,6 @@ curl "https://emailengine.example.com/v1/account/example/messages?path=INBOX" \
         }
       ],
       "cc": [],
-      "bcc": [],
       "messageId": "<abc123@example.com>",
       "inReplyTo": null,
       "attachments": [
@@ -75,17 +74,25 @@ curl "https://emailengine.example.com/v1/account/example/messages?path=INBOX" \
 }
 ```
 
+Messages are returned newest first. `uid` is present for IMAP accounts only, and `emailId` and `threadId` only when the server provides them (Gmail API, Graph, and IMAP servers with the OBJECTID extension). `total` and `pages` are exact for IMAP accounts, approximate for Gmail API accounts, and can be missing for Graph accounts.
+
 ### Pagination
 
-List messages with pagination:
+The listing takes `pageSize` (default 20, maximum 1000) and either a `cursor` or a `page` number:
+
+- `cursor` takes the `nextPageCursor` or `prevPageCursor` value from a previous response. It works on every backend and is the form to prefer.
+- `page` is a zero-based page number, kept for callers written before cursors. IMAP accounts honor it, and so do Microsoft Graph accounts; a Gmail API account rejects a `page` above 0 with a 400 (`InvalidInput`). When both are supplied, the cursor wins.
 
 ```javascript
-async function listMessages(accountId, folderPath, page = 0, pageSize = 20) {
+async function listMessages(accountId, folderPath, cursor = null, pageSize = 20) {
   const params = new URLSearchParams({
     path: folderPath,
-    page: page,
     pageSize: pageSize
   });
+
+  if (cursor) {
+    params.set('cursor', cursor);
+  }
 
   const response = await fetch(
     `https://emailengine.example.com/v1/account/${accountId}/messages?${params}`,
@@ -97,33 +104,28 @@ async function listMessages(accountId, folderPath, page = 0, pageSize = 20) {
   return await response.json();
 }
 
-// List first page
-const page1 = await listMessages('example', 'INBOX', 0, 20);
+// First page
+const page1 = await listMessages('example', 'INBOX', null, 20);
 console.log(`Showing ${page1.messages.length} of ${page1.total} messages`);
-console.log(`Page ${page1.page + 1} of ${page1.pages}`);
 
-// List next page
-const page2 = await listMessages('example', 'INBOX', 1, 20);
+// Next page
+const page2 = await listMessages('example', 'INBOX', page1.nextPageCursor, 20);
 ```
 
 ### List All Messages
 
-Iterate through all pages:
+Follow `nextPageCursor` until it is `null`:
 
 ```javascript
 async function listAllMessages(accountId, folderPath) {
   const allMessages = [];
-  let page = 0;
-  let hasMore = true;
+  let cursor = null;
 
-  while (hasMore) {
-    const response = await listMessages(accountId, folderPath, page, 100);
-
+  do {
+    const response = await listMessages(accountId, folderPath, cursor, 100);
     allMessages.push(...response.messages);
-
-    page++;
-    hasMore = page < response.pages;
-  }
+    cursor = response.nextPageCursor;
+  } while (cursor);
 
   return allMessages;
 }
@@ -195,14 +197,25 @@ async function listUnreadMessages(accountId, folderPath) {
 
 Fetch complete message details using the [get message API](/docs/api/get-v-1-account-account-message-message). Text content is not included by default - add the `textType` query parameter (`plain`, `html`, or `*` for both) to include it:
 
-:::tip Displaying the HTML
-If you intend to render the HTML body in a web page, request it with `webSafeHtml=true` instead. See [Web-Safe HTML](/docs/receiving/web-safe-html).
-:::
-
 ```bash
 curl "https://emailengine.example.com/v1/account/example/message/AAAAAQAAAeE?textType=*" \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
+
+The endpoint takes these query parameters:
+
+| Parameter             | Type    | Default | Description                                                                                                                   |
+| --------------------- | ------- | ------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `textType`            | string  | none    | Which body to include: `plain`, `html`, or `*` for both. Without it no body is returned                                       |
+| `maxBytes`            | integer | none    | Cap on the returned body length. A capped body sets `text.hasMore` to `true`; fetch the rest from the text endpoint            |
+| `webSafeHtml`         | boolean | `false` | Return sanitized HTML ready to render. Forces `textType=*`, `preProcessHtml=true` and `embedAttachedImages=true`               |
+| `preProcessHtml`      | boolean | `false` | Sanitize and repair the HTML without embedding images                                                                          |
+| `embedAttachedImages` | boolean | unset   | Replace `cid:` image references with data URIs. An explicit `false` is honored alongside `webSafeHtml`                        |
+| `markAsSeen`          | boolean | `false` | Add the `\Seen` flag while fetching, if the message is unseen                                                                  |
+
+:::tip Displaying the HTML
+If you intend to render the HTML body in a web page, request it with `webSafeHtml=true`. See [Web-Safe HTML](/docs/receiving/web-safe-html).
+:::
 
 **Response:**
 
@@ -259,6 +272,8 @@ curl "https://emailengine.example.com/v1/account/example/message/AAAAAQAAAeE?tex
 }
 ```
 
+`headers` holds every header of the message, keyed in lower case, each value an array because a header can repeat. The response also carries `isAutoReply: true` when the message looks like an automatic reply (see [Tracking Email Replies](/docs/receiving/tracking-replies#filtering-auto-responses)) and `bounces` when EmailEngine has matched a bounce to it.
+
 **JavaScript Example:**
 
 ```javascript
@@ -285,7 +300,7 @@ console.log(`Body: ${message.text?.plain}`);
 
 ### Get Message Source
 
-Fetch raw RFC822 message source using the [message source API](/docs/api/get-v-1-account-account-message-message-source):
+Fetch raw RFC822 message source using the [message source API](/docs/api/get-v-1-account-account-message-message-source). The response body is the message itself with a `message/rfc822` content type, not JSON:
 
 ```bash
 curl "https://emailengine.example.com/v1/account/example/message/AAAAAQAAAeE/source" \
@@ -353,7 +368,18 @@ curl -X PUT "https://emailengine.example.com/v1/account/example/message/AAAAAQAA
 }
 ```
 
-The response includes the destination `path` and, if provided by the server, the new message `id` and `uid` in the target folder.
+The response includes the destination `path` and, if the server provides them, the message's new `id` in the target folder and, for IMAP accounts, its new `uid`. An IMAP message gets a new `id` when it moves, because the ID encodes the folder and UID; see [Message IDs](/docs/advanced/ids-explained).
+
+On a Gmail API account a move is a label change: the target label is added and, if you pass `source`, that label is removed. Without `source` the message keeps its old label as well:
+
+```json
+{
+  "path": "Work/Projects",
+  "source": "INBOX"
+}
+```
+
+`path` accepts the special-use aliases `\Inbox`, `\Sent`, `\Drafts`, `\Trash` and `\Junk` in place of a folder path.
 
 **JavaScript Example:**
 
@@ -380,11 +406,21 @@ await moveMessage('example', 'AAAAAQAAAeE', 'Archive/2025');
 
 ### Archive Messages
 
-Move messages to archive folder:
+`\Archive` is not one of the path aliases the message endpoints resolve, so look the folder up in the [mailbox listing](/docs/receiving/mailbox-operations#using-special-use-folders) first:
 
 ```javascript
+async function listMailboxes(accountId) {
+  const response = await fetch(
+    `https://emailengine.example.com/v1/account/${accountId}/mailboxes`,
+    {
+      headers: { 'Authorization': 'Bearer YOUR_ACCESS_TOKEN' }
+    }
+  );
+
+  return (await response.json()).mailboxes;
+}
+
 async function archiveMessage(accountId, messageId) {
-  // Find archive folder
   const folders = await listMailboxes(accountId);
   const archiveFolder = folders.find(f => f.specialUse === '\\Archive');
 
@@ -396,33 +432,32 @@ async function archiveMessage(accountId, messageId) {
 }
 ```
 
+Only IMAP servers flag an archive folder. Gmail API and Graph accounts do not; on Gmail, archiving is removing the `\Inbox` label (see [Working with Gmail Labels and Outlook Categories](#working-with-gmail-labels-and-outlook-categories)).
+
 ### Move to Trash
+
+`\Trash` is an alias every backend resolves, so no lookup is needed:
 
 ```javascript
 async function trashMessage(accountId, messageId) {
-  const folders = await listMailboxes(accountId);
-  const trashFolder = folders.find(f => f.specialUse === '\\Trash');
-
-  if (!trashFolder) {
-    throw new Error('Trash folder not found');
-  }
-
-  return await moveMessage(accountId, messageId, trashFolder.path);
+  return await moveMessage(accountId, messageId, '\\Trash');
 }
 ```
+
+The [delete endpoint](#deleting-messages) does the same thing by default, and also handles the case where the message is already in Trash.
 
 ## Deleting Messages
 
 ### Delete Message
 
-Delete a message using the [delete message API](/docs/api/delete-v-1-account-account-message-message). By default, the message is moved to Trash. If the message is already in Trash (or if `force=true` is specified), it is permanently deleted.
+Delete a message using the [delete message API](/docs/api/delete-v-1-account-account-message-message):
 
 ```bash
 curl -X DELETE "https://emailengine.example.com/v1/account/example/message/AAAAAQAAAeE" \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
 
-**Response (moved to Trash):**
+**Response (IMAP, moved to Trash):**
 
 ```json
 {
@@ -442,14 +477,14 @@ curl -X DELETE "https://emailengine.example.com/v1/account/example/message/AAAAA
 }
 ```
 
-To force permanent deletion without moving to Trash first, add `?force=true` to the URL (not supported for Gmail API accounts).
-
 **JavaScript Example:**
 
 ```javascript
-async function deleteMessage(accountId, messageId) {
+async function deleteMessage(accountId, messageId, force = false) {
+  const params = force ? '?force=true' : '';
+
   const response = await fetch(
-    `https://emailengine.example.com/v1/account/${accountId}/message/${messageId}`,
+    `https://emailengine.example.com/v1/account/${accountId}/message/${messageId}${params}`,
     {
       method: 'DELETE',
       headers: { 'Authorization': 'Bearer YOUR_ACCESS_TOKEN' }
@@ -462,40 +497,56 @@ async function deleteMessage(accountId, messageId) {
 await deleteMessage('example', 'AAAAAQAAAeE');
 ```
 
-### Delete Multiple Messages
-
-```javascript
-async function deleteMessages(accountId, messageIds) {
-  const results = [];
-
-  for (const messageId of messageIds) {
-    try {
-      const result = await deleteMessage(accountId, messageId);
-      results.push({ messageId, success: true });
-    } catch (err) {
-      results.push({ messageId, success: false, error: err.message });
-    }
-  }
-
-  return results;
-}
-
-const results = await deleteMessages('example', [
-  'AAAAAQAAAeE',
-  'AAAAAQAAAeF',
-  'AAAAAQAAAeG'
-]);
-```
-
 ### Delete Behavior
 
-The delete API has smart behavior:
+What a delete does, and what the response says, depends on the backend:
 
-- **Message not in Trash**: Moves to Trash (recoverable)
-- **Message already in Trash**: Permanently deletes (not recoverable)
-- **With `?force=true`**: Permanently deletes regardless of location (not supported for Gmail API)
+| Backend         | Default                                                                                                   | With `force=true`                                  |
+| --------------- | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| IMAP            | Moves to the `\Trash` folder and returns `deleted: false` with `moved`. A message already in `\Trash` or `\Junk`, or on an account with no Trash folder, is expunged and returns `deleted: true` | Expunges wherever the message is; `deleted: true` |
+| Gmail API       | Adds the `TRASH` label and returns `deleted: true` with `moved.message`                                   | Not supported; the message still goes to Trash    |
+| Microsoft Graph | Moves to Deleted Items and returns `deleted: true` with `moved`                                           | Deletes permanently; `deleted: true`               |
 
-This means you can safely use the delete endpoint in most cases - messages get a "second chance" in Trash before permanent deletion.
+So `deleted: false` is the only reliable signal that a message was moved rather than removed, and it only occurs on IMAP accounts. Check for `moved` when the distinction matters.
+
+### Bulk Actions
+
+Three endpoints act on every message matching a search in one call, instead of one request per message:
+
+- [`PUT /v1/account/{account}/messages`](/docs/api/put-v-1-account-account-messages) updates flags and labels
+- [`PUT /v1/account/{account}/messages/move`](/docs/api/put-v-1-account-account-messages-move) moves
+- [`PUT /v1/account/{account}/messages/delete`](/docs/api/put-v-1-account-account-messages-delete) deletes, with the same `force` query parameter and per-backend behavior as a single delete
+
+The folder is the `path` query parameter, and the body carries the same `search` object the [search endpoint](/docs/receiving/searching) takes. On Gmail API and Microsoft Graph accounts, `search.emailIds` acts on the listed `emailId` values and every other criterion is ignored; IMAP accounts ignore `emailIds` and select by the remaining criteria:
+
+```bash
+curl -X PUT "https://emailengine.example.com/v1/account/example/messages/delete?path=INBOX" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "search": {
+      "seen": true,
+      "before": "2025-01-01"
+    }
+  }'
+```
+
+**Response (IMAP, moved to Trash):**
+
+```json
+{
+  "deleted": false,
+  "moved": {
+    "destination": "Trash",
+    "idMap": [
+      ["AAAAAQAAAeE", "AAAAAwAAAWg"],
+      ["AAAAAQAAAeF", "AAAAAwAAAWh"]
+    ]
+  }
+}
+```
+
+`idMap` pairs each source ID with its ID in Trash and is returned by IMAP accounts; Gmail API and Graph accounts return `moved.emailIds` instead, and a Graph account deleting with `force=true` lists the removed messages under `deletedMessages.emailIds`. `search` is required, but `{}` is valid and matches the whole folder, so run the criteria through the search endpoint first when the count matters.
 
 ## Updating Message Flags
 
@@ -509,23 +560,33 @@ curl -X PUT "https://emailengine.example.com/v1/account/example/message/AAAAAQAA
   -H "Content-Type: application/json" \
   -d '{
     "flags": {
-      "add": ["\\Seen", "\\Flagged"],
-      "delete": []
+      "add": ["\\Seen", "\\Flagged"]
     }
   }'
 ```
 
-**Response:**
+`flags` takes `add`, `delete`, and `set`. `set` replaces the whole flag list, and when it is present `add` and `delete` are ignored.
+
+**Response (IMAP):**
 
 ```json
 {
   "flags": {
-    "add": ["\\Seen", "\\Flagged"]
+    "add": true
   }
 }
 ```
 
-The response echoes back the flag operations that were performed.
+An IMAP account reports each operation as `true` or `false`. Gmail API and Graph accounts echo the requested flags back and add `result`, the message's flag list after the update:
+
+```json
+{
+  "flags": {
+    "add": ["\\Seen", "\\Flagged"],
+    "result": ["\\Seen", "\\Flagged"]
+  }
+}
+```
 
 ### Common Flag Operations
 
@@ -621,48 +682,49 @@ async function markAsAnswered(accountId, messageId) {
 
 ### Batch Flag Updates
 
-Update flags on multiple messages:
+Mark every unseen message in a folder as read with one bulk update:
 
 ```javascript
-async function markAllAsRead(accountId, messageIds) {
-  const results = [];
+async function markFolderAsRead(accountId, folderPath) {
+  const params = new URLSearchParams({ path: folderPath });
 
-  for (const messageId of messageIds) {
-    try {
-      await markAsRead(accountId, messageId);
-      results.push({ messageId, success: true });
-    } catch (err) {
-      results.push({ messageId, success: false, error: err.message });
+  const response = await fetch(
+    `https://emailengine.example.com/v1/account/${accountId}/messages?${params}`,
+    {
+      method: 'PUT',
+      headers: {
+        'Authorization': 'Bearer YOUR_ACCESS_TOKEN',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        search: { unseen: true },
+        update: { flags: { add: ['\\Seen'] } }
+      })
     }
-  }
+  );
 
-  return results;
+  return await response.json();
 }
 
-// Mark all unread messages as read
-const unread = await listUnreadMessages('example', 'INBOX');
-const messageIds = unread.messages.map(m => m.id);
-await markAllAsRead('example', messageIds);
+await markFolderAsRead('example', 'INBOX');
 ```
 
 ## Working with Gmail Labels and Outlook Categories
 
-EmailEngine uses the `labels` array for both Gmail labels and Microsoft Outlook/Graph API categories.
+EmailEngine uses the `labels` array for both Gmail labels and Microsoft Outlook categories. The two are different things, and [Mailbox Operations](/docs/receiving/mailbox-operations#working-with-gmail-labels-and-outlook-categories) describes each. What matters here is how the update endpoint treats them:
 
-**Gmail Labels:**
-- Labels must be pre-created in Gmail
-- Labels map to folders (e.g., label "Work" corresponds to a folder)
-- Used with Gmail IMAP and Gmail API accounts
+| Backend         | What `labels` holds       | `add` / `delete`               | `set`                                             |
+| --------------- | ------------------------- | ------------------------------ | ------------------------------------------------- |
+| Gmail IMAP      | Gmail labels              | Supported                      | Supported                                         |
+| Gmail API       | Gmail labels              | Supported                      | Rejected with a 400 (`UnsupportedOperation`)      |
+| Microsoft Graph | Outlook categories        | Supported (v2.58.0 and later)  | Supported                                         |
+| Other IMAP      | Not applicable            | Ignored                        | Ignored                                           |
 
-**Microsoft Outlook Categories:**
-- Categories are **automatically created** when you set them (no pre-creation needed)
-- Categories are **not folders** - they're an additional filter/tag
-- Categories don't map to mailbox folders (unlike Gmail labels)
-- Only available when using **Microsoft Graph API** backend
+The value each backend expects differs. Gmail over IMAP and Graph take the label or category name. A Gmail API account takes the label ID, the `id` of the label in the [mailbox listing](/docs/receiving/mailbox-operations#listing-mailboxes) (`Label_971539351003152516`), or a special-use flag such as `\Inbox`; a label name is passed to Gmail unchanged and rejected as an unknown label.
 
 ### Add Labels/Categories
 
-For Gmail or Microsoft Graph accounts, add labels or categories to a message:
+Gmail over IMAP, by label name:
 
 ```bash
 curl -X PUT "https://emailengine.example.com/v1/account/example/message/AAAAAQAAAeE" \
@@ -670,12 +732,25 @@ curl -X PUT "https://emailengine.example.com/v1/account/example/message/AAAAAQAA
   -H "Content-Type: application/json" \
   -d '{
     "labels": {
-      "add": ["Work", "Important"]
+      "add": ["Work", "Invoices"]
     }
   }'
 ```
 
-**Example - Add categories to Outlook message:**
+Gmail API, by label ID:
+
+```bash
+curl -X PUT "https://emailengine.example.com/v1/account/gmail-account/message/AAAAAQAAAeE" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "labels": {
+      "add": ["Label_971539351003152516"]
+    }
+  }'
+```
+
+**Example - Add categories to an Outlook message:**
 
 ```bash
 curl -X PUT "https://emailengine.example.com/v1/account/outlook-account/message/AAMkADU" \
@@ -688,9 +763,7 @@ curl -X PUT "https://emailengine.example.com/v1/account/outlook-account/message/
   }'
 ```
 
-:::tip Microsoft Graph Auto-Creation
-When using Microsoft Graph API, categories are automatically created if they don't exist. You don't need to pre-create them in Outlook.
-:::
+A category name that the mailbox has not seen before is written to the message as-is; EmailEngine does not manage the mailbox's category list.
 
 ### Remove Labels/Categories
 
@@ -716,9 +789,11 @@ async function removeLabel(accountId, messageId, label) {
 
 ### Set Labels/Categories (Replace All)
 
+`labels.set` replaces the list in one call on Gmail IMAP and Graph accounts. For a Gmail API account, which rejects `set`, compute the difference and send `add` and `delete` together. The message reports its labels by name while the update takes IDs, so the mailbox listing is what translates between the two:
+
 ```javascript
 async function setLabels(accountId, messageId, labels) {
-  // First, get current labels
+  // First, get current labels (reported by name)
   const message = await getMessage(accountId, messageId);
   const currentLabels = message.labels || [];
 
@@ -730,6 +805,10 @@ async function setLabels(accountId, messageId, labels) {
     return message; // No changes needed
   }
 
+  // Translate names to the label IDs a Gmail API account updates by
+  const labelIds = new Map((await listMailboxes(accountId)).map(f => [f.path, f.id]));
+  const toId = name => (name.startsWith('\\') ? name : labelIds.get(name) || name);
+
   return await fetch(
     `https://emailengine.example.com/v1/account/${accountId}/message/${messageId}`,
     {
@@ -740,8 +819,8 @@ async function setLabels(accountId, messageId, labels) {
       },
       body: JSON.stringify({
         labels: {
-          add: toAdd,
-          delete: toRemove
+          add: toAdd.map(toId),
+          delete: toRemove.map(toId)
         }
       })
     }
@@ -752,24 +831,7 @@ async function setLabels(accountId, messageId, labels) {
 await setLabels('example', 'AAAAAQAAAeE', ['Work', 'Urgent']);
 ```
 
-### Key Differences: Gmail Labels vs Outlook Categories
-
-| Feature | Gmail Labels | Outlook Categories |
-|---------|--------------|-------------------|
-| **Pre-creation required** | Yes - must exist in Gmail | No - auto-created when set |
-| **Folder mapping** | Yes - labels map to folders | No - separate filter/tag system |
-| **Backend support** | Gmail IMAP, Gmail API | Microsoft Graph API only |
-| **Use case** | Organize messages into folders | Add color-coded tags to messages |
-| **Color support** | No colors | Colors assigned by Outlook (not via API) |
-| **Delete/rename** | Yes - via Gmail | No - use Outlook directly |
-
-:::info Important
-Outlook categories are **not a replacement for folders**. They're an additional organizational layer. Unlike Gmail where a label creates a folder, Outlook categories are independent tags that don't affect folder structure.
-:::
-
-:::note Outlook Category Limitations
-EmailEngine can only work with category **names**, not colors. When you assign a new category name to a message, Outlook automatically creates the category with a default color. To change colors, rename, or delete categories, you must use Outlook directly - these operations are not available through EmailEngine.
-:::
+On a Gmail account the system labels come back as special-use flags (`\Inbox`, `\Sent`), and can be added or removed under those names. Removing `\Inbox` is how a Gmail message is archived.
 
 ## Common Patterns
 
@@ -807,30 +869,38 @@ await processUnreadMessages('example', async (message) => {
 
 ### Auto-Archive Old Messages
 
+Let the server select the messages, then move them all with one bulk request:
+
 ```javascript
 async function autoArchiveOldMessages(accountId, daysOld = 90) {
   const cutoffDate = new Date();
   cutoffDate.setDate(cutoffDate.getDate() - daysOld);
 
-  const messages = await listAllMessages(accountId, 'INBOX');
+  const folders = await listMailboxes(accountId);
+  const archiveFolder = folders.find(f => f.specialUse === '\\Archive');
 
-  let archived = 0;
-
-  for (const message of messages) {
-    const messageDate = new Date(message.date);
-
-    if (messageDate < cutoffDate) {
-      try {
-        await archiveMessage(accountId, message.id);
-        archived++;
-      } catch (err) {
-        console.error(`Failed to archive ${message.id}:`, err);
-      }
-    }
+  if (!archiveFolder) {
+    throw new Error('Archive folder not found');
   }
 
-  console.log(`Archived ${archived} messages older than ${daysOld} days`);
-  return archived;
+  const params = new URLSearchParams({ path: 'INBOX' });
+
+  const response = await fetch(
+    `https://emailengine.example.com/v1/account/${accountId}/messages/move?${params}`,
+    {
+      method: 'PUT',
+      headers: {
+        'Authorization': 'Bearer YOUR_ACCESS_TOKEN',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        search: { before: cutoffDate.toISOString().split('T')[0] },
+        path: archiveFolder.path
+      })
+    }
+  );
+
+  return await response.json();
 }
 
 // Archive messages older than 90 days

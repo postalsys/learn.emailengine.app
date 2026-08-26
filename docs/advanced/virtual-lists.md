@@ -1,6 +1,6 @@
 ---
 title: Virtual Mailing Lists
-sidebar_position: 10
+sidebar_position: 12
 description: Add unsubscribe headers, a hosted unsubscribe page, and automatic suppression to bulk sends without running a mailing list manager
 keywords:
   - mailing lists
@@ -44,7 +44,7 @@ EmailEngine never stores your subscribers, only the addresses that opted out.
 
 ### Set the service URL
 
-The unsubscribe link points back at your EmailEngine instance, so the entire feature depends on the `serviceUrl` setting. Set it under Configuration - Service in the admin interface, or over the API:
+The unsubscribe link points back at your EmailEngine instance, so the entire feature depends on the `serviceUrl` setting. Set it as **Service URL** under **Configuration > General** in the admin interface, or over the API:
 
 ```bash
 curl -X POST "https://emailengine.example.com/v1/settings" \
@@ -75,7 +75,7 @@ curl -X POST "https://emailengine.example.com/v1/account/example/submit" \
   -d '{
     "listId": "weekly-newsletter",
     "subject": "This week at Example",
-    "html": "<p>Hello {{name}},</p><p>...</p><p><a href=\"{{rcpt.unsubscribeUrl}}\">Unsubscribe</a></p>",
+    "html": "<p>Hello {{name}},</p><p>Here is what changed at Example this week.</p><p><a href=\"{{rcpt.unsubscribeUrl}}\">Unsubscribe</a></p>",
     "mailMerge": [
       { "to": { "address": "alice@example.com", "name": "Alice" }, "params": { "name": "Alice" } },
       { "to": { "address": "bob@example.com", "name": "Bob" }, "params": { "name": "Bob" } }
@@ -103,7 +103,7 @@ curl -X POST "https://emailengine.example.com/v1/account/example/submit" \
 }
 ```
 
-Suppressed recipients come back with `success: true` and a `skipped` object instead of a `messageId` and `queueId`. Nothing was queued for them, and this is not an error. Count the skipped entries if you want to track how much of a list has opted out.
+Suppressed recipients come back with `success: true` and a `skipped` object instead of a `messageId` and `queueId`. Nothing was queued for them, and this is not an error. `skipped.reason` echoes the reason stored on the list entry: `unsubscribe` for an opt-out, or whatever reason your application gave when it [added the address itself](#manage-the-list). Count the skipped entries if you want to track how much of a list has opted out.
 
 ## What the message carries
 
@@ -142,7 +142,7 @@ There are two routes out, and both end in the same place:
 
 The hosted page has three states: confirm the unsubscribe, unsubscribed with an offer to re-subscribe, and subscription resumed. A mistaken unsubscribe is therefore self-service to undo, with no support ticket and no work on your side.
 
-The page is localized and follows the recipient's browser language, falling back to your configured default locale. Style it under Configuration - Branding, where the brand name, a custom header block and custom `<head>` markup apply to every public page.
+The page is [localized](/docs/advanced/translations) and follows the recipient's browser language, falling back to your configured default locale. Style it under **Configuration > Branding**, where the brand name, a header template and custom `<head>` markup apply to every public page.
 
 ## React to opt-outs
 
@@ -170,7 +170,7 @@ app.post('/webhooks/emailengine', (req, res) => {
 Two behaviors are worth knowing when you write that handler:
 
 - **Events fire only on an actual change.** Unsubscribing an already suppressed address is a silent no-op, so a mail client that retries its one-click request will not produce duplicate events. Removing an address through the API does not fire `listSubscribe` either, because only a recipient's own re-subscribe counts as one.
-- **The suppression is stored before the webhook goes out.** A failed delivery is logged, not retried. Treat webhooks as a signal to update your own records rather than as the record itself. EmailEngine's list is the authority and you can read it back at any time.
+- **The suppression is stored before the webhook goes out.** The event is then delivered like any other webhook, with the usual retries. If queuing it fails, the failure is logged and the suppression stands. Treat webhooks as a signal to update your own records rather than as the record itself. EmailEngine's list is the authority and you can read it back at any time.
 
 ## Manage the list
 
@@ -178,7 +178,7 @@ Suppression Lists in the admin interface sidebar shows every list that exists, w
 
 ![Suppression Lists page listing each list with its address count](/img/screenshots/suppression-lists.png)
 
-Opening a list shows what was recorded for each address: why it was suppressed, how it got there, the account that was sending, and when. The `one-click` source below is the mail client unsubscribe button, and `api` is an address the application suppressed itself.
+Opening a list shows what was recorded for each address: why it was suppressed, how it got there, the account that was sending, and when. The source is one of `one-click` (the mail client's unsubscribe button), `form` (the hosted page), `api` (an address the application suppressed itself), or `admin` (added on this page).
 
 ![Entries on a suppression list, with reason, source, account and date columns](/img/screenshots/suppression-list-entries.png)
 

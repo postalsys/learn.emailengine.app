@@ -12,17 +12,17 @@ keywords:
 
 # Tracking Email Replies
 
-Reply tracking is essential when building email integrations that need to know when recipients respond to your messages. This guide shows you how to send trackable emails and reliably detect replies using EmailEngine.
+Reply tracking is how an integration learns that a recipient answered a message it sent. This guide shows how to send messages whose replies can be recognized, and how to match a reply in a `messageNew` webhook back to the message it answers.
 
 ## Why Track Replies?
 
 **Lead Management**
-- Identify hot leads who respond quickly
+- Identify leads who respond quickly
 - Track engagement with sales emails
 - Automate follow-ups based on responses
 
 **Customer Support**
-- Route replies to correct ticket
+- Route replies to the correct ticket
 - Track response times
 - Close tickets automatically
 
@@ -34,72 +34,90 @@ Reply tracking is essential when building email integrations that need to know w
 **Workflow Automation**
 - Trigger actions when replies arrive
 - Update CRM records
-- Send notifications to team
+- Send notifications to a team
 
 ## How Reply Tracking Works
 
 Email threading uses standard headers:
 
-**Message-ID** - Unique identifier you assign when sending
+**Message-ID** - Unique identifier of a message. You can set it when sending
 ```
-Message-ID: <1697123456-account@yourdomain.com>
-```
-
-**In-Reply-To** - References the Message-ID being replied to
-```
-In-Reply-To: <1697123456-account@yourdomain.com>
+Message-ID: <1697123456.k2x9p.eyJsZWFkSWQiOiJsZWFkLTQ1NiJ9@yourdomain.com>
 ```
 
-**References** - Complete thread history
+**In-Reply-To** - The Message-ID of the message being replied to
 ```
-References: <original@domain.com> <1697123456-account@yourdomain.com>
+In-Reply-To: <1697123456.k2x9p.eyJsZWFkSWQiOiJsZWFkLTQ1NiJ9@yourdomain.com>
 ```
 
-When someone replies, their email client automatically sets `In-Reply-To` to your `Message-ID`. EmailEngine captures this in webhooks, allowing you to match replies to original messages.
+**References** - The Message-IDs of the whole thread so far
+```
+References: <original@domain.com> <1697123456.k2x9p.eyJsZWFkSWQiOiJsZWFkLTQ1NiJ9@yourdomain.com>
+```
+
+When someone replies, their mail client sets `In-Reply-To` to your Message-ID and appends it to `References`. EmailEngine exposes the In-Reply-To value as `inReplyTo` on every message it reports, in the `messageNew` webhook and in the [get message](/docs/api/get-v-1-account-account-message-message) response, so a reply can be matched to the message it answers. The References header is available through `headers`.
 
 ## Sending Trackable Messages
 
 ### Step 1: Generate Unique Message-ID
 
-Create a unique Message-ID when sending:
+Create a unique Message-ID when sending. The example packs tracking data into the local part, separated by dots; base64url output never contains a dot, so the parts can be split apart again:
 
 ```javascript
-function generateMessageId(accountId, customData = {}) {
+function generateMessageId(customData = {}) {
   const timestamp = Date.now();
-  const random = Math.random().toString(36).substring(7);
+  const random = Math.random().toString(36).substring(2, 8);
 
   // Include any data you want to track
   const data = Buffer.from(JSON.stringify(customData)).toString('base64url');
 
-  return `<${timestamp}-${accountId}-${random}-${data}@yourdomain.com>`;
+  return `<${timestamp}.${random}.${data}@yourdomain.com>`;
+}
+
+function extractMetadata(messageId) {
+  const match = messageId.match(/^<[^.@]+\.[^.@]+\.([^@]+)@/);
+  if (!match) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(Buffer.from(match[1], 'base64url').toString());
+  } catch (err) {
+    return {};
+  }
 }
 
 // Generate Message-ID for a sales email
-const messageId = generateMessageId('account123', {
+const messageId = generateMessageId({
   campaignId: 'sales-2025-q4',
   leadId: 'lead-456',
   userId: 'user-789'
 });
 
 console.log(messageId);
-// <1697123456-account123-x3k2p-eyJjYW1wYWlnbklkIjoic2FsZXMtMjAyNS1xNCJ9@yourdomain.com>
+// <1697123456789.k2x9p3.eyJjYW1wYWlnbklkIjoic2FsZXMtMjAyNS1xNCIsImxlYWRJZCI6ImxlYWQtNDU2IiwidXNlcklkIjoidXNlci03ODkifQ@yourdomain.com>
+
+console.log(extractMetadata(messageId).leadId);
+// lead-456
 ```
+
+Use a domain you control after the `@`. Message-IDs are supposed to be globally unique, and the domain is what makes yours distinguishable from everyone else's.
 
 ### Step 2: Send with Message-ID
 
-Send the email with your generated Message-ID:
+Send the email with your generated Message-ID through the [submit endpoint](/docs/api/post-v-1-account-account-submit). `messageId` sets the Message-ID header, and `headers` adds any further headers:
 
 ```javascript
-async function sendTrackedEmail(accountId, recipient, subject, content) {
+async function sendTrackedEmail(accountId, recipient, subject, content, customData = {}) {
   // Generate unique Message-ID
-  const messageId = generateMessageId(accountId, {
-    recipient: recipient,
-    sentAt: new Date().toISOString()
+  const messageId = generateMessageId({
+    ...customData,
+    recipient: recipient
   });
 
   // Send email
   const response = await fetch(
-    `https://emailengine.example.com/v1/account/${accountId}/submit`, // See: /docs/api/post-v-1-account-account-submit
+    `https://emailengine.example.com/v1/account/${accountId}/submit`,
     {
       method: 'POST',
       headers: {
@@ -118,7 +136,7 @@ async function sendTrackedEmail(accountId, recipient, subject, content) {
         html: content,
         messageId: messageId,
         headers: {
-          // Suppress out-of-office auto-replies
+          // Ask Exchange and Outlook not to send out-of-office replies
           'X-Auto-Response-Suppress': 'OOF, AutoReply'
         }
       })
@@ -143,22 +161,25 @@ async function sendTrackedEmail(accountId, recipient, subject, content) {
 }
 
 // Send tracked email
-const result = await sendTrackedEmail(
-  'account123',
+const sent = await sendTrackedEmail(
+  'example',
   'customer@example.com',
   'Special Offer for You',
-  '<p>Hi, we have a special offer...</p>'
+  '<p>Hi, we have a special offer for you.</p>',
+  { campaignId: 'sales-2025-q4', leadId: 'lead-456' }
 );
 
-console.log(`Sent with Message-ID: ${result.messageId}`);
+console.log(`Sent with Message-ID: ${sent.messageId}`);
 ```
+
+The response's `queueId` identifies the queued submission; `messageId` is what the reply will reference.
 
 ### Step 3: Store Message-IDs
 
 Store Message-IDs in your database for matching:
 
 ```javascript
-// Database schema (example)
+// In-memory stand-in for a database table keyed by Message-ID
 const trackedEmails = new Map();
 
 async function storeTrackedEmail(data) {
@@ -167,16 +188,10 @@ async function storeTrackedEmail(data) {
     replied: false,
     replyReceivedAt: null
   });
-
-  // In production, save to database:
-  // await db.trackedEmails.insert(data);
 }
 
 async function getTrackedEmail(messageId) {
   return trackedEmails.get(messageId);
-
-  // In production:
-  // return await db.trackedEmails.findOne({ messageId });
 }
 ```
 
@@ -184,7 +199,7 @@ async function getTrackedEmail(messageId) {
 
 ### Step 1: Configure Webhooks
 
-Enable webhooks for new message events:
+Enable webhooks for new message events and include the threading headers in the payload:
 
 ```bash
 curl -X POST "https://emailengine.example.com/v1/settings" \
@@ -194,9 +209,11 @@ curl -X POST "https://emailengine.example.com/v1/settings" \
     "webhooks": "https://your-app.com/webhooks/emailengine",
     "webhooksEnabled": true,
     "webhookEvents": ["messageNew"],
-    "notifyHeaders": ["In-Reply-To", "References", "Message-ID"]
+    "notifyHeaders": ["in-reply-to", "references", "message-id"]
   }'
 ```
+
+`data.inReplyTo` is in the payload regardless of `notifyHeaders`. Listing the headers puts the raw values into `data.headers` as well, which is where `references` comes from. Header names in the payload are lower case.
 
 ### Step 2: Handle Webhook Events
 
@@ -224,9 +241,21 @@ async function handleNewMessage(event) {
   // The folder path lives at the payload root, not inside the data object
   const { account, path, data } = event;
 
-  // Check if this is a reply
+  // A reply references at least one earlier message
+  const referenced = new Set();
   if (data.inReplyTo) {
-    await handlePotentialReply(account, path, data);
+    referenced.add(data.inReplyTo);
+  }
+  for (const value of (data.headers && data.headers.references) || []) {
+    for (const id of value.split(/\s+/)) {
+      if (id) {
+        referenced.add(id);
+      }
+    }
+  }
+
+  if (referenced.size) {
+    await handlePotentialReply(account, path, data, referenced);
   }
 }
 
@@ -235,21 +264,26 @@ app.listen(3000);
 
 ### Step 3: Match Replies
 
-Match the `In-Reply-To` header to your stored Message-IDs:
+Match the referenced Message-IDs to your stored ones:
 
 ```javascript
-async function handlePotentialReply(accountId, path, message) {
-  const inReplyTo = message.inReplyTo;
-
-  // Check if replying to one of our tracked messages
-  const original = await getTrackedEmail(inReplyTo);
+async function handlePotentialReply(accountId, path, message, referenced) {
+  // Check if replying to one of our tracked messages. In-Reply-To is checked
+  // first; References catches a reply to a reply, and clients that thread loosely
+  let original = null;
+  for (const messageId of referenced) {
+    original = await getTrackedEmail(messageId);
+    if (original) {
+      break;
+    }
+  }
 
   if (!original) {
     // Not replying to a tracked message
     return;
   }
 
-  // Verify it's in inbox (not spam/trash)
+  // Ignore replies that landed in spam or trash
   const isInInbox = (
     path === 'INBOX' ||
     (message.labels && message.labels.includes('\\Inbox'))
@@ -260,70 +294,68 @@ async function handlePotentialReply(accountId, path, message) {
     return;
   }
 
-  // Fetch full message details
-  const fullMessage = await getMessage(accountId, message.id);
-
   // Filter out auto-responses
-  if (await isAutoResponse(fullMessage)) {
+  if (isAutoResponse(message)) {
     console.log('Auto-response detected, ignoring');
     return;
   }
 
-  // This is a genuine reply!
+  // Fetch the full message, including the body
+  const fullMessage = await getMessage(accountId, message.id);
+
+  // This is a genuine reply
   await handleReply(original, fullMessage);
+}
+
+async function getMessage(accountId, messageId) {
+  const response = await fetch(
+    `https://emailengine.example.com/v1/account/${accountId}/message/${messageId}?textType=*`,
+    {
+      headers: { 'Authorization': 'Bearer YOUR_ACCESS_TOKEN' }
+    }
+  );
+
+  return await response.json();
 }
 ```
 
 ## Filtering Auto-Responses
 
-### Check Auto-Response Headers
+### Use EmailEngine's Detection
 
-Filter out automated messages:
+Every message EmailEngine reports carries `isAutoReply: true` when it looks like an automatic reply. The subject check matches a subject that starts with `Automatic reply`, `Auto reply`, `Autoreply`, `Auto response`, `Out of Office`, `Out of the Office`, `OOF:` or `OOO:`, and one that starts with `Auto:` when the message also carries an In-Reply-To header. The header check matches `Precedence` containing `auto_reply`, `auto-reply` or `autoreply`, `Auto-Submitted` containing `auto-replied`, and any value at all in `X-Auto-Response-Suppress`, `X-Autoresponder`, `X-Autorespond` or `X-Autoreply`. The flag is set on every account type. The get message response reads every header; for the `messageNew` payload EmailEngine always fetches `Precedence`, `Auto-Submitted`, `X-Autoreply` and `X-Autorespond`, while `X-Auto-Response-Suppress` and `X-Autoresponder` only count there when `notifyHeaders` includes them or is `["*"]`.
+
+Bounces and mailing list traffic are not auto-replies in this sense, so check for those separately:
 
 ```javascript
-async function isAutoResponse(message) {
+function isAutoResponse(message) {
+  if (message.isAutoReply) {
+    return true; // Out of office, vacation responder, and similar
+  }
+
   const headers = message.headers || {};
 
-  // Check Return-Path for bounces
-  if (headers['return-path']?.[0] === '<>') {
-    return true; // Bounce message
-  }
-
-  // Check Auto-Submitted header
-  const autoSubmitted = headers['auto-submitted']?.[0];
-  if (autoSubmitted && autoSubmitted.toLowerCase() !== 'no') {
-    return true; // Auto-generated
-  }
-
-  // Check for out-of-office in subject
-  const subject = (message.subject || '').toLowerCase();
-  if (
-    subject.includes('out of office') ||
-    subject.includes('automatic reply') ||
-    subject.includes('auto:') ||
-    subject.includes('away:')
-  ) {
+  // A null return path marks a bounce
+  if (headers['return-path'] && headers['return-path'][0] === '<>') {
     return true;
   }
 
-  // Check for mailing list headers
+  // Mailing list traffic
   if (headers['list-id'] || headers['list-unsubscribe']) {
-    return true; // Mailing list
+    return true;
   }
 
-  // Check precedence header
-  const precedence = headers['precedence']?.[0];
+  // Bulk mail
+  const precedence = headers['precedence'] && headers['precedence'][0];
   if (precedence && ['bulk', 'junk', 'list'].includes(precedence.toLowerCase())) {
     return true;
   }
 
-  return false; // Appears to be genuine reply
+  return false; // Appears to be a genuine reply
 }
 ```
 
-:::info Header Availability
-Full message headers are not available for Microsoft Graph API (Outlook) accounts, so this header-based filtering pattern applies to IMAP and Gmail accounts. For MS Graph accounts, rely on subject-based checks and sender verification instead.
-:::
+The header checks need those headers in the payload: add `return-path`, `list-id`, `list-unsubscribe` and `precedence` to `notifyHeaders`, or use `["*"]` to include every header. Bounces that EmailEngine itself recognizes also arrive as [`messageBounce`](/docs/webhooks/messagebounce) events.
 
 ### Check Sender
 
@@ -338,6 +370,8 @@ function isValidReplySender(original, reply) {
   return replyFrom === originalRecipient;
 }
 ```
+
+Forwarded threads and shared mailboxes produce legitimate replies from other addresses, so treat a mismatch as a signal to review rather than a reason to drop the reply.
 
 ## Processing Replies
 
@@ -369,15 +403,12 @@ async function updateTrackedEmail(messageId, updates) {
   if (existing) {
     trackedEmails.set(messageId, { ...existing, ...updates });
   }
-
-  // In production:
-  // await db.trackedEmails.update({ messageId }, { $set: updates });
 }
 ```
 
 ### Trigger Actions
 
-Perform actions when replies are received:
+Perform actions when replies are received. The fetched message carries its bodies under `text.plain` and `text.html`:
 
 ```javascript
 async function onReplyReceived(original, reply) {
@@ -405,22 +436,13 @@ async function onReplyReceived(original, reply) {
   await storeReplyContent({
     originalId: original.messageId,
     replyId: reply.id,
-    content: reply.text,
-    html: reply.html,
-    sentiment: await analyzeSentiment(reply.text)
+    content: reply.text && reply.text.plain,
+    html: reply.text && reply.text.html
   });
 }
-
-function extractMetadata(messageId) {
-  // Extract data from Message-ID
-  const match = messageId.match(/<[\d-]+-([\w-]+)-([^@]+)@/);
-  if (match && match[2]) {
-    const data = Buffer.from(match[2], 'base64url').toString();
-    return JSON.parse(data);
-  }
-  return {};
-}
 ```
+
+`updateCRM`, `sendNotification` and `storeReplyContent` stand for your own application's functions.
 
 ## Putting It Together
 
@@ -428,14 +450,14 @@ The three steps above are the whole mechanism. What ties them together is a sing
 
 | Column | Written when | Used for |
 |--------|--------------|----------|
-| `messageId` | Sending | The join key. Matched against `inReplyTo` and `references` on incoming mail |
+| `messageId` | Sending | The join key. Matched against `inReplyTo` and the `references` header on incoming mail |
 | `recipient`, `subject`, `sentAt` | Sending | Reporting, and calculating response time |
 | `repliedAt`, `replyFrom` | On a matching `messageNew` | Marking the thread answered |
 
 Two details decide whether this works in production:
 
 - **Index on `messageId`.** Every inbound message triggers a lookup, so a table scan per webhook does not survive contact with a busy mailbox.
-- **Check `references` as well as `inReplyTo`.** A reply from a client that threads loosely, or a reply to a reply, may carry your Message-ID only in `references`. Matching on `inReplyTo` alone silently misses those.
+- **Check `references` as well as `inReplyTo`.** A reply from a client that threads loosely, or a reply to a reply, may carry your Message-ID only in `references`. Matching on `inReplyTo` alone silently misses those. `references` is a header, so it has to be requested with `notifyHeaders`.
 
 Filter auto-responses before recording a reply, or vacation autoresponders will close out threads nobody read. See [Filtering Auto-Responses](#filtering-auto-responses) above.
 
@@ -443,19 +465,18 @@ Filter auto-responses before recording a reply, or vacation autoresponders will 
 
 ### Track Multiple Recipients
 
-Handle emails sent to multiple recipients:
+Send one message per recipient so each gets its own Message-ID:
 
 ```javascript
 async function sendTrackedToMultiple(accountId, recipients, subject, html) {
   const messageIds = [];
 
   for (const recipient of recipients) {
-    const messageId = await sendTrackedEmail(
+    const { messageId } = await sendTrackedEmail(
       accountId,
       recipient,
       subject,
-      html,
-      { recipient }
+      html
     );
 
     messageIds.push({ recipient, messageId });
@@ -465,11 +486,11 @@ async function sendTrackedToMultiple(accountId, recipients, subject, html) {
 }
 
 // Track who replied
-const tracking = await sendTrackedToMultiple('account123', [
+const tracking = await sendTrackedToMultiple('example', [
   'customer1@example.com',
   'customer2@example.com',
   'customer3@example.com'
-], 'Product Update', '<p>New features...</p>');
+], 'Product Update', '<p>New features are available.</p>');
 
 // Later, check replies
 for (const { recipient, messageId } of tracking) {
@@ -502,13 +523,9 @@ function calculateResponseTime(original, reply) {
 // When reply received
 const responseTime = calculateResponseTime(original, reply);
 console.log(`Response time: ${responseTime.formatted}`);
-
-// Track average response times
-await analytics.trackResponseTime({
-  campaignId: original.metadata.campaignId,
-  responseTime: responseTime.milliseconds
-});
 ```
+
+`reply.date` is the time the mail server received the reply, not the time the sender's client stamped on it.
 
 ### Thread Multiple Replies
 
@@ -517,7 +534,7 @@ Track conversation threads:
 ```javascript
 const threads = new Map();
 
-async function handleReply(original, reply) {
+async function recordInThread(original, reply) {
   let thread = threads.get(original.messageId);
 
   if (!thread) {
@@ -542,6 +559,8 @@ async function handleReply(original, reply) {
   console.log(`Thread has ${thread.messages.length} messages`);
 }
 ```
+
+Where the server assigns thread IDs (Gmail, Microsoft Graph, and IMAP servers with the OBJECTID extension), `threadId` on the reply lets you fetch the whole conversation in one search instead of assembling it yourself. See [Searching threads](/docs/sending/threading/searching-threads).
 
 ## See Also
 

@@ -1,7 +1,7 @@
 ---
 title: Searching Messages
 sidebar_position: 6
-description: "Complete guide to searching emails with EmailEngine - search queries, operators, filters, and best practices"
+description: "Complete guide to searching emails with EmailEngine - search queries, operators, filters, and per-backend limits"
 keywords:
   - email search
   - search queries
@@ -12,24 +12,9 @@ keywords:
 
 # Searching Messages
 
-The [search endpoint](/docs/api/post-v-1-account-account-search) finds messages in a connected account. For IMAP accounts the terms are translated into IMAP SEARCH, which every standards-compliant server implements.
+The [search endpoint](/docs/api/post-v-1-account-account-search) finds messages in a connected account. The search runs on the mail server, so only matching messages are transferred: for IMAP accounts the criteria are translated into an IMAP SEARCH command, for Gmail API accounts into a Gmail query string, and for Microsoft Graph accounts into an OData `$filter` (or `$search`, see below).
 
-## Why Use Search?
-
-**Performance**
-- Server-side filtering reduces data transfer
-- Faster than fetching all messages and filtering locally
-- Scales to mailboxes with thousands of messages
-
-**Flexibility**
-- Combine multiple criteria
-- Search by date ranges, flags, content, headers
-- Use complex boolean logic
-
-**Efficiency**
-- Returns only matching messages
-- Reduces API calls and processing time
-- Lower memory usage
+The request is a `POST` with the folder in the `path` query parameter and the criteria in a `search` object in the body. The response has the same shape as the [message listing](/docs/receiving/message-operations#listing-messages), newest first, with the same `cursor` paging.
 
 ## Basic Search
 
@@ -51,57 +36,41 @@ curl -X POST "https://emailengine.example.com/v1/account/example/search?path=INB
 **JavaScript:**
 
 ```javascript
-async function searchBySubject(accountId, folderPath, subjectText) {
+async function search(accountId, folderPath, searchCriteria, extraParams = {}) {
+  const params = new URLSearchParams({ path: folderPath, ...extraParams });
+
   const response = await fetch(
-    `https://emailengine.example.com/v1/account/${accountId}/search?path=${folderPath}`,
+    `https://emailengine.example.com/v1/account/${accountId}/search?${params}`,
     {
       method: 'POST',
       headers: {
         'Authorization': 'Bearer YOUR_ACCESS_TOKEN',
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
-        search: {
-          subject: subjectText
-        }
-      })
+      body: JSON.stringify({ search: searchCriteria })
     }
   );
+
+  if (!response.ok) {
+    throw new Error(`Search failed: ${response.status}`);
+  }
 
   return await response.json();
 }
 
-const results = await searchBySubject('example', 'INBOX', 'meeting');
-console.log(`Found ${results.messages.length} messages`);
+const results = await search('example', 'INBOX', { subject: 'meeting' });
+console.log(`Found ${results.messages.length} messages on this page`);
 ```
+
+The examples below all go through this `search` helper.
 
 ### Search by Sender
 
 Find messages from a specific sender:
 
 ```javascript
-async function searchBySender(accountId, folderPath, email) {
-  const response = await fetch(
-    `https://emailengine.example.com/v1/account/${accountId}/search?path=${folderPath}`,
-    {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Bearer YOUR_ACCESS_TOKEN',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        search: {
-          from: email
-        }
-      })
-    }
-  );
-
-  return await response.json();
-}
-
 // Find all emails from john@example.com
-const results = await searchBySender('example', 'INBOX', 'john@example.com');
+const fromJohn = await search('example', 'INBOX', { from: 'john@example.com' });
 ```
 
 ### Search by Date
@@ -109,41 +78,22 @@ const results = await searchBySender('example', 'INBOX', 'john@example.com');
 Find messages from a specific date range:
 
 ```javascript
-async function searchByDateRange(accountId, folderPath, since, before) {
-  const response = await fetch(
-    `https://emailengine.example.com/v1/account/${accountId}/search?path=${folderPath}`,
-    {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Bearer YOUR_ACCESS_TOKEN',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        search: {
-          since: since, // YYYY-MM-DD format
-          before: before
-        }
-      })
-    }
-  );
-
-  return await response.json();
-}
-
-// Find messages from last week
+// Find messages from the last week
 const today = new Date();
 const weekAgo = new Date(today);
 weekAgo.setDate(weekAgo.getDate() - 7);
 
-const results = await searchByDateRange(
-  'example',
-  'INBOX',
-  weekAgo.toISOString().split('T')[0], // 2025-10-06
-  today.toISOString().split('T')[0]    // 2025-10-13
-);
+const lastWeek = await search('example', 'INBOX', {
+  since: weekAgo.toISOString().split('T')[0],
+  before: today.toISOString().split('T')[0]
+});
 ```
 
+Dates are given as `YYYY-MM-DD` or as a full ISO 8601 timestamp.
+
 ## Search Operators
+
+All criteria in one `search` object must match (AND). There is no OR; run several searches and merge the results when you need one.
 
 ### Text Search Operators
 
@@ -157,54 +107,60 @@ const results = await searchByDateRange(
 { search: { body: 'payment' } }
 ```
 
-**from** - Sender address contains text
+**from** - Sender address or name contains text
 ```javascript
 { search: { from: 'john@example.com' } }
 ```
 
-**to** - Recipient address contains text
+**to**, **cc**, **bcc** - Recipient address contains text (not available on Microsoft Graph accounts in the default mode)
 ```javascript
 { search: { to: 'jane@company.com' } }
 ```
 
-**header** - Custom header search (object format)
+**header** - Match a header value
 ```javascript
 { search: { header: { 'X-Custom-Header': 'value' } } }
 ```
 
+IMAP accounts accept any header name. Gmail API and Microsoft Graph accounts accept only `Message-ID`; any other header name is rejected with a 400 and the code `UnsupportedSearchTerm`.
+
 ### Date Operators
 
-**since** - Messages on or after date (YYYY-MM-DD)
+**since** - Messages received on or after date
 ```javascript
 { search: { since: '2025-01-01' } }
 ```
 
-**before** - Messages before date (YYYY-MM-DD)
+**before** - Messages received before date
 ```javascript
 { search: { before: '2025-12-31' } }
 ```
 
-**sentSince** - Messages sent on or after date (YYYY-MM-DD)
+**sentSince** - Messages sent on or after date (the Date header)
 ```javascript
 { search: { sentSince: '2025-01-01' } }
 ```
 
-**sentBefore** - Messages sent before date (YYYY-MM-DD)
+**sentBefore** - Messages sent before date (the Date header)
 ```javascript
 { search: { sentBefore: '2025-12-31' } }
 ```
+
+Only IMAP servers distinguish received and sent dates. Gmail API and Microsoft Graph accounts treat `sentSince` like `since` and `sentBefore` like `before`.
 
 ### Size Operators
 
 **larger** - Messages larger than size (bytes)
 ```javascript
-{ search: { larger: 1000000 } } // > 1MB
+{ search: { larger: 1000000 } }
 ```
 
 **smaller** - Messages smaller than size (bytes)
 ```javascript
-{ search: { smaller: 10000 } } // < 10KB
+{ search: { smaller: 10000 } }
 ```
+
+Size criteria are applied by IMAP accounts, Gmail IMAP included. Microsoft Graph accounts reject them in the default mode with a 400. Gmail API accounts do not translate them, so they have no effect there; use `gmailRaw` with Gmail's own `larger:` and `smaller:` operators instead.
 
 ### Flag Operators
 
@@ -223,95 +179,113 @@ const results = await searchByDateRange(
 { search: { flagged: true } }
 ```
 
-**answered** - Messages that have been replied to
+**answered** - Messages that have been replied to (IMAP only)
 ```javascript
 { search: { answered: true } }
 ```
 
-**draft** - Draft messages
+**draft** - Draft messages (IMAP and Microsoft Graph; rejected by Gmail API accounts)
 ```javascript
 { search: { draft: true } }
+```
+
+**deleted** - Messages carrying the `\Deleted` flag but not yet expunged (IMAP only)
+```javascript
+{ search: { deleted: true } }
 ```
 
 ### UID and ID Operators
 
 **uid** - Specific UID or range (IMAP only)
 ```javascript
-{ search: { uid: '12345' } }        // Single UID
-{ search: { uid: '12345:12400' } }  // UID range
-{ search: { uid: '12345:*' } }      // From UID to latest
+{ search: { uid: '12345' } }
+{ search: { uid: '12345:12400' } }
+{ search: { uid: '12345:*' } }
 ```
 
 **seq** - Sequence number range (IMAP only)
 ```javascript
-{ search: { seq: '1:100' } }  // First 100 messages
+{ search: { seq: '1:100' } }
 ```
 
-**emailId** - Gmail Email ID (Gmail/modern IMAP only)
+**modseq** - Messages modified after a modification sequence (IMAP with the CONDSTORE extension only)
 ```javascript
-{ search: { emailId: 'abc123def456' } }
+{ search: { modseq: 12345 } }
 ```
 
-**threadId** - Thread/conversation ID (Gmail/modern IMAP only)
+**emailId** - A single message by its globally unique ID
 ```javascript
-{ search: { threadId: 'thread_xyz789' } }
+{ search: { emailId: '1743d29c-b67d-4747-9016-b8850a5a39bd' } }
 ```
 
-**emailIds** - Multiple specific Email IDs (Gmail/modern IMAP only)
+**threadId** - Every message in a thread
+```javascript
+{ search: { threadId: '1743d29c-b67d-4747-9016-b8850a5a39bd' } }
+```
+
+**emailIds** - Several messages by their `emailId` values. Only the [bulk endpoints](/docs/receiving/message-operations#bulk-actions) read it, and only on Gmail API and Microsoft Graph accounts, where it replaces every other criterion. The search endpoint and IMAP accounts ignore it
 ```javascript
 { search: { emailIds: ['id1', 'id2', 'id3'] } }
 ```
 
+`emailId` and `threadId` need a server that assigns such IDs: Gmail API, Microsoft Graph, Gmail over IMAP, and IMAP servers with the OBJECTID extension (RFC 8474); other IMAP servers fail the search with a 422 and the code `MissingServerExtension`. The values are the `emailId` and `threadId` fields of listed messages; see [Message IDs](/docs/advanced/ids-explained).
+
 ### Gmail-Specific Operators
 
-**gmailRaw** - Native Gmail search syntax (Gmail API only)
+**gmailRaw** - Native Gmail search syntax (Gmail API and Gmail IMAP accounts)
 ```javascript
 { search: { gmailRaw: 'is:unread category:primary' } }
 { search: { gmailRaw: 'from:boss@company.com has:attachment' } }
 ```
 
-This passes Gmail's own search operators through untouched. See [Gmail search operators](https://support.google.com/mail/answer/7190).
+The string is appended to the query EmailEngine builds from the other criteria and passed to Gmail untouched, as a Gmail API query or an IMAP `X-GM-RAW` search. See [Gmail search operators](https://support.google.com/mail/answer/7190). A generic IMAP server has no such extension, so the search fails there with a 422 and the code `MissingServerExtension`.
 
 ### Label and Category Filtering
 
-**labels** - Filter by Gmail labels or Outlook categories (Gmail and MS Graph accounts)
+**labels** - Filter by Gmail labels or Outlook categories (added in v2.69.0)
 
 ```javascript
-{ search: { labels: { has: ['Important'] } } }            // Has the "Important" label
-{ search: { labels: { has: ['Work', 'Urgent'] } } }       // Has ALL of these labels
-{ search: { labels: { not: ['Processed'] } } }            // Has NONE of these labels
-{ search: { labels: { has: ['Work'], not: ['Done'] } } }  // Combine both
+{ search: { labels: { has: ['Important'] } } }
+{ search: { labels: { has: ['Work', 'Urgent'] } } }
+{ search: { labels: { not: ['Processed'] } } }
+{ search: { labels: { has: ['Work'], not: ['Done'] } } }
 ```
 
-- `has` matches messages that carry **all** of the listed labels/categories
-- `not` excludes messages that carry **any** of the listed labels/categories
-- Gmail API accounts: compiles to native `label:`/`-label:` query terms
-- MS Graph (Outlook) accounts: filters by message categories
-- Not supported for generic IMAP accounts or in `useOutlookSearch` mode - searching an account that cannot satisfy the filter returns HTTP 422
+- `has` matches messages that carry **all** of the listed labels or categories
+- `not` excludes messages that carry **any** of them
+- Gmail API accounts compile the filter to `label:` and `-label:` query terms; Gmail over IMAP uses the server's label search
+- Microsoft Graph accounts filter on the message's categories
+- A generic IMAP server has no labels, so the search fails with a 422 and the code `MissingServerExtension`. In `useOutlookSearch` mode the filter is rejected with a 400 and the code `UnsupportedSearchTerm`
 
-### Advanced IMAP Operators
+## Per-Backend Limits
 
-**modseq** - Modification sequence (IMAP with CONDSTORE extension)
-```javascript
-{ search: { modseq: 12345 } }  // Messages modified after sequence 12345
-```
+Not every criterion reaches every server. A criterion the backend cannot honor is rejected with a 400 and the code `UnsupportedSearchTerm`; one that needs an IMAP extension the server lacks is rejected with a 422 and the code `MissingServerExtension`. Exceptions are noted.
 
-**deleted** - Messages marked for deletion (IMAP only, not Gmail)
-```javascript
-{ search: { deleted: true } }
-```
+| Criterion                             | IMAP                     | Gmail API                             | Microsoft Graph (default `$filter`)               |
+| ------------------------------------- | ------------------------ | ------------------------------------- | ------------------------------------------------- |
+| `subject`, `from`, `body`             | Yes                      | Yes                                   | Yes                                               |
+| `to`, `cc`, `bcc`                     | Yes                      | Yes                                   | Rejected; use `useOutlookSearch`                  |
+| `since`, `before`                     | Yes                      | Yes                                   | Yes                                               |
+| `sentSince`, `sentBefore`             | Yes                      | Treated as `since` / `before`         | Treated as `since` / `before`                     |
+| `larger`, `smaller`                   | Yes                      | Ignored                               | Rejected; use `useOutlookSearch`                  |
+| `seen`, `unseen`, `flagged`           | Yes                      | Yes                                   | Yes                                               |
+| `draft`                               | Yes                      | Rejected                              | Yes                                               |
+| `answered`, `deleted`                 | Yes                      | Rejected                              | Rejected                                          |
+| `uid`, `seq`, `modseq`                | Yes                      | Rejected                              | Rejected                                          |
+| `header`                              | Any header               | `Message-ID` only                     | `Message-ID` only                                 |
+| `emailId`, `threadId`                 | With OBJECTID or Gmail (422 elsewhere) | Yes                     | Yes                                               |
+| `emailIds`                            | Ignored                  | Bulk endpoints only                   | Bulk endpoints only                               |
+| `gmailRaw`                            | Gmail IMAP only (422 elsewhere) | Yes                            | No effect                                         |
+| `labels`                              | Gmail IMAP only (422 elsewhere) | Yes                            | Yes                                               |
 
-:::warning Provider Limitations
-- `gmailRaw`: Gmail API only
-- `labels`: Gmail and MS Graph (Outlook) accounts only - not supported for generic IMAP or in `useOutlookSearch` mode (returns HTTP 422 if the account cannot satisfy the filter)
-- `emailId`, `threadId`, `emailIds`: Gmail and modern IMAP servers with RFC 8474 support
-- `seq`, `modseq`, `deleted`, `answered`: Traditional IMAP only
-- **Microsoft Graph API limitations:**
-  - `to`, `cc`, `bcc`, `larger`, `smaller` fields are **not supported** for search by default
-  - Use `from` and `subject` for filtering, or search `body` for recipient names
-  - Consider using IMAP/SMTP mode for Outlook accounts if these search fields are required
-  - Alternatively, use the `useOutlookSearch` query parameter to enable MS Graph `$search` mode, which supports `to`, `cc`, `bcc`, `larger`, `smaller`, `body`, `before`, `sentBefore`, `since`, and `sentSince` fields. Note: `$search` returns up to 1,000 results sorted by relevance (not date) and does not indicate total matches or pages.
-:::
+### Microsoft Graph `$search` mode
+
+Add `useOutlookSearch=true` to the query string (available since v2.48.3) to run the criteria through Graph's `$search` instead of `$filter`. This mode accepts only `to`, `cc`, `bcc`, `larger`, `smaller`, `body`, `before`, `sentBefore`, `since` and `sentSince`. Any other field in the `search` object, `from`, `subject`, the flag criteria and `labels` included, is rejected with a 400 and the code `UnsupportedSearchTerm`, so it is a different search rather than a wider one. The cost:
+
+- At most 1,000 results, ordered by relevance rather than date
+- No `total`, no `pages` and no `prevPageCursor` in the response; only `nextPageCursor` pages through the results
+
+Leave it off unless you need one of the fields `$filter` cannot reach.
 
 ## Combined Searches
 
@@ -320,121 +294,58 @@ This passes Gmail's own search operators through untouched. See [Gmail search op
 Combine multiple search criteria - all must match:
 
 ```javascript
-async function searchUnreadFromSender(accountId, folderPath, sender) {
-  const response = await fetch(
-    `https://emailengine.example.com/v1/account/${accountId}/search?path=${folderPath}`,
-    {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Bearer YOUR_ACCESS_TOKEN',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        search: {
-          from: sender,
-          unseen: true
-        }
-      })
-    }
-  );
-
-  return await response.json();
-}
-
 // Find unread messages from john@example.com
-const results = await searchUnreadFromSender('example', 'INBOX', 'john@example.com');
+const unreadFromJohn = await search('example', 'INBOX', {
+  from: 'john@example.com',
+  unseen: true
+});
 ```
 
 ### Complex Search Example
 
-Find recent large unread invoices:
+Find recent large unread invoices on an IMAP account:
 
 ```javascript
-async function searchRecentLargeInvoices(accountId) {
-  const sevenDaysAgo = new Date();
-  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+const sevenDaysAgo = new Date();
+sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-  const response = await fetch(
-    `https://emailengine.example.com/v1/account/${accountId}/search?path=INBOX`,
-    {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Bearer YOUR_ACCESS_TOKEN',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        search: {
-          subject: 'invoice',
-          unseen: true,
-          larger: 500000, // > 500KB
-          since: sevenDaysAgo.toISOString().split('T')[0]
-        }
-      })
-    }
-  );
+const invoices = await search('example', 'INBOX', {
+  subject: 'invoice',
+  unseen: true,
+  larger: 500000,
+  since: sevenDaysAgo.toISOString().split('T')[0]
+});
 
-  return await response.json();
-}
-
-const invoices = await searchRecentLargeInvoices('example');
-console.log(`Found ${invoices.messages.length} large unread invoices from last 7 days`);
+console.log(`Found ${invoices.messages.length} large unread invoices from the last 7 days`);
 ```
 
 ## Common Search Patterns
 
 ### Find Messages with Attachments
 
+There is no attachment criterion. List or search the folder and filter on the `attachments` array of each result; on a Gmail API account, `gmailRaw: 'has:attachment'` does it server-side:
+
 ```javascript
-async function searchWithAttachments(accountId, folderPath) {
-  // Note: Not all IMAP servers support attachment search
-  // Alternative: List messages and filter by the attachments array
+async function searchWithAttachments(accountId, folderPath, searchCriteria = {}) {
+  const data = await search(accountId, folderPath, searchCriteria, { pageSize: 100 });
 
-  const params = new URLSearchParams({
-    path: folderPath,
-    pageSize: 100
-  });
-
-  const response = await fetch(
-    `https://emailengine.example.com/v1/account/${accountId}/messages?${params}`,
-    {
-      headers: { 'Authorization': 'Bearer YOUR_ACCESS_TOKEN' }
-    }
-  );
-
-  const data = await response.json();
-
-  // Filter messages with attachments
   return data.messages.filter(msg => msg.attachments && msg.attachments.length > 0);
 }
 ```
 
 ### Search by Message ID
 
-Find a specific message by its Message-ID header:
+Find a message by its Message-ID header. The `Message-ID` header search works on every backend:
 
 ```javascript
 async function findByMessageId(accountId, messageId) {
-  // Search across all folders
-  const folders = ['INBOX', 'Sent', 'Archive'];
+  // INBOX and the sent folder cover most messages; \Sent resolves to the real folder
+  const folders = ['INBOX', '\\Sent'];
 
   for (const folder of folders) {
-    const response = await fetch(
-      `https://emailengine.example.com/v1/account/${accountId}/search?path=${folder}`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': 'Bearer YOUR_ACCESS_TOKEN',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          search: {
-            header: { 'Message-ID': messageId }
-          }
-        })
-      }
-    );
-
-    const data = await response.json();
+    const data = await search(accountId, folder, {
+      header: { 'Message-ID': messageId }
+    });
 
     if (data.messages && data.messages.length > 0) {
       return {
@@ -453,6 +364,8 @@ if (result) {
 }
 ```
 
+On Gmail IMAP, Gmail API and Microsoft Graph accounts, searching `path=\All` covers the whole account in one request.
+
 ### Search Today's Messages
 
 ```javascript
@@ -463,24 +376,10 @@ async function searchTodaysMessages(accountId, folderPath) {
   tomorrow.setDate(tomorrow.getDate() + 1);
   const tomorrowStr = tomorrow.toISOString().split('T')[0];
 
-  const response = await fetch(
-    `https://emailengine.example.com/v1/account/${accountId}/search?path=${folderPath}`,
-    {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Bearer YOUR_ACCESS_TOKEN',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        search: {
-          since: todayStr,
-          before: tomorrowStr
-        }
-      })
-    }
-  );
-
-  return await response.json();
+  return await search(accountId, folderPath, {
+    since: todayStr,
+    before: tomorrowStr
+  });
 }
 ```
 
@@ -490,174 +389,88 @@ async function searchTodaysMessages(accountId, folderPath) {
 async function searchThisMonth(accountId, folderPath) {
   const now = new Date();
   const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
-  const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
 
-  const response = await fetch(
-    `https://emailengine.example.com/v1/account/${accountId}/search?path=${folderPath}`,
-    {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Bearer YOUR_ACCESS_TOKEN',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        search: {
-          since: firstDay.toISOString().split('T')[0],
-          before: lastDay.toISOString().split('T')[0]
-        }
-      })
-    }
-  );
-
-  return await response.json();
-}
-```
-
-### Search Unread Important Messages
-
-```javascript
-async function searchUnreadImportant(accountId) {
-  const response = await fetch(
-    `https://emailengine.example.com/v1/account/${accountId}/search?path=INBOX`,
-    {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Bearer YOUR_ACCESS_TOKEN',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        search: {
-          unseen: true,
-          flagged: true
-        }
-      })
-    }
-  );
-
-  return await response.json();
+  return await search(accountId, folderPath, {
+    since: firstDay.toISOString().split('T')[0],
+    before: nextMonth.toISOString().split('T')[0]
+  });
 }
 ```
 
 ### Search by Keywords
 
-Search for messages containing specific keywords in the message body:
+There is no OR operator, so search once per keyword and merge on the message `id`:
 
 ```javascript
 async function searchByKeywords(accountId, folderPath, keywords) {
-  // Search in message body for each keyword
   const results = [];
 
   for (const keyword of keywords) {
-    const response = await fetch(
-      `https://emailengine.example.com/v1/account/${accountId}/search?path=${folderPath}`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': 'Bearer YOUR_ACCESS_TOKEN',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          search: {
-            body: keyword
-          }
-        })
-      }
-    );
-
-    const data = await response.json();
+    const data = await search(accountId, folderPath, { body: keyword });
     results.push(...data.messages);
   }
 
   // Remove duplicates
-  const uniqueMessages = Array.from(
-    new Map(results.map(msg => [msg.id, msg])).values()
-  );
-
-  return uniqueMessages;
+  return Array.from(new Map(results.map(msg => [msg.id, msg])).values());
 }
 
 // Search for messages about invoices or payments
-const results = await searchByKeywords('example', 'INBOX', ['invoice', 'payment', 'bill']);
+const matches = await searchByKeywords('example', 'INBOX', ['invoice', 'payment', 'bill']);
 ```
 
 ## Advanced Search Techniques
 
 ### Search with Pagination
 
-Handle large search results:
+Search results page the same way as listings: follow `nextPageCursor` until it is `null`. IMAP and Microsoft Graph accounts also honor the `page` number; Gmail API accounts reject a page above 0, and the cursor works everywhere.
 
 ```javascript
-async function searchWithPagination(accountId, folderPath, searchCriteria, pageSize = 20) {
+async function searchAll(accountId, folderPath, searchCriteria, pageSize = 100) {
   const allResults = [];
-  let page = 0;
-  let hasMore = true;
+  let cursor = null;
 
-  while (hasMore) {
-    const response = await fetch(
-      `https://emailengine.example.com/v1/account/${accountId}/search?path=${folderPath}&page=${page}&pageSize=${pageSize}`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': 'Bearer YOUR_ACCESS_TOKEN',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          search: searchCriteria
-        })
-      }
-    );
+  do {
+    const params = { pageSize };
+    if (cursor) {
+      params.cursor = cursor;
+    }
 
-    const data = await response.json();
+    const data = await search(accountId, folderPath, searchCriteria, params);
     allResults.push(...data.messages);
-
-    page++;
-    hasMore = page < data.pages;
-  }
+    cursor = data.nextPageCursor;
+  } while (cursor);
 
   return allResults;
 }
 
 // Find all unread messages (might be hundreds)
-const allUnread = await searchWithPagination('example', 'INBOX', {
-  unseen: true
-}, 100);
+const allUnread = await searchAll('example', 'INBOX', { unseen: true });
 ```
+
+`total` and `pages` are exact for IMAP accounts, approximate for Gmail API accounts, and can be missing for Microsoft Graph accounts, so do not drive the loop from them.
 
 ### Search Multiple Folders
 
-Search across multiple folders:
-
 ```javascript
 async function searchMultipleFolders(accountId, folders, searchCriteria) {
-  const results = await Promise.all(
-    folders.map(async (folder) => {
-      const response = await fetch(
-        `https://emailengine.example.com/v1/account/${accountId}/search?path=${folder}`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': 'Bearer YOUR_ACCESS_TOKEN',
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            search: searchCriteria
-          })
-        }
-      );
+  const results = [];
 
-      const data = await response.json();
-      return data.messages.map(msg => ({ ...msg, folder }));
-    })
-  );
+  for (const folder of folders) {
+    const data = await search(accountId, folder, searchCriteria);
+    results.push(...data.messages.map(msg => ({ ...msg, folder })));
+  }
 
-  return results.flat();
+  return results;
 }
 
-// Search for "invoice" in Inbox and Archive
-const results = await searchMultipleFolders('example', ['INBOX', 'Archive'], {
+// Search for "invoice" in INBOX and the sent folder
+const found = await searchMultipleFolders('example', ['INBOX', '\\Sent'], {
   subject: 'invoice'
 });
 ```
+
+Where `\All` is available it is one request instead of one per folder, and each result then carries its own `path`.
 
 ### Search and Process
 
@@ -665,21 +478,7 @@ Search and immediately process results:
 
 ```javascript
 async function searchAndProcess(accountId, folderPath, searchCriteria, processor) {
-  const response = await fetch(
-    `https://emailengine.example.com/v1/account/${accountId}/search?path=${folderPath}`,
-    {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Bearer YOUR_ACCESS_TOKEN',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        search: searchCriteria
-      })
-    }
-  );
-
-  const data = await response.json();
+  const data = await search(accountId, folderPath, searchCriteria);
 
   for (const message of data.messages) {
     try {
@@ -692,11 +491,11 @@ async function searchAndProcess(accountId, folderPath, searchCriteria, processor
   return data.messages.length;
 }
 
-// Archive all read messages older than 30 days
+// Log read messages older than 30 days
 const thirtyDaysAgo = new Date();
 thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-const archived = await searchAndProcess(
+const processed = await searchAndProcess(
   'example',
   'INBOX',
   {
@@ -704,103 +503,38 @@ const archived = await searchAndProcess(
     before: thirtyDaysAgo.toISOString().split('T')[0]
   },
   async (accountId, message) => {
-    await archiveMessage(accountId, message.id);
-    console.log(`Archived: ${message.subject}`);
+    console.log(`Old message: ${message.subject}`);
   }
 );
 
-console.log(`Archived ${archived} old messages`);
+console.log(`Processed ${processed} old messages`);
 ```
+
+When the action is a flag change, a move or a delete, send the criteria to the [bulk endpoints](/docs/receiving/message-operations#bulk-actions) instead and let the server apply it to every match in one request.
 
 ## Search Performance Tips
 
-### 1. Use Specific Search Criteria
+### Narrow the Criteria
+
+An IMAP SEARCH runs over every message in the folder, and a `body` search reads every message body. Prefer header fields, and add a date range whenever the application knows one:
 
 ```javascript
-async function search(accountId, folderPath, searchCriteria) {
-  const response = await fetch(
-    `https://emailengine.example.com/v1/account/${accountId}/search?path=${folderPath}`,
-    {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Bearer YOUR_ACCESS_TOKEN',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ search: searchCriteria })
-    }
-  );
-  return await response.json();
-}
+// Reads every body in the folder
+const byBody = await search('example', 'INBOX', { body: 'meeting' });
 
-// Slow - searches entire message body
-const results = await search('example', 'INBOX', {
-  body: 'meeting'
-});
+// Header only
+const bySubject = await search('example', 'INBOX', { subject: 'meeting' });
 
-// Faster - limits search to subject only
-const results = await search('example', 'INBOX', {
-  subject: 'meeting'
-});
-
-// Even faster - adds date constraint
-const results = await search('example', 'INBOX', {
+// Header only, and bounded by date
+const recentBySubject = await search('example', 'INBOX', {
   subject: 'meeting',
   since: '2025-10-01'
 });
 ```
 
-### 2. Search Smaller Folders First
+### Cache Search Results
 
-```javascript
-async function smartSearch(accountId, searchParams) {
-  // Try INBOX first (usually smaller than Archive)
-  let results = await search(accountId, 'INBOX', searchParams);
-
-  if (results.messages.length === 0) {
-    // Only search archive if nothing found
-    results = await search(accountId, 'Archive', searchParams);
-  }
-
-  return results;
-}
-```
-
-### 3. Use Date Ranges
-
-Always limit searches with date ranges when possible:
-
-```javascript
-// Bad - searches all messages (could be years worth)
-async function search(accountId, folderPath, searchCriteria) {
-  const response = await fetch(
-    `https://emailengine.example.com/v1/account/${accountId}/search?path=${folderPath}`,
-    {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Bearer YOUR_ACCESS_TOKEN',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ search: searchCriteria })
-    }
-  );
-  return await response.json();
-}
-
-const results = await search('example', 'INBOX', {
-  from: 'john@example.com'
-});
-
-// Good - limits to last 90 days
-const ninetyDaysAgo = new Date();
-ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
-
-const results = await search('example', 'INBOX', {
-  from: 'john@example.com',
-  since: ninetyDaysAgo.toISOString().split('T')[0]
-});
-```
-
-### 4. Cache Search Results
+Repeated identical searches within a short window can be answered from a local cache:
 
 ```javascript
 class SearchCache {
@@ -845,19 +579,7 @@ async function cachedSearch(accountId, folderPath, searchCriteria) {
   const cached = searchCache.get(accountId, folderPath, searchCriteria);
   if (cached) return cached;
 
-  const response = await fetch(
-    `https://emailengine.example.com/v1/account/${accountId}/search?path=${folderPath}`,
-    {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Bearer YOUR_ACCESS_TOKEN',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ search: searchCriteria })
-    }
-  );
-
-  const results = await response.json();
+  const results = await search(accountId, folderPath, searchCriteria);
   searchCache.set(accountId, folderPath, searchCriteria, results);
 
   return results;
@@ -868,49 +590,25 @@ async function cachedSearch(accountId, folderPath, searchCriteria) {
 
 ### Gmail API
 
-Gmail API search has some differences:
-- Labels are used instead of folders
-- All messages are in `[Gmail]/All Mail`
-- Use the `labels` search filter to filter by label server-side
+- Folders are labels, and a message can be in several. `path=\All` searches every message in the account regardless of label
+- `labels` filters by label server-side; `gmailRaw` gives access to every Gmail operator, including `label:`, `has:attachment`, `larger:` and `category:`
 
 ```javascript
 async function searchGmailByLabel(accountId, label) {
-  const params = new URLSearchParams({ path: '\\All' });
-
-  const response = await fetch(
-    `https://emailengine.example.com/v1/account/${accountId}/search?${params}`,
-    {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Bearer YOUR_ACCESS_TOKEN',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        search: {
-          labels: { has: [label] }
-        }
-      })
-    }
-  );
-
-  return await response.json();
+  return await search(accountId, '\\All', {
+    labels: { has: [label] }
+  });
 }
 ```
 
-You can also use `gmailRaw` with `label:` terms for more complex label queries.
+### IMAP
 
-### IMAP Limitations
-
-Some IMAP servers have limitations:
-- Body search might not be supported
-- Date search formats may vary
-- Some servers don't support all flags
-
-Always test searches with your specific provider.
+- Text matching (`subject`, `body`, `from`, and so on) is done by the server. [RFC 3501](https://www.rfc-editor.org/rfc/rfc3501#section-6.4.4) specifies a case-insensitive substring match, but how a server handles encodings and word boundaries in body text is its own
+- A `body` search can be slow on a large folder, because most servers read every message to answer it
 
 ## See Also
 
-- [Message operations](/docs/receiving/message-operations) - Acting on the messages a search returns
+- [Message operations](/docs/receiving/message-operations) - Acting on the messages a search returns, one at a time or in bulk
 - [Searching threads](/docs/sending/threading/searching-threads) - Retrieving a whole conversation
 - [Message IDs](/docs/advanced/ids-explained) - The identifiers a search result carries
 - [Search API](/docs/api/post-v-1-account-account-search) - The endpoint reference

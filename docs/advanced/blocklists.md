@@ -1,6 +1,6 @@
 ---
 title: Blocklist Management
-sidebar_position: 8
+sidebar_position: 9
 description: Manage email blocklists for suppression lists, bounce handling, and one-click unsubscribe compliance
 keywords:
   - blocklist
@@ -66,7 +66,7 @@ Response:
 }
 ```
 
-[API reference -->](/docs/api/get-v-1-blocklists)
+[API reference: list blocklists](/docs/api/get-v-1-blocklists)
 
 ### List Entries in a Blocklist
 
@@ -90,6 +90,8 @@ Response:
       "source": "one-click",
       "reason": "unsubscribe",
       "messageId": "<abc@example.com>",
+      "remoteAddress": "198.51.100.24",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
       "created": "2024-10-13T12:10:40.980Z"
     }
   ]
@@ -100,14 +102,15 @@ Each entry includes:
 
 | Field | Description |
 |-------|-------------|
-| `recipient` | Blocked email address (stored lowercase) |
-| `account` | Account that triggered the block |
+| `recipient` | Blocked email address. The address is matched case-insensitively; the stored record echoes it as submitted |
+| `account` | Account the entry was recorded for. Absent for entries added from the admin interface, which are not bound to an account |
 | `source` | How the entry was added: `one-click` (mail client unsubscribe button), `form` (hosted unsubscribe page), `api` (Blocklists API) or `admin` (admin interface) |
-| `reason` | Why the address was blocked: `unsubscribe`, `block`, or custom |
-| `messageId` | Original message ID (for unsubscribe entries) |
+| `reason` | Why the address was blocked. `unsubscribe` for the two unsubscribe paths, the `reason` given to the API (default `block`), or whatever was typed in the admin form |
+| `messageId` | Message-ID of the message the recipient unsubscribed from (unsubscribe entries only) |
+| `remoteAddress`, `userAgent` | The client that triggered the entry. For a `one-click` entry this is the recipient's mail provider, for an `api` entry the caller of the Blocklists API |
 | `created` | Timestamp when the entry was added |
 
-[API reference -->](/docs/api/get-v-1-blocklist-listid)
+[API reference: list entries](/docs/api/get-v-1-blocklist-listid)
 
 ### Add an Address to a Blocklist
 
@@ -131,9 +134,9 @@ Response:
 }
 ```
 
-The `added` field is `false` if the address was already in the blocklist.
+`account` is required, and the request answers 404 when no such account exists. The `added` field is `false` when the address was already on the list; the entry is still rewritten with the new `reason`, `account` and timestamp. `reason` is optional and defaults to `block`. Addresses are matched case-insensitively.
 
-[API reference -->](/docs/api/post-v-1-blocklist-listid)
+[API reference: add to blocklist](/docs/api/post-v-1-blocklist-listid)
 
 ### Remove an Address from a Blocklist
 
@@ -150,7 +153,9 @@ Response:
 }
 ```
 
-[API reference -->](/docs/api/delete-v-1-blocklist-listid)
+`deleted` is `false` when the address was not on the list. A list that does not exist answers 404.
+
+[API reference: remove from blocklist](/docs/api/delete-v-1-blocklist-listid)
 
 ## Bounce-Based Blocking
 
@@ -203,29 +208,31 @@ Blocklist changes trigger two webhook events:
 
 ### listUnsubscribe
 
-Triggered when an address is added to a blocklist via the one-click unsubscribe mechanism.
+Triggered when a recipient adds an address to a blocklist, either through the RFC 8058 one-click request their mail client sends or through the hosted unsubscribe page. Adding an address through this API or the admin interface does not fire it.
 
 ```json
 {
-  "event": "listUnsubscribe",
+  "serviceUrl": "https://emailengine.example.com",
   "account": "user123",
+  "date": "2024-10-13T12:10:40.980Z",
+  "event": "listUnsubscribe",
   "data": {
     "recipient": "bob@example.com",
     "messageId": "<abc@example.com>",
     "listId": "weekly-newsletter",
-    "remoteAddress": "192.168.1.1",
-    "userAgent": "Mozilla/5.0..."
+    "remoteAddress": "198.51.100.24",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
   }
 }
 ```
 
-[See listUnsubscribe reference -->](/docs/webhooks/listunsubscribe)
+[listUnsubscribe reference](/docs/webhooks/listunsubscribe)
 
 ### listSubscribe
 
 Triggered when a recipient re-subscribes through the hosted unsubscribe page. Removing an address via the DELETE API does not trigger this event.
 
-[See listSubscribe reference -->](/docs/webhooks/listsubscribe)
+[listSubscribe reference](/docs/webhooks/listsubscribe)
 
 ## Best Practices
 

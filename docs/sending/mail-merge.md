@@ -10,17 +10,27 @@ Use the `mailMerge` array in the [message submission API](/docs/api/post-v-1-acc
 
 ## Why It Matters
 
-Bulk-sending receipts, onboarding tips or weekly digests from **your customer's** mailbox means better deliverability and brand consistency - but you don't want 500 addresses exposed in the `To` header. EmailEngine turns one REST call into N fully-formed messages, so every recipient feels like the only one.
+Sending receipts, onboarding tips or weekly digests from your customer's own mailbox keeps the mail in that mailbox's Sent folder and under its reputation, but a single message with 500 addresses in the `To` header exposes every recipient to every other one. A mail merge turns one REST call into one message per recipient, each addressed to that recipient alone.
 
 ## How Mail Merge Works
 
 Instead of calling the submit API multiple times, you:
 
 1. Drop `to`/`cc`/`bcc` from your payload
-2. Add a `mailMerge` array with per-recipient data
-3. EmailEngine fans out the request into distinct messages
-4. Each message gets its own Message-ID for tracking
-5. Handlebars templates enable personalization
+2. Add a `mailMerge` array with one entry per recipient
+3. EmailEngine fans out the request into distinct messages, each with its own Message-ID and queue entry
+4. Handlebars placeholders in the subject and body are filled in from each entry's `params`
+
+Each `mailMerge` entry accepts these fields:
+
+| Field | Description |
+|-------|-------------|
+| `to` | The recipient, as a single `{ "name", "address" }` object. Required |
+| `params` | Values for the Handlebars placeholders in this recipient's copy |
+| `messageId` | A Message-ID for this recipient's copy, instead of a generated one |
+| `sendAt` | When to send this copy. Overrides the message-level `sendAt` |
+
+Because each entry supplies its own addressing and rendering, the message-level `to`, `cc`, `bcc`, `envelope`, `raw`, and `render` fields are rejected when `mailMerge` is present, and a message-level `messageId` is ignored. There is no per-recipient `cc` or `bcc`; a copy goes to its one `to` address.
 
 ## Basic Mail Merge
 
@@ -87,6 +97,8 @@ Each recipient:
 - Receives a message with a unique Message-ID
 - Gets their own queue entry for tracking
 
+The entries are queued in parallel and reported one by one. An entry that could not be queued has `"success": false` with `error`, `code`, and `statusCode` in place of the IDs, while the other entries go ahead; the HTTP status of the call is still 200. A `dryRun` returns no preview for a mail merge.
+
 ### Skip Sent Folder Copies
 
 For bulk sending, you might not want to save 1000 copies to the Sent Mail folder:
@@ -140,6 +152,8 @@ curl -XPOST "https://emailengine.example.com/v1/account/example/submit" \
 
 For HTML fields (`html`, `previewText`), use double braces `{{…}}` to escape HTML entities, or triple braces `{{{…}}}` if you want to inject raw HTML.
 
+Rendering happens only for entries that carry `params` (or for every entry when the merge names a `listId`). An entry without a `params` key is otherwise sent with the placeholders left in place as literal text, so give every entry a `params` object, even an empty `{}`, whenever the content contains placeholders.
+
 ### Built-in Variables
 
 EmailEngine provides built-in variables you can reference:
@@ -158,8 +172,9 @@ Available variables:
 
 - `{{account.email}}` - The sender's email address
 - `{{account.name}}` - The sender's display name
-- `{{service.url}}` - EmailEngine instance URL
+- `{{service.url}}` - EmailEngine instance URL (the `serviceUrl` setting, or the message's `baseUrl`)
 - `{{params.*}}` - Your custom parameters
+- `{{rcpt.unsubscribeUrl}}` - A signed one-click unsubscribe link for this recipient. Present only when the merge names a `listId`; see [virtual mailing lists](/docs/advanced/virtual-lists)
 
 ### Complex Personalization
 
@@ -339,7 +354,22 @@ Schedule the entire merge for future sending:
 }
 ```
 
-All messages will be queued and sent at the specified time.
+All messages will be queued and sent at the specified time. An entry can carry its own `sendAt`, which overrides the message-level one for that recipient, so a merge can be spread over time from a single call:
+
+```json
+{
+  "subject": "Newsletter",
+  "html": "<p>Weekly update</p>",
+  "mailMerge": [
+    { "to": { "address": "user1@example.com" }, "sendAt": "2025-12-25T09:00:00.000Z" },
+    { "to": { "address": "user2@example.com" }, "sendAt": "2025-12-25T09:05:00.000Z" }
+  ]
+}
+```
+
+### Unsubscribe Handling
+
+Name a `listId` (a subdomain-shaped identifier, registered on first use) and EmailEngine adds `List-ID`, `List-Unsubscribe`, and `List-Unsubscribe-Post` headers to every copy, with a signed one-click unsubscribe link per recipient. A recipient who has unsubscribed from that list is skipped: their response entry carries `"skipped": { "reason": "unsubscribe", "listId": "weekly-digest" }` instead of a queue ID. `listId` is only accepted together with `mailMerge`, and the headers need `serviceUrl` to be set. [Virtual mailing lists](/docs/advanced/virtual-lists) covers the whole flow.
 
 ## Rate Limiting and Throttling
 
@@ -361,18 +391,25 @@ For large merges, consider:
 1. **Batch Processing**: Split large merges into smaller batches
 
 ```javascript
-const recipients = [...]; // Large list
+const recipients = [
+  { email: 'ada@example.com', name: 'Ada' },
+  { email: 'grace@example.com', name: 'Grace' },
+  { email: 'linus@example.com', name: 'Linus' }
+];
 const batchSize = 100;
 
 for (let i = 0; i < recipients.length; i += batchSize) {
   const batch = recipients.slice(i, i + batchSize);
 
-  await fetch('/v1/account/example/submit', {
+  await fetch('https://emailengine.example.com/v1/account/example/submit', {
     method: 'POST',
-    headers: { 'Authorization': 'Bearer <token>' },
+    headers: {
+      Authorization: `Bearer ${process.env.EMAILENGINE_TOKEN}`,
+      'Content-Type': 'application/json'
+    },
     body: JSON.stringify({
       subject: 'Newsletter',
-      html: '<p>Content</p>',
+      html: '<p>Hello {{params.name}}</p>',
       mailMerge: batch.map(r => ({
         to: { address: r.email },
         params: { name: r.name }
@@ -488,7 +525,22 @@ Build a tracking system:
 
 ```javascript
 // Store merge results
-const mergeSendResult = await sendMailMerge(...);
+const response = await fetch('https://emailengine.example.com/v1/account/example/submit', {
+  method: 'POST',
+  headers: {
+    Authorization: `Bearer ${process.env.EMAILENGINE_TOKEN}`,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    subject: 'Hello {{params.name}}',
+    html: '<p>Hello {{params.name}}</p>',
+    mailMerge: [
+      { to: { address: 'ada@example.com' }, params: { name: 'Ada' } },
+      { to: { address: 'grace@example.com' }, params: { name: 'Grace' } }
+    ]
+  })
+});
+const mergeSendResult = await response.json();
 const deliveryTracking = mergeSendResult.mailMerge.map(entry => ({
   recipient: entry.to.address,
   messageId: entry.messageId,
@@ -542,15 +594,15 @@ app.post('/webhook', async (req, res) => {
 
 Plain-text fields (`subject`, `text`) are never HTML-escaped, so double braces are always correct there - escaped subjects like `&lt;Welcome&gt;` cannot occur.
 
-### Queue Timeouts
+### Large Merges
 
-**Problem:** Each generated message gets its own queue entry; if your merge size is huge, watch `/v1/outbox` for items that exceed EmailEngine's processing window.
+**Problem:** Each generated message gets its own queue entry, and the submit workers drain the queue at the rate the account's SMTP server accepts messages. A large merge therefore takes a while to leave, and the entries that are still waiting count against everything else queued for the instance.
 
 **Solution:**
 
 - Break large merges into smaller batches (100-500 per batch)
-- Monitor queue depth
-- Scale EmailEngine vertically (increase CPU/RAM and worker configuration)
+- Watch `total` in `/v1/outbox` to see the queue drain
+- Raise the submit worker concurrency (`EENGINE_SUBMIT_QC`, see [performance tuning](/docs/advanced/performance-tuning)) when the SMTP server can take more parallel connections
 
 ### Unwanted Sent Copies
 
@@ -584,7 +636,7 @@ Plain-text fields (`subject`, `text`) are never HTML-escaped, so double braces a
 }
 ```
 
-**Result:** Second email shows empty value or "undefined"
+**Result:** The second email renders an empty string where the name should be. (Had the entry carried no `params` key at all, the copy would not have been rendered and `{{params.name}}` would appear literally.)
 
 **Solution:** Always provide all required params, or use Handlebars conditionals:
 

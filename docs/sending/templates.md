@@ -6,17 +6,14 @@ description: Create and manage reusable email templates with Handlebars for cons
 
 # Email Templates
 
-Email templating allows you to prepare and reuse email content efficiently. Create templates once, then reference them when sending to ensure consistent branding and messaging across all your emails.
+A stored template holds a subject, a plain-text body, an HTML body, and preview text, each of them a Handlebars template. A submit call that names the template by ID gets that content, rendered with the values the call supplies, so the message text lives in EmailEngine rather than in every call that sends it.
 
 ## Why Use Templates
 
-Templates provide several benefits:
-
-- **Consistency**: Ensure brand consistency across all emails
-- **Efficiency**: Define content once, reuse many times
-- **Maintainability**: Update content in one place
-- **Personalization**: Use Handlebars for dynamic content
-- **Separation of concerns**: Keep email content separate from application logic
+- **One place to edit**: Change the wording once, and every subsequent send picks it up
+- **Smaller requests**: A submit call carries a template ID and a `params` object instead of the full HTML
+- **Personalization**: The same Handlebars syntax and helpers as [mail merge](./mail-merge.md)
+- **Ownership**: A template belongs to one account, or to the instance when created with `account: null`
 
 ## Managing Templates
 
@@ -24,6 +21,8 @@ You can manage templates in two ways:
 
 1. **Templates API**: Programmatically create, update, and delete templates
 2. **Admin Interface**: Visual interface at **Templates** in the side menu
+
+A template is either bound to one account or public. An account-bound template can only be used by that account; a submit call that names another account's template is refused with 404 (`TemplateNotFound`). A public template (`account: null`) can be used by every account.
 
 ![Email Templates List](/img/screenshots/15-templates-with-data.png)
 *Email templates list in the admin interface*
@@ -45,13 +44,26 @@ curl -XPOST "https://emailengine.example.com/v1/templates/template" \
     "account": "example",
     "name": "Welcome Email",
     "description": "Welcome new users to the platform",
+    "format": "html",
     "content": {
       "subject": "Welcome to {{params.companyName}}!",
       "text": "Hello {{params.firstName}},\n\nWelcome to {{params.companyName}}!",
-      "html": "<h1>Hello {{params.firstName}}</h1><p>Welcome to <strong>{{params.companyName}}</strong>!</p>"
+      "html": "<h1>Hello {{params.firstName}}</h1><p>Welcome to <strong>{{params.companyName}}</strong>!</p>",
+      "previewText": "Your account is ready"
     }
   }'
 ```
+
+| Field | Description |
+|-------|-------------|
+| `account` | The owning account ID, or `null` for a public template. Required |
+| `name` | Display name. Required |
+| `description` | Free text, optional |
+| `format` | What the `html` field contains: `html` (default) or `markdown`, which is converted to HTML at render time |
+| `content.subject` | Subject line |
+| `content.text` | Plain-text body |
+| `content.html` | HTML body, or Markdown when `format` is `markdown` |
+| `content.previewText` | Text shown by mail clients after the subject line in the inbox list, injected into the HTML body as a hidden block |
 
 **Response:**
 
@@ -67,17 +79,15 @@ Save the `id` value to reference this template when sending.
 
 ### Via Admin Interface
 
-1. Navigate to **Email templates** in the EmailEngine UI
-2. Click **Create Template**
-3. Fill in template details:
-   - **Name**: Template identifier (required)
-   - **Description**: What this template is for (optional)
-   - **Subject**: Email subject with optional Handlebars
-   - **Text**: Plain text version with optional Handlebars
-   - **HTML**: HTML version with optional Handlebars
-4. Click **Save**
+1. Open **Templates** in the admin menu for a public template, or follow the **Email templates** link on an account's page for one bound to that account
+2. Click **Create template**
+3. Fill in the form:
+   - **Name** and **Description**
+   - **HTML source format**: HTML or Markdown
+   - **Template content**: **Subject**, **Preview text**, **HTML**, and **Plain text**, each with optional Handlebars
+4. Click **Create template**
 
-The template page offers a "Send test email" action so you can check the rendered output in a real mailbox.
+The template page has a **Send test email** action that renders the template and sends it to an address you enter, so the output can be checked in a real mailbox.
 
 ## Using Templates
 
@@ -106,7 +116,7 @@ curl -XPOST "https://emailengine.example.com/v1/account/example/submit" \
   }'
 ```
 
-EmailEngine loads the template and renders it with your provided params.
+EmailEngine loads the template's `subject`, `text`, `html`, and `previewText` into the message, replacing any of those fields given in the same call, and renders them with `render.params`. The template's stored `format` decides how its HTML is interpreted; a `render.format` in the call is overridden by it.
 
 ### With Other Properties
 
@@ -129,7 +139,7 @@ curl -XPOST "https://emailengine.example.com/v1/account/example/submit" \
     "attachments": [
       {
         "filename": "welcome.pdf",
-        "content": "base64-encoded-content"
+        "content": "JVBERi0xLjQKJSBtaW5pbWFsIGV4YW1wbGUK"
       }
     ]
   }'
@@ -137,7 +147,7 @@ curl -XPOST "https://emailengine.example.com/v1/account/example/submit" \
 
 ## Template Syntax
 
-Templates use [Handlebars](https://handlebarsjs.com/) for dynamic content. EmailEngine extends Handlebars with additional helpers compatible with [SendGrid's dynamic templates](https://docs.sendgrid.com/for-developers/sending-email/using-handlebars), making migration between platforms straightforward.
+Templates use [Handlebars](https://handlebarsjs.com/) for dynamic content. EmailEngine registers additional helpers that follow the names and semantics of [SendGrid's dynamic templates](https://docs.sendgrid.com/for-developers/sending-email/using-handlebars), so a template written for SendGrid renders the same way here. The same renderer handles the inline `subject`, `text`, `html`, and `previewText` of a submit call when it carries `render`, or, in a mail merge, for each entry that carries `params`.
 
 ### Variables
 
@@ -166,8 +176,11 @@ Available variables:
 
 - `{{account.email}}` - Sender's email address
 - `{{account.name}}` - Sender's display name
-- `{{service.url}}` - EmailEngine instance URL
+- `{{service.url}}` - EmailEngine instance URL (the `serviceUrl` setting, or the submission's `baseUrl`)
 - `{{params.*}}` - Any custom parameters you provide
+- `{{rcpt.unsubscribeUrl}}` - The recipient's unsubscribe link, in a mail merge that names a `listId` (see [virtual mailing lists](/docs/advanced/virtual-lists))
+
+A rendering error (for example an unclosed block) fails the submit call with 422 and `Failed rendering html template`, naming the field that did not compile.
 
 ### Conditionals
 
@@ -346,7 +359,7 @@ Insert a value with an optional default if the value is missing or empty.
 <p>Hello {{insert params.firstName "default=Customer"}}!</p>
 ```
 
-If `params.firstName` is empty or undefined, displays "Customer" instead.
+If `params.firstName` is empty or undefined, displays "Customer" instead. The second argument is a string; `"default=Customer"` and the bare `"Customer"` mean the same thing.
 
 ```handlebars
 <p>Your membership level: {{insert params.tier "default=Standard"}}</p>
@@ -374,9 +387,11 @@ Get the length of an array. Useful in conditionals to check if an array has item
 
 ##### formatDate
 
-Format dates using [Moment.js format tokens](https://momentjs.com/docs/#/displaying/format/). Accepts an optional timezone offset.
+Format dates using [Moment.js format tokens](https://momentjs.com/docs/#/displaying/format/). Accepts an optional UTC offset, as `"+0200"`, `"-05:00"`, or a number of minutes; without it the date is formatted in the server's time zone.
 
 **Syntax:** `{{formatDate timestamp format [timezoneOffset]}}`
+
+`timestamp` is anything Moment.js parses: an ISO 8601 string, a millisecond epoch, or a `Date`.
 
 **Common format tokens:**
 
@@ -618,9 +633,20 @@ HTML:
 
 ## Template Management
 
+The Templates API has six operations:
+
+| Operation | Endpoint |
+|-----------|----------|
+| Create a template | `POST /v1/templates/template` |
+| List templates | `GET /v1/templates` |
+| Get a template with its content | `GET /v1/templates/template/{template}` |
+| Update a template | `PUT /v1/templates/template/{template}` |
+| Delete a template | `DELETE /v1/templates/template/{template}` |
+| Delete every template of an account | `DELETE /v1/templates/account/{account}?force=true` |
+
 ### List All Templates
 
-Retrieve all templates using the [list templates API](/docs/api/get-v-1-templates):
+List templates with the [list templates API](/docs/api/get-v-1-templates). `account` selects one account's templates; leave it out to list the public ones. The listing is paged with `page` and `pageSize` (default 20, up to 1000), and does not include the content:
 
 ```bash
 curl "https://emailengine.example.com/v1/templates?account=example" \
@@ -678,8 +704,9 @@ curl "https://emailengine.example.com/v1/templates/template/AAABgUIbuG0AAAAE" \
   "updated": "2025-05-14T12:00:00.000Z",
   "content": {
     "subject": "Welcome to {{params.companyName}}!",
-    "text": "Hello {{params.firstName}}...",
-    "html": "<h1>Hello {{params.firstName}}</h1>..."
+    "text": "Hello {{params.firstName}},\n\nWelcome to {{params.companyName}}!",
+    "html": "<h1>Hello {{params.firstName}}</h1><p>Welcome to <strong>{{params.companyName}}</strong>!</p>",
+    "previewText": "Your account is ready"
   }
 }
 ```
@@ -695,13 +722,14 @@ curl -XPUT "https://emailengine.example.com/v1/templates/template/AAABgUIbuG0AAA
   -d '{
     "content": {
       "subject": "Welcome to {{params.companyName}}, {{params.firstName}}!",
-      "text": "Hello {{params.firstName}}...",
-      "html": "<h1>Updated content</h1>"
+      "text": "Hello {{params.firstName}},\n\nWelcome to {{params.companyName}}!",
+      "html": "<h1>Updated content</h1>",
+      "previewText": "Your account is ready"
     }
   }'
 ```
 
-Top-level fields (`name`, `description`, `format`) are merged - include only the ones you want to change. The `content` object is different: when provided, it replaces the stored content entirely, so resubmit all content fields (`subject`, `text`, `html`, `previewText`) - any field you omit is removed from the template.
+Top-level fields (`name`, `description`, `format`) are merged - include only the ones you want to change. The `content` object is different: when provided, it replaces the stored content entirely, so resubmit all content fields (`subject`, `text`, `html`, `previewText`) - any field you omit is removed from the template. The response is `{"updated": true, "account": "example", "id": "AAABgUIbuG0AAAAE"}`.
 
 ### Delete Template
 
@@ -710,6 +738,32 @@ Use the [delete template API](/docs/api/delete-v-1-templates-template-template):
 ```bash
 curl -XDELETE "https://emailengine.example.com/v1/templates/template/AAABgUIbuG0AAAAE" \
   -H "Authorization: Bearer <token>"
+```
+
+**Response:**
+
+```json
+{
+  "deleted": true,
+  "account": "example",
+  "id": "AAABgUIbuG0AAAAE"
+}
+```
+
+To remove every template of one account at once, use the [flush templates API](/docs/api/delete-v-1-templates-account-account). It refuses to run without `force=true`:
+
+```bash
+curl -XDELETE "https://emailengine.example.com/v1/templates/account/example?force=true" \
+  -H "Authorization: Bearer <token>"
+```
+
+**Response:**
+
+```json
+{
+  "flushed": true,
+  "account": "example"
+}
 ```
 
 ## Using Templates with Mail Merge
@@ -743,11 +797,12 @@ curl -XPOST "https://emailengine.example.com/v1/account/example/submit" \
   }'
 ```
 
-Each recipient gets a personalized email based on their params.
+Each recipient gets a personalized email based on their `params`. Give every entry a `params` object, even an empty one; an entry without it is sent unrendered.
 
 ## See Also
 
 - [Mail merge](/docs/sending/mail-merge) - Sending one template to a list with per-recipient values
 - [Basic sending](/docs/sending/basic-sending) - The submit fields a template fills in
 - [Templates API](/docs/api/get-v-1-templates) - The endpoint reference
+- [Virtual mailing lists](/docs/advanced/virtual-lists) - The unsubscribe link a template can place
 - [Pre-processing](/docs/advanced/pre-processing) - Rewriting a message after it is rendered

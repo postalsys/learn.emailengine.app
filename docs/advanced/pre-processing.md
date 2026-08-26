@@ -13,21 +13,31 @@ keywords:
 
 # Pre-Processing Functions
 
-Pre-processing functions allow you to run custom JavaScript code to filter or transform data before EmailEngine processes it. Use these functions to implement custom business logic, filter unwanted events, or modify webhook payloads.
+Pre-processing functions are short pieces of JavaScript that EmailEngine runs against an event payload before acting on it. They decide whether a webhook route receives an event, and what the delivered body looks like. This page is the reference for the script runtime: what the code is wrapped in, what it can see, what a return value does, and how long it may run.
 
-## Overview
+## Where They Run
 
-EmailEngine supports pre-processing for:
+The same runtime serves three features:
 
-- **Webhooks** - Filter or modify webhook payloads before delivery
-- **Custom Routes** - Transform data before processing
+| Feature | Filter function | Map function | Configured at |
+| ------- | --------------- | ------------ | ------------- |
+| [Webhook routes](/docs/webhooks/webhook-routing) | Decides whether the route gets the event | Rewrites the body sent to the route's URL | **Integrations** > **Webhook Routes**, per route |
+| [AI pre-processing filter](/docs/integrations/ai-chatgpt#ai-pre-processing-filter-openaipreprocessingfn) | Decides which messages are sent to the LLM | none | `openAiPreProcessingFn` setting |
+| Document Store pre-processing | Decides which messages are indexed | Rewrites the indexed document | Document Store settings. Deprecated; removed from releases starting 2026-10-01 |
 
-Pre-processing functions are small JavaScript snippets that run in an isolated execution context with a restricted set of globals and an enforced timeout.
+The rest of this page is written for webhook routes. The other two use the same globals, timeout and error handling.
 
-## Function Types
+## Function Format
 
-:::warning Code Format
-Pre-processing code is **function body content**, not a full function definition. The code runs in the main scope and must return a value directly. The webhook payload is available as `payload`.
+The text you enter is a **function body**, not a function definition. EmailEngine wraps it as
+
+```javascript
+(async (payload) => {
+  // your code
+})(payload);
+```
+
+so `return` ends the function and `await` is available at the top level. The event is the `payload` variable.
 
 ```javascript
 if (payload.path === "INBOX") {
@@ -36,710 +46,426 @@ if (payload.path === "INBOX") {
 return false;
 ```
 
-:::
+### Filter Functions
 
-### 1. Filter Functions
-
-Filter functions determine whether an event should be processed or discarded.
+A filter function decides whether the event goes any further.
 
 **Return value:**
 
-- `true` - Process the event (must be exactly `true`, not just truthy)
-- `false` or any other value - Discard the event
-- Exception thrown - Discard the event
+- `true` - The route receives the event
+- `false`, `undefined`, or nothing - The route skips it
+- An exception - The route skips it, and the error is recorded in the route's **Error log** tab (the last 20 entries are kept)
 
-**Use cases:**
+Return a boolean. On the server any truthy value counts as a match, but the editor's live preview reports a non-boolean result as `no match` with a warning, so a filter that returns a string or an object looks broken in the UI even though it would match in production.
 
-- Skip webhooks for automated messages
-- Filter out spam or promotional emails
-
-**Example - Skip auto-reply emails:**
+**Example - skip auto-replies:**
 
 ```javascript
-// Return true to send webhook, false to skip
-
-// Skip auto-replies
-if (payload.data.headers && payload.data.headers["auto-submitted"]) {
+// Skip messages that declare themselves automatic
+if (payload.data.headers && payload.data.headers["auto-submitted"] && payload.data.headers["auto-submitted"][0] !== "no") {
   return false;
 }
 
-// Skip out-of-office messages
+// Skip out-of-office replies by subject
 if (payload.data.subject && /out of office/i.test(payload.data.subject)) {
   return false;
 }
 
-// Process all other webhooks
 return true;
 ```
 
-### 2. Mapping Functions
+### Map Functions
 
-Mapping functions modify the structure or content of data before processing.
+A map function runs only when the filter matched, and shapes what is delivered.
 
 **Return value:**
 
-- Modified data object
-- Original data unchanged if no return value
+- An object - Becomes the webhook body, replacing the original payload entirely. Anything you leave out is not sent
+- `undefined` or nothing - The original payload is sent unchanged
+- An exception - The error is recorded in the route's **Error log** tab and the original payload is sent unchanged, as if the map had returned nothing
 
-**Use cases:**
+Each function receives its own copy of the payload, so a map function can change fields in place and return `payload`. Because the map decides the whole body, it can also return something that is not the payload at all, which is how a route posts to a service with a fixed input format, for example a Slack message.
 
-- Add custom fields to webhooks
-- Redact sensitive information
-- Normalize data formats
-- Enrich with additional context
-
-**Example - Add custom fields:**
+**Example - add fields and return the payload:**
 
 ```javascript
-// Add custom tracking ID
 payload.customId = `${payload.account}-${Date.now()}`;
 
-// Add priority based on subject
 if (payload.data.subject && /urgent/i.test(payload.data.subject)) {
   payload.priority = "high";
 } else {
   payload.priority = "normal";
 }
 
-// Redact sensitive content
-if (payload.data.text && payload.data.text.plain) {
-  payload.data.text.plain = payload.data.text.plain.replace(/ssn:\s*\d{3}-\d{2}-\d{4}/gi, "ssn: [REDACTED]");
-}
-
 return payload;
 ```
 
-## Configuration
-
-### Webhook Pre-Processing
-
-Configure pre-processing for webhook routes in the EmailEngine UI.
-
-#### Step 1: Open the webhook route
-
-1. Go to **Integrations** → **Webhook Routes**
-2. Click on the webhook route to configure
-3. Scroll to **Pre-Processing Function** section
-
-#### Step 2: Add Filter Function
+**Example - build a different body:**
 
 ```javascript
-// Filter: return true to send webhook, false to skip
-
-// Only send webhooks for inbox messages
-if (payload.path !== "INBOX") {
-  return false;
-}
-
-// Skip notifications (usually automated)
-if (payload.data.from && /noreply|no-reply/i.test(payload.data.from.address)) {
-  return false;
-}
-
-// Skip old messages (older than 1 hour)
-if (payload.data.date) {
-  const messageAge = Date.now() - new Date(payload.data.date).getTime();
-  if (messageAge > 3600000) {
-    // 1 hour in milliseconds
-    return false;
-  }
-}
-
-return true;
-```
-
-#### Step 3: Add Mapping Function
-
-```javascript
-// Mapping: modify payload and return it
-
-// Add custom fields
-payload.metadata = {
-  receivedAt: new Date().toISOString(),
-  environment: "production",
-  version: "1.0",
+return {
+  text: `New message for ${payload.account}: ${payload.data.subject || "(no subject)"}`,
+  from: payload.data.from && payload.data.from.address,
+  messageId: payload.data.messageId
 };
-
-// Categorize by subject
-if (payload.data.subject) {
-  const subject = payload.data.subject.toLowerCase();
-  if (subject.includes("invoice") || subject.includes("payment")) {
-    payload.category = "billing";
-  } else if (subject.includes("support") || subject.includes("help")) {
-    payload.category = "support";
-  } else {
-    payload.category = "general";
-  }
-}
-
-// Extract ticket ID from subject
-const ticketMatch = payload.data.subject && payload.data.subject.match(/#(\d+)/);
-if (ticketMatch) {
-  payload.ticketId = ticketMatch[1];
-}
-
-return payload;
-```
-
-#### Step 4: Test Function
-
-Use the **Set test payload** button to provide sample data for testing your function. The editor runs your filter and mapping functions in the browser and shows:
-
-- **Evaluation result** - Whether the filter function returns `true` (matches) or not
-- **Mapping preview** - The transformed payload after the mapping function runs
-
-You can select from predefined example payloads or enter custom JSON data to test different scenarios.
-
-## Common Use Cases
-
-### 1. Skip Automated Emails
-
-```javascript
-// Check Auto-Submitted header
-if (payload.data.headers && payload.data.headers["auto-submitted"] && payload.data.headers["auto-submitted"][0] !== "no") {
-  return false;
-}
-
-// Check for common automated addresses
-const automatedPatterns = [/noreply/i, /no-reply/i, /donotreply/i, /notifications?/i, /mailer-daemon/i, /postmaster/i];
-
-if (payload.data.from && payload.data.from.address) {
-  for (const pattern of automatedPatterns) {
-    if (pattern.test(payload.data.from.address)) {
-      return false;
-    }
-  }
-}
-
-// Check subject for automated patterns
-const automatedSubjects = [/out of office/i, /automatic reply/i, /auto-reply/i, /mail delivery fail/i];
-
-if (payload.data.subject) {
-  for (const pattern of automatedSubjects) {
-    if (pattern.test(payload.data.subject)) {
-      return false;
-    }
-  }
-}
-
-return true;
-```
-
-### 2. Extract and Normalize Data
-
-```javascript
-// Extract email addresses from CC and BCC
-const allRecipients = [...(payload.data.to || []), ...(payload.data.cc || []), ...(payload.data.bcc || [])].map((r) => r.address);
-
-payload.allRecipients = [...new Set(allRecipients)]; // Remove duplicates
-
-// Parse subject line for ticket/order numbers
-if (payload.data.subject) {
-  // Extract ticket ID (e.g., "#12345", "TICKET-12345")
-  const ticketMatch = payload.data.subject.match(/#(\d+)|TICKET-(\d+)/i);
-  if (ticketMatch) {
-    payload.ticketId = ticketMatch[1] || ticketMatch[2];
-  }
-
-  // Extract order ID (e.g., "Order #12345", "Order ID: 12345")
-  const orderMatch = payload.data.subject.match(/order\s*#?:?\s*(\d+)/i);
-  if (orderMatch) {
-    payload.orderId = orderMatch[1];
-  }
-}
-
-// Normalize sender domain
-if (payload.data.from && payload.data.from.address) {
-  const domain = payload.data.from.address.split("@")[1];
-  payload.senderDomain = domain.toLowerCase();
-
-  // Flag internal emails
-  payload.isInternal = ["example.com", "company.com"].includes(domain);
-}
-
-return payload;
-```
-
-### 3. Priority and Categorization
-
-```javascript
-// Determine priority
-payload.priority = "normal";
-
-// High priority indicators
-const urgentKeywords = ["urgent", "asap", "important", "critical"];
-const subject = (payload.data.subject || "").toLowerCase();
-
-for (const keyword of urgentKeywords) {
-  if (subject.includes(keyword)) {
-    payload.priority = "high";
-    break;
-  }
-}
-
-// VIP senders
-const vipDomains = ["important-client.com", "executive.com"];
-if (payload.data.from && payload.data.from.address) {
-  const domain = payload.data.from.address.split("@")[1];
-  if (vipDomains.includes(domain)) {
-    payload.priority = "high";
-    payload.isVip = true;
-  }
-}
-
-// Categorize by content
-const categories = {
-  billing: ["invoice", "payment", "receipt", "billing"],
-  support: ["support", "help", "question", "issue"],
-  sales: ["quote", "proposal", "pricing", "demo"],
-  hr: ["benefits", "payroll", "pto", "vacation"],
-};
-
-for (const [category, keywords] of Object.entries(categories)) {
-  for (const keyword of keywords) {
-    if (subject.includes(keyword)) {
-      payload.category = category;
-      break;
-    }
-  }
-  if (payload.category) break;
-}
-
-payload.category = payload.category || "general";
-
-return payload;
-```
-
-### 4. Redact Sensitive Information
-
-```javascript
-// Patterns for sensitive data
-const patterns = {
-  ssn: /\b\d{3}-\d{2}-\d{4}\b/g,
-  creditCard: /\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/g,
-  phone: /\b\d{3}[-.]?\d{3}[-.]?\d{4}\b/g,
-  email: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g,
-};
-
-// Redact from text (note: text content may be in payload.data.text.plain)
-if (payload.data.text && payload.data.text.plain) {
-  payload.data.text.plain = payload.data.text.plain.replace(patterns.ssn, "SSN:[REDACTED]");
-  payload.data.text.plain = payload.data.text.plain.replace(patterns.creditCard, "CARD:[REDACTED]");
-}
-
-// Flag as containing sensitive data
-const originalText = (payload.data.text && payload.data.text.plain) || "";
-if (patterns.ssn.test(originalText) || patterns.creditCard.test(originalText)) {
-  payload.containsSensitiveData = true;
-}
-
-return payload;
-```
-
-### 5. Add Metadata and Context
-
-```javascript
-// Add processing metadata
-payload.processing = {
-  receivedAt: new Date().toISOString(),
-  version: "2.0",
-};
-
-// Count attachments by type
-if (payload.data.attachments) {
-  payload.attachmentStats = {
-    total: payload.data.attachments.length,
-    images: payload.data.attachments.filter((a) => a.contentType?.startsWith("image/")).length,
-    documents: payload.data.attachments.filter((a) => a.contentType?.includes("pdf") || a.contentType?.includes("word")).length,
-    totalSize: payload.data.attachments.reduce((sum, a) => sum + (a.encodedSize || 0), 0),
-  };
-}
-
-return payload;
 ```
 
 ## Available Data
 
-### Webhook Payload
+### The `payload` Object
 
-Pre-processing functions receive the complete webhook payload. The payload has a nested structure with top-level webhook metadata and message details inside the `data` property:
+The payload is the webhook event exactly as EmailEngine would deliver it, with two additions: the `data` property carries the message, and `_route` identifies the route being evaluated.
 
-```javascript
+```json
 {
-  // Top-level webhook metadata
-  serviceUrl: "https://emailengine.example.com",
-  account: "testaccount",
-  date: "2024-10-13T14:23:45.678Z",
-  path: "INBOX",
-  specialUse: "\\Inbox",
-  event: "messageNew",
-
-  // Message data (nested inside `data`)
-  data: {
-    id: "AAAABgAAAdk",
-    uid: 123,
-    path: "INBOX",
-    date: "2024-10-13T14:20:00.000Z",
-    flags: [],
-    unseen: true,
-    subject: "Important Message",
-    from: {
-      name: "John Doe",
-      address: "john@example.com"
+  "serviceUrl": "https://emailengine.example.com",
+  "account": "user123",
+  "date": "2024-10-13T14:23:45.678Z",
+  "path": "INBOX",
+  "specialUse": "\\Inbox",
+  "event": "messageNew",
+  "_route": {
+    "id": "AAABkxEnOGIAAAAB"
+  },
+  "data": {
+    "id": "AAAABgAAAdk",
+    "uid": 123,
+    "path": "INBOX",
+    "date": "2024-10-13T14:20:00.000Z",
+    "flags": [],
+    "unseen": true,
+    "size": 4127,
+    "subject": "Important Message",
+    "from": {
+      "name": "John Doe",
+      "address": "john@example.com"
     },
-    to: [
-      { name: "Jane Smith", address: "jane@example.com" }
+    "replyTo": [],
+    "to": [
+      {
+        "name": "Jane Smith",
+        "address": "jane@example.com"
+      }
     ],
-    replyTo: [],
-    messageId: "<abc123@example.com>",
-    headers: {
+    "messageId": "<abc123@example.com>",
+    "headers": {
       "return-path": ["<john@example.com>"],
       "message-id": ["<abc123@example.com>"],
       "from": ["John Doe <john@example.com>"],
       "to": ["Jane Smith <jane@example.com>"],
       "subject": ["Important Message"],
       "content-type": ["text/plain; charset=utf-8"],
-      "auto-submitted": ["no"]  // Present for automated messages
+      "auto-submitted": ["no"]
     },
-    text: {
-      id: "...",
-      encodedSize: { plain: 1234, html: 5678 }
+    "text": {
+      "id": "AAAABgAAAdmRkA",
+      "encodedSize": {
+        "plain": 1234,
+        "html": 5678
+      }
     },
-    attachments: [
+    "attachments": [
       {
-        id: "abc123",
-        contentType: "application/pdf",
-        encodedSize: 12345,
-        filename: "document.pdf",
-        embedded: false,
-        inline: false
+        "id": "AAAABgAAAdky",
+        "contentType": "application/pdf",
+        "encodedSize": 12345,
+        "filename": "document.pdf",
+        "embedded": false,
+        "inline": false
       }
     ]
   }
 }
 ```
 
-**Accessing data in filter/mapping functions:**
+The top-level fields are the same for every event. What `data` holds depends on the event; the [webhooks overview](/docs/webhooks/overview#webhook-events) links to the payload of each one. Header values are arrays, one entry per occurrence of the header.
+
+`_route` is present so a script can tell which route it is running for. It is stripped from the body when the original payload is delivered, but if a map function returns the `payload` object it comes along; delete it first if the receiving service objects to unknown fields.
+
+**Accessing data:**
 
 ```javascript
-// Top-level properties (webhook metadata)
 payload.event; // "messageNew"
-payload.account; // "testaccount"
+payload.account; // "user123"
 payload.path; // "INBOX"
 
-// Message properties (inside payload.data)
-payload.data.subject; // "Important Message"
-payload.data.from; // { name: "...", address: "..." }
-payload.data.headers; // { "auto-submitted": [...], ... }
-payload.data.attachments; // [...]
+payload.data.subject;
+payload.data.from; // { name, address }
+payload.data.headers["auto-submitted"]; // ["no"]
+payload.data.attachments; // []
 ```
 
 ## Execution Environment
 
-Pre-processing functions run in an isolated execution context (built on Node's `vm` module) with a restricted set of globals and a 30 second execution limit. Note that Node's `vm` is an isolation mechanism, not a hardened security boundary - only run pre-processing code you trust.
-
-The limit interrupts synchronous execution. It does not bound `await`, so a function waiting on a slow `fetch` can outlive it: give any HTTP call you make its own timeout rather than relying on this one.
-
-The context exposes a limited set of capabilities:
+Functions run inside a fresh V8 context created with Node's `vm` module. The context starts with the JavaScript built-ins (`Object`, `Array`, `Date`, `Math`, `JSON`, `RegExp`, `Promise`, `Map`, `Set` and the rest of the language) and the globals below, and nothing else.
 
 **Available:**
 
-- Standard JavaScript (ES6+)
-- Top-level `await` is supported
-- `Date`, `Math`, `JSON`, `RegExp`
-- `fetch` - Make HTTP requests to external services
-- `URL` - URL parsing and manipulation
-- `logger` - Pino.js logger instance (logs to EmailEngine's stdout)
-- `env` - The `scriptEnv` settings object (configure via Settings API)
+| Global | What it is |
+| ------ | ---------- |
+| `payload` | A deep copy of the event. Changes do not leak into other routes |
+| `fetch(url, options)` | HTTP client, the same one EmailEngine uses internally. Connection attempts time out after 30 seconds and the response after 90 seconds (`EENGINE_FETCH_TIMEOUT` changes the latter); `429` responses and transient network errors are retried automatically |
+| `URL` | The WHATWG `URL` class |
+| `logger` | Writes to EmailEngine's log. `logger.trace`, `.debug`, `.info`, `.warn`, `.error` and `.fatal` each take one argument, a string or an object with a `msg` property |
+| `env` | The parsed `scriptEnv` setting, see below |
 
-**Not Available:**
+**Not available:**
 
-- `require()` - Cannot import modules
-- `fs` - No filesystem access
-- `process`, `child_process` - No system access
+- `require()` and `import` - No modules
+- `process`, `Buffer`, `fs`, `child_process` - No access to the host
+- `console` - Use `logger`
+- `setTimeout`, `setInterval`, `AbortSignal` - No timers, so there is no way to abandon a slow `fetch` from inside the script beyond the built-in timeouts above
 
-**Using `env` for Configuration:**
+**Time limit:** 30 seconds of synchronous execution. The limit interrupts a loop that never yields, but it does not bound time spent waiting on `await`. A script that waits on a slow `fetch` runs until that request's own timeout fires, which is why external calls belong in the webhook handler rather than in the filter (see [Performance](#performance-considerations)).
 
-Store sensitive values like API keys in `scriptEnv` settings rather than hardcoding them:
-
-```javascript
-// Access values from scriptEnv settings
-const apiKey = env.MY_API_KEY;
-const webhookSecret = env.WEBHOOK_SECRET;
-
-if (apiKey) {
-  // Use the API key
-  const response = await fetch("https://api.example.com/validate", {
-    headers: { Authorization: `Bearer ${apiKey}` },
-  });
-}
-
-return true;
-```
+:::warning Not a security boundary
+Node's `vm` isolates variables, not privileges. Code running here can reach the host process through the objects it is handed, so treat a pre-processing function as code running with EmailEngine's own permissions. Only operators you trust with the server should be able to edit routes.
+:::
 
 ## Script Environment Variables (scriptEnv)
 
-The `scriptEnv` setting allows you to pass secrets, API keys, and configuration values to pre-processing scripts without hardcoding them. This is the recommended approach for managing sensitive data in scripts.
+`scriptEnv` is a runtime setting holding a JSON object of values that every pre-processing function can read as `env`. Use it for API keys, shared secrets and feature flags instead of writing them into the function text, where they would be visible on every route page.
 
 ### Configuring scriptEnv
 
-Configure `scriptEnv` via the Settings API. The value must be a JSON string containing key-value pairs:
+In the admin UI, open **Configuration** > **Webhooks** and fill in the **Script Variables (JSON)** editor. Through the API, `scriptEnv` is a string containing the JSON object (up to 1 MB):
 
 ```bash
 curl -X POST "https://emailengine.example.com/v1/settings" \
-  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "scriptEnv": "{\"MY_API_KEY\":\"your-api-key-here\",\"WEBHOOK_SECRET\":\"your-secret\",\"SLACK_WEBHOOK_URL\":\"https://hooks.slack.com/...\"}"
+    "scriptEnv": "{\"CLASSIFIER_URL\":\"https://classifier.example.com/v1/classify\",\"CLASSIFIER_KEY\":\"sk-abc123\",\"SLACK_WEBHOOK_URL\":\"https://hooks.slack.com/services/T000/B000/XXXX\",\"ENVIRONMENT\":\"production\"}"
   }'
 ```
 
-Or with formatted JSON for readability:
+The value is parsed on every function execution, so a change applies to the next event without a restart. The whole object is replaced on each update; include every key you want to keep.
 
-```bash
-curl -X POST "https://emailengine.example.com/v1/settings" \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "scriptEnv": "{\"API_KEY\":\"sk-abc123\",\"ENVIRONMENT\":\"production\",\"DEBUG_MODE\":\"false\"}"
-  }'
-```
+Read it back with `GET /v1/settings?scriptEnv=true`.
 
-### Accessing Environment Variables in Scripts
-
-The `env` object is available globally in all pre-processing scripts:
+### Using env in Scripts
 
 ```javascript
-// Access a single variable
-const apiKey = env.API_KEY;
+if (env.ENVIRONMENT === "development") {
+  return true;
+}
 
-// Check if variable exists
+// In production, only INBOX messages
+return payload.path === "INBOX";
+```
+
+```javascript
+// Post a notification to Slack from a map function, then send the original payload on
 if (env.SLACK_WEBHOOK_URL) {
   await fetch(env.SLACK_WEBHOOK_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      text: `New email from ${payload.data.from.address}`,
-    }),
+    body: JSON.stringify({ text: `New email from ${payload.data.from.address}` })
   });
 }
+```
 
-// Use environment to control behavior
-if (env.ENVIRONMENT === "production") {
-  // Production-specific logic
+## Examples
+
+### Skip Automated Mail
+
+```javascript
+if (payload.data.headers && payload.data.headers["auto-submitted"] && payload.data.headers["auto-submitted"][0] !== "no") {
+  return false;
+}
+
+const automatedSenders = [/noreply/i, /no-reply/i, /donotreply/i, /mailer-daemon/i, /postmaster/i];
+const address = payload.data.from && payload.data.from.address;
+if (address && automatedSenders.some(pattern => pattern.test(address))) {
+  return false;
+}
+
+const automatedSubjects = [/out of office/i, /automatic reply/i, /auto-reply/i, /mail delivery fail/i];
+if (payload.data.subject && automatedSubjects.some(pattern => pattern.test(payload.data.subject))) {
+  return false;
 }
 
 return true;
 ```
 
-### Use Cases
-
-**1. External API Integration**
+### Route by Sender Domain
 
 ```javascript
-// Call an external classification API
-const response = await fetch(env.CLASSIFICATION_API_URL, {
-  method: "POST",
-  headers: {
-    Authorization: `Bearer ${env.CLASSIFICATION_API_KEY}`,
-    "Content-Type": "application/json",
-  },
-  body: JSON.stringify({
-    subject: payload.data.subject,
-    from: payload.data.from.address,
-  }),
-});
+const address = payload.data.from && payload.data.from.address;
+if (!address) {
+  return false;
+}
 
-const result = await response.json();
-payload.classification = result.category;
+const domain = address.split("@")[1].toLowerCase();
+return ["important-client.com", "partner.example"].includes(domain);
+```
+
+### Extract Reference Numbers
+
+```javascript
+if (payload.data.subject) {
+  const ticketMatch = payload.data.subject.match(/#(\d+)|TICKET-(\d+)/i);
+  if (ticketMatch) {
+    payload.ticketId = ticketMatch[1] || ticketMatch[2];
+  }
+
+  const orderMatch = payload.data.subject.match(/order\s*#?:?\s*(\d+)/i);
+  if (orderMatch) {
+    payload.orderId = orderMatch[1];
+  }
+}
+
+const recipients = [...(payload.data.to || []), ...(payload.data.cc || [])].map(entry => entry.address);
+payload.allRecipients = [...new Set(recipients)];
+
 return payload;
 ```
 
-**2. Webhook Secret Validation**
+### Categorise by Subject
 
 ```javascript
-// Add a shared secret to webhook payloads
-payload.webhookSecret = env.WEBHOOK_SECRET;
-payload.timestamp = Date.now();
+const categories = {
+  billing: ["invoice", "payment", "receipt", "billing"],
+  support: ["support", "help", "question", "issue"],
+  sales: ["quote", "proposal", "pricing", "demo"]
+};
+
+const subject = (payload.data.subject || "").toLowerCase();
+payload.category = "general";
+
+for (const [category, keywords] of Object.entries(categories)) {
+  if (keywords.some(keyword => subject.includes(keyword))) {
+    payload.category = category;
+    break;
+  }
+}
+
 return payload;
 ```
 
-**3. Environment-Specific Filtering**
+### Redact Sensitive Content
+
+Text bodies are only present in the payload when the `notifyText` setting is on; see [Webhook content](/docs/webhooks/overview#advanced-webhook-settings).
 
 ```javascript
-// Different behavior per environment
-if (env.ENVIRONMENT === "development") {
-  // In development, process all emails
-  return true;
+const patterns = {
+  ssn: /\b\d{3}-\d{2}-\d{4}\b/g,
+  card: /\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/g
+};
+
+if (payload.data.text && payload.data.text.plain) {
+  const original = payload.data.text.plain;
+  payload.data.text.plain = original.replace(patterns.ssn, "[REDACTED]").replace(patterns.card, "[REDACTED]");
+  payload.containsSensitiveData = payload.data.text.plain !== original;
 }
 
-// In production, only process inbox emails
-return payload.path === "INBOX";
+return payload;
 ```
 
-**4. Feature Flags**
+### Summarise Attachments
 
 ```javascript
-// Toggle features via configuration
-if (env.ENABLE_SLACK_NOTIFICATIONS === "true") {
-  await fetch(env.SLACK_WEBHOOK_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text: `Email received: ${payload.data.subject}` }),
-  });
+if (payload.data.attachments) {
+  payload.attachmentStats = {
+    total: payload.data.attachments.length,
+    images: payload.data.attachments.filter(a => a.contentType && a.contentType.startsWith("image/")).length,
+    totalSize: payload.data.attachments.reduce((sum, a) => sum + (a.encodedSize || 0), 0)
+  };
 }
-return true;
+
+return payload;
 ```
 
-### Best Practices
+## Configuring a Route
 
-1. **Never hardcode secrets** - Always use `scriptEnv` for API keys, tokens, and passwords
-2. **Use descriptive names** - Use clear, uppercase names like `OPENAI_API_KEY`, `SLACK_WEBHOOK_URL`
-3. **Validate before use** - Check if variables exist before using them: `if (env.MY_KEY) { ... }`
-4. **Keep it simple** - Store only values needed by scripts; use EmailEngine settings for EmailEngine configuration
-5. **Update atomically** - When updating `scriptEnv`, include all values as the entire object is replaced
+1. Open **Integrations** > **Webhook Routes** and create a route, or open an existing one and click **Edit**
+2. Enter the filter in the **Filter function** editor. Click **Set test payload** to load one of the example payloads, or paste your own JSON; the **Evaluation result** line updates as you type, showing `filter matches` or `no match`
+3. Enter the map in the **Map function** editor. Its preview shows the body the route would deliver for the test payload, and reads `Filter function must return true to activate output mapping` until the filter matches
+4. Save. Routes are re-read on the next event, so the change applies without a restart
 
-### Retrieving Current Configuration
+The route's page shows the saved functions under the **Filter function** and **Map function** tabs, and an **Error log** tab appears once a function has thrown.
 
-Get the current `scriptEnv` value:
-
-```bash
-curl "https://emailengine.example.com/v1/settings" \
-  -H "Authorization: Bearer YOUR_TOKEN"
-```
-
-The response includes `scriptEnv` (as a JSON string) among other settings
-
-**Using `logger` for Structured Logging:**
-
-```javascript
-logger.info({ account: payload.account, path: payload.path, msg: "Processing webhook" });
-logger.warn({ subject: payload.data.subject, msg: "Suspicious email detected" });
-
-return true;
-```
+![Filter Function Editor](/img/screenshots/webhooks/webhook-route-filter-function.png)
 
 ## Performance Considerations
 
-### 1. Keep Functions Fast
-
-Pre-processing runs for every event. Keep functions lightweight:
+Every enabled route runs its filter for every event EmailEngine raises, on the thread that raised it. Keep filters cheap:
 
 ```javascript
-// Fast - simple checks
-return payload.path === "INBOX" && !payload.data.headers["auto-submitted"];
+// Cheap: property checks
+return payload.path === "INBOX" && !(payload.data.headers && payload.data.headers["auto-submitted"]);
 ```
 
+Calling an external service inside a filter puts that service's latency on the path of every event for every account:
+
 ```javascript
-// Slow - avoid external requests in pre-processing
-const response = await fetch("https://api.openai.com/v1/chat/completions", {
+// Expensive: a network round trip per event, per route
+const response = await fetch(env.CLASSIFIER_URL, {
   method: "POST",
-  headers: {
-    Authorization: `Bearer ${env.OPENAI_API_KEY}`,
-    "Content-Type": "application/json",
-  },
-  body: JSON.stringify({
-    model: "gpt-4",
-    messages: [{ role: "user", content: `Is this spam? ${payload.data.subject}` }],
-  }),
+  headers: { Authorization: `Bearer ${env.CLASSIFIER_KEY}`, "Content-Type": "application/json" },
+  body: JSON.stringify({ subject: payload.data.subject })
 });
 const result = await response.json();
-return result.choices[0].message.content.includes("not spam");
+return result.category === "important";
 ```
 
-:::tip Use Webhooks for Slow Operations
-Instead of calling external APIs in pre-processing, let the webhook pass through and handle AI classification in your webhook handler. This keeps EmailEngine responsive while your application handles the slow operations asynchronously.
+:::tip Let the webhook handler do the slow work
+Pass the event through and classify it in your webhook handler, where a slow call delays one delivery instead of every event on the instance. Pre-processing is for decisions that can be made from the payload alone.
 :::
 
-### 2. Cache Computed Values
-
-If checking multiple conditions, store intermediate results:
+Return as early as the answer is known, and compute a value once when several checks need it:
 
 ```javascript
-const subject = (payload.data.subject || "").toLowerCase(); // Compute once
+if (payload.path !== "INBOX") return false;
+if (!payload.data.from || !payload.data.from.address) return false;
 
-// Use cached value
+const subject = (payload.data.subject || "").toLowerCase();
 payload.isUrgent = subject.includes("urgent") || subject.includes("important");
-
 payload.isBilling = subject.includes("invoice") || subject.includes("payment");
 
 return payload;
-```
-
-### 3. Exit Early
-
-Return as soon as you know the result:
-
-```javascript
-// Exit early if conditions not met
-if (payload.path !== "INBOX") return false;
-if (!payload.data.from || !payload.data.from.address) return false;
-if (payload.data.headers && payload.data.headers["auto-submitted"]) return false;
-
-// Only process if all checks passed
-return true;
 ```
 
 ## Debugging
 
 ### Using the Logger
 
-Use `logger` (Pino.js) for debugging:
-
 ```javascript
-logger.info({ account: payload.account, path: payload.path, msg: "Processing webhook" });
-logger.debug({ autoSubmitted: !!payload.data.headers?.["auto-submitted"], msg: "Header check" });
+logger.info({ msg: "Evaluating route", account: payload.account, path: payload.path });
 
 const result = payload.path === "INBOX";
-logger.info({ result, msg: "Filter decision" });
+logger.debug({ msg: "Filter decision", result });
 
 return result;
 ```
 
-Log entries appear in EmailEngine's stdout alongside other application logs.
-
-### Check EmailEngine Logs
-
-EmailEngine logs to stdout. Use your process manager or Docker logs to view output:
+Entries appear in EmailEngine's stdout log with `component: "subscript"` and a `subscript` field naming the function, `webhooks:filter:<routeId>` or `webhooks:map:<routeId>`:
 
 ```bash
-# If running directly
-node server.js 2>&1 | grep "subscript"
-
-# If using Docker
-docker logs -f emailengine 2>&1 | grep "subscript"
-
-# If using systemd
-journalctl -u emailengine -f | grep "subscript"
+emailengine | jq -c 'select(.component == "subscript")'
 ```
 
-### Monitor Execution Time
+A thrown error is logged by the webhook subsystem as `Failed to execute webhook script`, with `type` (`filter` or `map`) and `webhook` (the route ID), and is also stored on the route's **Error log** tab together with the payload that triggered it, which is usually the quicker place to look.
 
-Log timing information:
+### Timing a Function
 
 ```javascript
 const start = Date.now();
 
-// Your transformations
 payload.customField = "processed";
 
-const duration = Date.now() - start;
-logger.info({ duration, msg: "Processing completed" });
-
+logger.info({ msg: "Map function finished", duration: Date.now() - start });
 return payload;
 ```
 
 ## HTML Email Pre-Processing for Web Display
 
-Not to be confused with the functions above. EmailEngine can also pre-process message HTML into a
-form that is safe to inject into a web page, sanitizing the markup, inlining images, and folding
-quoted thread history into a collapsible block.
-
-That is covered on its own page: [Web-Safe HTML](/docs/receiving/web-safe-html).
+Not to be confused with the functions above. EmailEngine can also pre-process message HTML into a form that is safe to inject into a web page, sanitizing the markup, inlining images, and folding quoted thread history into a collapsible block. That is covered on its own page: [Web-Safe HTML](/docs/receiving/web-safe-html).
 
 ## See Also
 
-- [Webhook routing](/docs/webhooks/webhook-routing) - Where a pre-processing function is attached
-- [Webhooks overview](/docs/webhooks/overview) - The payloads these functions receive
+- [Webhook routing](/docs/webhooks/webhook-routing) - Creating routes and the examples that use these functions
+- [Webhooks overview](/docs/webhooks/overview) - The events and payloads the functions receive
 - [Webhooks API](/docs/api-reference/webhooks-api) - Managing routes and their functions programmatically
-- [Templates](/docs/sending/templates) - The other place Handlebars-style rendering happens
+- [AI processing](/docs/integrations/ai-chatgpt#ai-pre-processing-filter-openaipreprocessingfn) - The filter that selects messages for LLM processing
+- [Web-safe HTML](/docs/receiving/web-safe-html) - The other kind of pre-processing

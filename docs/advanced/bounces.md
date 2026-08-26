@@ -79,7 +79,6 @@ Permanent delivery failures that will not succeed on retry:
 
 - **User unknown** - Email address doesn't exist
 - **Domain not found** - Domain doesn't exist or has no MX records
-- **Mailbox full** - Recipient's mailbox is over quota (often permanent)
 - **Account disabled** - Recipient account has been closed
 
 **Example error messages:**
@@ -94,6 +93,7 @@ Permanent delivery failures that will not succeed on retry:
 Temporary delivery failures that might succeed on retry:
 
 - **Mailbox temporarily unavailable** - Server issues
+- **Mailbox full** - Recipient's mailbox is over quota; the classifier below files this under `retry`
 - **Message too large** - Exceeds recipient's size limit
 - **Spam filter rejection** - Message blocked by content filter
 - **Rate limiting** - Too many messages sent too quickly
@@ -106,13 +106,13 @@ Temporary delivery failures that might succeed on retry:
 
 ### Bounce Action Codes
 
-EmailEngine extracts action codes from bounce emails (these follow the standard action codes used in bounce messages):
+The `action` value comes from the `Action:` field of an RFC 3464 delivery status report, or is set to `failed` when a bounce is recognized from the message text alone:
 
 - `failed` - Permanent failure (hard bounce)
 - `delayed` - Temporary failure (soft bounce)
-- `delivered` - Successfully delivered (not a bounce)
-- `relayed` - Relayed to another server
-- `expanded` - Mailing list expansion
+- `delivered`, `relayed`, `expanded` - reports that are not failures
+
+A `multipart/report; report-type=delivery-status` message that arrives in the inbox and reports `delivered` or `delayed` is attached to the message as a `deliveryReport` instead of being processed as a bounce, so no `messageBounce` webhook is sent for it.
 
 ## Sending Email and Tracking Bounces
 
@@ -185,20 +185,22 @@ When the email bounces, EmailEngine sends a `messageBounce` webhook:
 
 | Field | Description |
 |-------|-------------|
-| `bounceMessage` | ID of the bounce notification message |
+| `bounceMessage` | EmailEngine ID of the bounce notification message |
 | `recipient` | Email address that bounced |
-| `action` | Bounce action: `failed`, `delayed`, etc. |
+| `action` | Bounce action, one of the codes above; `failed` for a rejected delivery |
 | `response.message` | Error message from receiving server |
-| `response.status` | SMTP status code (e.g., `5.0.0`) |
-| `response.source` | Source of error: `smtp`, `dns`, etc. |
+| `response.status` | Enhanced status code (e.g., `5.1.1`) |
+| `response.source` | The diagnostic type from the report's `Diagnostic-Code:` field, usually `smtp`. Absent when the bounce was parsed from message text |
 | `response.category` | ML-classified bounce category (see below) |
 | `response.recommendedAction` | Suggested action to take |
 | `response.blocklist` | Blocklist details if applicable |
 | `response.retryAfter` | Suggested retry delay in seconds |
-| `mta` | Hostname of the MTA that generated the bounce |
-| `queueId` | Queue ID from the bouncing MTA |
+| `mta` | Hostname of the server that reported the failure, lowercased: `Remote-MTA`, or `Reporting-MTA` when the report carries no remote one |
+| `queueId` | Queue ID from the sending MTA (`X-Postfix-Queue-Id`) |
 | `messageId` | Message-ID of the original sent email |
-| `messageHeaders` | Original email headers |
+| `messageHeaders` | Headers of the original message when the report quoted them back, otherwise `null` |
+
+The webhook is sent only when the report yields all three of `action`, `recipient` and `messageId`; a bounce EmailEngine cannot tie to a sent message is logged but not reported. The `category`, `recommendedAction`, `blocklist` and `retryAfter` fields are added by the classifier described below and are absent when classification fails. The [messageBounce webhook reference](/docs/webhooks/messagebounce) is the complete field list.
 
 ## Checking Bounce Information
 
@@ -253,6 +255,8 @@ Messages with bounces include a `bounces` array:
 ```
 
 **Why an array?** Each email can have multiple recipients, and each can bounce with different errors.
+
+The `bounces` array is attached for IMAP accounts only, and carries the bounce's `message` ID, `recipient`, `action`, `response.message`, `response.status` and the `date` the bounce was detected. The classifier fields are only in the webhook.
 
 ### Via API Query
 
@@ -344,7 +348,7 @@ Understanding SMTP status codes helps interpret bounces:
 
 ## ML-Powered Bounce Classification
 
-EmailEngine uses machine learning to classify bounce messages into detailed categories, going beyond basic hard/soft bounce distinction. This classification helps you take more precise action on bounced emails.
+Since v2.60.0, EmailEngine classifies the server's error text with a bundled machine learning model ([`@postalsys/bounce-classifier`](https://github.com/postalsys/bounce-classifier)), going beyond the hard/soft distinction. The classification runs in the main EmailEngine process, and the worker that found the bounce waits at most two minutes for it; if it fails or times out, the bounce is reported without the classifier fields.
 
 ### Classification Categories
 

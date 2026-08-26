@@ -1,7 +1,7 @@
 ---
 title: Messages API
 description: API endpoints for message operations - list, search, read, update, and delete emails
-sidebar_position: 3
+sidebar_position: 4
 ---
 
 import Tabs from '@theme/Tabs';
@@ -31,10 +31,12 @@ The Messages API allows you to:
   "uid": 12345,
   "emailId": "1234567890abcdef",
   "threadId": "thread_abc123",
+  "path": "INBOX",
   "date": "2025-01-15T10:30:00.000Z",
   "flags": ["\\Seen"],
   "unseen": false,
   "flagged": false,
+  "answered": false,
   "draft": false,
   "size": 15234,
   "subject": "Meeting Tomorrow",
@@ -51,14 +53,19 @@ The Messages API allows you to:
   "messageId": "<abc123@example.com>",
   "inReplyTo": "<xyz789@example.com>",
   "text": {
-    "id": "text_id_123",
-    "encodedSize": 1234
+    "id": "AAAAAQAACnAWkeM",
+    "encodedSize": {
+      "plain": 1013,
+      "html": 3487
+    }
   },
   "attachments": [
     {
-      "id": "attachment_789",
+      "id": "AAAAAQAACnAy",
       "contentType": "application/pdf",
       "encodedSize": 52341,
+      "embedded": false,
+      "inline": false,
       "filename": "document.pdf"
     }
   ]
@@ -95,10 +102,10 @@ Retrieve messages from a mailbox with filtering and pagination.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `path` | string | Mailbox path (required) |
-| `page` | number | Page number (0-indexed, default 0). Deprecated; use cursor instead |
+| `path` | string | Mailbox path (required). Special-use names such as `\Sent` work too, and `\All` selects every message on Gmail and MS Graph accounts |
+| `page` | number | Page number (0-indexed, default 0). Only supported for IMAP accounts |
 | `pageSize` | number | Messages per page (default 20, max 1000) |
-| `cursor` | string | Paging cursor from nextPageCursor or prevPageCursor |
+| `cursor` | string | Paging cursor from `nextPageCursor` or `prevPageCursor` in the previous response. Works for every account type, and is the only way to page Gmail API and MS Graph accounts |
 
 To filter messages by flags (unseen, flagged, etc.), use the [Search endpoint](#7-search-messages) instead.
 
@@ -108,7 +115,7 @@ To filter messages by flags (unseen, flagged, etc.), use the [Search endpoint](#
 <TabItem value="curl" label="cURL">
 
 ```bash
-curl "http://localhost:3000/v1/account/user@example.com/messages?path=INBOX&pageSize=50" \
+curl "https://emailengine.example.com/v1/account/user@example.com/messages?path=INBOX&pageSize=50" \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
 
@@ -120,7 +127,7 @@ from urllib.parse import quote
 
 account = 'user@example.com'
 response = requests.get(
-    f'http://localhost:3000/v1/account/{quote(account)}/messages',
+    f'https://emailengine.example.com/v1/account/{quote(account)}/messages',
     params={'path': 'INBOX', 'pageSize': 50},
     headers={'Authorization': 'Bearer YOUR_ACCESS_TOKEN'}
 )
@@ -140,6 +147,8 @@ for msg in data['messages']:
   "total": 128,
   "page": 0,
   "pages": 3,
+  "nextPageCursor": "eyJhIjoxfQ",
+  "prevPageCursor": null,
   "messages": [
     {
       "id": "AAAABAABNc",
@@ -185,11 +194,15 @@ Retrieve complete message information including body and attachments.
 |-----------|------|-------------|
 | `maxBytes` | number | Maximum bytes to retrieve for text/html |
 | `textType` | string | Which text format to return: 'html', 'plain', or '*' for all. By default text content is not returned |
+| `webSafeHtml` | boolean | Return the HTML processed for display in a web page, with inline images embedded. See [Web-safe HTML](/docs/receiving/web-safe-html) |
+| `embedAttachedImages` | boolean | Embed attached images in the HTML as data URIs |
+| `preProcessHtml` | boolean | Pre-process the HTML for compatibility |
+| `markAsSeen` | boolean | Mark an unseen message as seen while returning it |
 
 **Examples:**
 
 ```bash
-curl "http://localhost:3000/v1/account/user@example.com/message/AAAABAABNc" \
+curl "https://emailengine.example.com/v1/account/user@example.com/message/AAAABAABNc" \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
 
@@ -240,7 +253,7 @@ Retrieve raw RFC822 message source.
 **Examples:**
 
 ```bash
-curl "http://localhost:3000/v1/account/user@example.com/message/AAAABAABNc/source" \
+curl "https://emailengine.example.com/v1/account/user@example.com/message/AAAABAABNc/source" \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -o message.eml
 ```
@@ -271,6 +284,8 @@ Change message flags like read/unread, flagged, etc.
 }
 ```
 
+`flags.set` replaces the whole flag list instead. Gmail API accounts also take a `labels` object with the same `add`, `delete` and `set` keys, holding label IDs or paths.
+
 **Standard IMAP Flags:**
 
 | Flag | Description |
@@ -284,7 +299,7 @@ Change message flags like read/unread, flagged, etc.
 **Examples:**
 
 ```bash
-curl -X PUT "http://localhost:3000/v1/account/user@example.com/message/AAAABAABNc" \
+curl -X PUT "https://emailengine.example.com/v1/account/user@example.com/message/AAAABAABNc" \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -317,10 +332,12 @@ Move a message to a different mailbox.
 }
 ```
 
+Gmail API accounts also take `source`, the folder the message is being moved out of, because a move there means swapping labels.
+
 **Examples:**
 
 ```bash
-curl -X PUT "http://localhost:3000/v1/account/user@example.com/message/AAAABAABNc/move" \
+curl -X PUT "https://emailengine.example.com/v1/account/user@example.com/message/AAAABAABNc/move" \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"path": "Archive"}'
@@ -363,13 +380,26 @@ Delete a message permanently or move to trash.
 
 ```bash
 # Delete (moves to Trash, or deletes if already in Trash)
-curl -X DELETE "http://localhost:3000/v1/account/user@example.com/message/AAAABAABNc" \
+curl -X DELETE "https://emailengine.example.com/v1/account/user@example.com/message/AAAABAABNc" \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 
 # Force delete (delete even if not in Trash)
-curl -X DELETE "http://localhost:3000/v1/account/user@example.com/message/AAAABAABNc?force=true" \
+curl -X DELETE "https://emailengine.example.com/v1/account/user@example.com/message/AAAABAABNc?force=true" \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
+
+**Response:**
+```json
+{
+  "deleted": false,
+  "moved": {
+    "destination": "Trash",
+    "message": "AAAAAwAAAWg"
+  }
+}
+```
+
+`deleted` is `true` only when the message was removed for good. On IMAP accounts a move to Trash reports `false` together with `moved`, whose `destination` and `message` are present when the server reported them. Gmail API and MS Graph accounts report `true` for a move to Trash as well. For Gmail API accounts the message is always moved to Trash; `force` has no effect there.
 
 **Use Cases:**
 - Delete spam messages
@@ -390,10 +420,11 @@ Search messages using advanced query syntax.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `path` | string | Mailbox path (required) |
-| `page` | number | Page number (0-indexed, default 0) |
+| `path` | string | Mailbox path to search in. A search covers one folder, never the whole account; `\All` covers everything on Gmail and MS Graph accounts |
+| `page` | number | Page number (0-indexed, default 0). Only supported for IMAP accounts |
 | `pageSize` | number | Messages per page (default 20, max 1000) |
-| `cursor` | string | Paging cursor from nextPageCursor or prevPageCursor |
+| `cursor` | string | Paging cursor from `nextPageCursor` or `prevPageCursor` |
+| `useOutlookSearch` | boolean | MS Graph only: run the query through the `$search` parameter instead of `$filter` |
 
 **Request Body:**
 ```json
@@ -411,23 +442,31 @@ Search messages using advanced query syntax.
 | Field | Type | Description |
 |-------|------|-------------|
 | `from` | string | From address contains |
-| `to` | string | To address contains |
+| `to`, `cc`, `bcc` | string | Recipient address contains. Not supported for MS Graph |
 | `subject` | string | Subject contains |
 | `body` | string | Body text contains |
 | `since` | date | Messages received after date |
 | `before` | date | Messages received before date |
 | `sentSince` | date | Messages sent after date |
 | `sentBefore` | date | Messages sent before date |
-| `unseen` | boolean | Unread messages only |
+| `unseen`, `seen` | boolean | Unread or read messages only |
 | `flagged` | boolean | Flagged messages only |
-| `larger` | number | Messages larger than size in bytes |
-| `smaller` | number | Messages smaller than size in bytes |
-| `labels` | object | `{ "has": [...], "not": [...] }` - filter by Gmail labels or Outlook categories. `has` requires all listed labels, `not` excludes messages with any of them. Gmail and MS Graph accounts only; returns HTTP 422 if the account cannot satisfy the filter |
+| `draft` | boolean | Draft messages only |
+| `answered`, `deleted` | boolean | Replied-to, or marked for deletion. IMAP only |
+| `larger` | number | Messages larger than size in bytes. Not supported for MS Graph |
+| `smaller` | number | Messages smaller than size in bytes. Not supported for MS Graph |
+| `header` | object | Header name to value, searched in the named headers |
+| `emailId` | string | A specific message by its `emailId`; `emailIds` takes a list |
+| `threadId` | string | Every message in a thread |
+| `uid`, `seq` | string | UID or sequence number range such as `100:200` or `150,200,250`. IMAP only |
+| `modseq` | number | Messages changed since a modification sequence. IMAP with CONDSTORE only |
+| `gmailRaw` | string | A query in Gmail's own search syntax. Gmail accounts only |
+| `labels` | object | `{ "has": ["Work"], "not": ["Spam"] }` - filter by Gmail labels or Outlook categories. `has` requires all listed labels, `not` excludes messages with any of them. Gmail (API or IMAP) and MS Graph accounts only; any other IMAP server answers HTTP 422 with the code `MissingServerExtension` |
 
 **Examples:**
 
 ```bash
-curl -X POST "http://localhost:3000/v1/account/user@example.com/search?path=INBOX" \
+curl -X POST "https://emailengine.example.com/v1/account/user@example.com/search?path=INBOX" \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -455,28 +494,35 @@ curl -X POST "http://localhost:3000/v1/account/user@example.com/search?path=INBO
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | string | EmailEngine message ID |
-| `uid` | number | IMAP UID |
-| `path` | string | Mailbox path |
-| `emailId` | string | RFC 8474 Email ID |
-| `threadId` | string | RFC 8474 Thread ID |
+| `uid` | number | IMAP UID. IMAP accounts only |
+| `path` | string | Mailbox path. In a listing, present when listing `\All` or another virtual folder; in message details, not returned for Gmail API accounts |
+| `emailId` | string | RFC 8474 Email ID, when the server supports one |
+| `threadId` | string | RFC 8474 Thread ID, when the server supports one |
 | `date` | string | ISO date string |
-| `flags` | array | IMAP flags (a replied message has the `\Answered` entry in this array) |
+| `flags` | array | IMAP flags |
 | `unseen` | boolean | True if unread |
 | `flagged` | boolean | True if flagged |
+| `answered` | boolean | True if replied to (the `\Answered` flag). IMAP accounts only |
 | `draft` | boolean | True if draft |
-| `size` | number | Message size in bytes |
+| `size` | number | Message size in bytes. Not returned for MS Graph accounts |
 | `subject` | string | Subject line |
 | `from` | object | Sender address |
+| `sender` | object | The `Sender` header, when it differs from `From`. Message details only |
 | `to` | array | Recipient addresses |
 | `cc` | array | CC addresses |
-| `bcc` | array | BCC addresses |
+| `bcc` | array | BCC addresses. Message details only |
 | `replyTo` | array | Reply-To addresses |
 | `messageId` | string | RFC 5322 Message-ID |
 | `inReplyTo` | string | Message-ID being replied to |
 | `text` | object | Text content metadata; the `text.plain` and `text.html` values are included when the `textType` parameter is requested |
+| `headers` | object | Raw headers, each value an array because a header can repeat. Message details only |
 | `labels` | array | Gmail labels, on Gmail accounts |
-| `preview` | string | A short plaintext preview, on Gmail and MS Graph accounts |
-| `bounces` | array | Bounces recorded for a message this account sent |
+| `preview` | string | A short plaintext preview, on Gmail API and MS Graph accounts |
+| `category` | string | Gmail inbox tab (`primary`, `social`, `promotions`, `updates`, `forums`). Gmail API accounts only |
+| `specialUse` | string | The special-use role of the folder the message is in, such as `\Sent`. Message details on IMAP accounts only |
+| `messageSpecialUse` | string | The special-use role of the message itself, such as `\Sent` or `\Junk` |
+| `isAutoReply` | boolean | True when the message looks like an automatic reply |
+| `bounces` | array | Bounces recorded for a message this account sent. IMAP accounts only |
 | `attachments` | array | Attachment metadata |
 
 ### Nested Structures
@@ -499,11 +545,12 @@ curl -X POST "http://localhost:3000/v1/account/user@example.com/search?path=INBO
   },
   "plain": "Message text content",
   "html": "<p>Message HTML content</p>",
-  "hasMore": false
+  "hasMore": false,
+  "webSafe": false
 }
 ```
 
-`encodedSize` reports the size of each MIME part separately, before decoding. `plain` and `html` are present only when `textType` asked for them, and `hasMore` says whether `maxBytes` truncated the result.
+`encodedSize` reports the size of each MIME part separately, before decoding. `plain` and `html` are present only when `textType` asked for them, `hasMore` says whether `maxBytes` truncated the result, and `webSafe` is set when `webSafeHtml` was requested and `html` has been processed for display.
 
 **Attachment Object:**
 ```json
@@ -514,11 +561,13 @@ curl -X POST "http://localhost:3000/v1/account/user@example.com/search?path=INBO
   "encodedSize": 52341,
   "embedded": false,
   "inline": false,
-  "contentId": "<part1.abc@example.com>"
+  "encodedInMessage": false,
+  "contentId": "<part1.abc@example.com>",
+  "method": "REQUEST"
 }
 ```
 
-`embedded` marks a part of a `multipart/related` body, `inline` a part meant to be shown in place rather than listed, and `contentId` is what a `cid:` URL in the HTML refers to.
+`encodedSize` is the size as stored in the message, base64 encoded, so the decoded file is roughly three quarters of it. `embedded` marks a part of a `multipart/related` body, `inline` a part meant to be shown in place rather than listed, `encodedInMessage` a part that belongs to an attached `message/rfc822` rather than to the message itself, and `contentId` is what a `cid:` URL in the HTML refers to. `method` is present on iCalendar attachments and carries the calendar method (`REQUEST`, `REPLY`, `CANCEL`).
 
 ## Filtering & Search
 
@@ -529,6 +578,10 @@ curl -X POST "http://localhost:3000/v1/account/user@example.com/search?path=INBO
 The message listing endpoint only accepts the `path`, `page`, `pageSize`, and `cursor` query parameters - unknown parameters return HTTP 400. To filter by flags, use the search endpoint instead:
 
 ```bash
+BASE=https://emailengine.example.com
+ACCOUNT=user%40example.com
+AUTH="Authorization: Bearer YOUR_ACCESS_TOKEN"
+
 # A specific mailbox
 curl "$BASE/v1/account/$ACCOUNT/messages?path=Archive" -H "$AUTH"
 
@@ -591,7 +644,7 @@ Walk a folder page by page, stopping once you reach the last one:
 
 ```javascript
 async function* eachMessage(account, path = 'INBOX') {
-  const base = `http://localhost:3000/v1/account/${encodeURIComponent(account)}/messages`;
+  const base = `https://emailengine.example.com/v1/account/${encodeURIComponent(account)}/messages`;
 
   for (let page = 0; ; page++) {
     const res = await fetch(`${base}?path=${encodeURIComponent(path)}&page=${page}&pageSize=100`, {
@@ -613,7 +666,7 @@ Yielding as you go, rather than accumulating into one array, keeps memory flat o
 Polling a mailbox to notice new mail is the pattern to avoid. Subscribe once, and EmailEngine tells you:
 
 ```bash
-curl -X POST http://localhost:3000/v1/settings \
+curl -X POST https://emailengine.example.com/v1/settings \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -630,7 +683,7 @@ The [`messageNew`](/docs/webhooks/messagenew) payload already carries the envelo
 Do not loop a request per message. `PUT /v1/account/{account}/messages` applies one update to everything matching a search, in a single call:
 
 ```bash
-curl -X PUT "http://localhost:3000/v1/account/user%40example.com/messages?path=INBOX" \
+curl -X PUT "https://emailengine.example.com/v1/account/user%40example.com/messages?path=INBOX" \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -651,7 +704,7 @@ Attachment IDs come from the message, so fetching an attachment is always a two-
 
 ```javascript
 const account = encodeURIComponent('user@example.com');
-const base = `http://localhost:3000/v1/account/${account}`;
+const base = `https://emailengine.example.com/v1/account/${account}`;
 const headers = { Authorization: 'Bearer YOUR_ACCESS_TOKEN' };
 
 const message = await fetch(`${base}/message/AAAABAABNc`, { headers }).then(r => r.json());

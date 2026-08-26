@@ -12,7 +12,11 @@ keywords:
 
 # Exporting Messages
 
-EmailEngine provides a bulk message export feature that allows you to export large volumes of email messages from any account. Exports are processed asynchronously and output to compressed NDJSON files for efficient storage and downstream processing.
+EmailEngine can export the messages of an account, in bulk, to a gzip-compressed NDJSON file. Exports run in the background on a dedicated worker, and the five endpoints of the [Export (Beta)](/docs/api/post-v-1-account-account-export) tag create, monitor, download, list and delete them.
+
+:::info Beta
+Export is labeled beta in the API. The endpoints and the file format described here are what ships today; check the changelog before relying on them across an upgrade.
+:::
 
 ## Overview
 
@@ -56,10 +60,12 @@ curl -X POST "https://emailengine.example.com/v1/account/user123/export" \
 |-----------|------|---------|-------------|
 | `startDate` | ISO 8601 | Required | Export messages from this date |
 | `endDate` | ISO 8601 | Required | Export messages until this date |
-| `folders` | array | All Mail (Gmail/Outlook API); all folders except Junk and Trash (other accounts) | Folder paths or special-use flags to export |
+| `folders` | array | All Mail (Gmail/Outlook API); all folders except Junk and Trash (other accounts) | Folder paths or special-use flags such as `\Sent` to export |
 | `textType` | string | `*` | Text content: `plain`, `html`, `*` (both) |
-| `maxBytes` | number | 5242880 | Maximum bytes for text content (0 = unlimited) |
-| `includeAttachments` | boolean | false | Include attachment content as base64 |
+| `maxBytes` | number | 5242880 | Maximum bytes for text content per message (0 = unlimited) |
+| `includeAttachments` | boolean | false | Include attachment content as base64 in each message's `attachments` array |
+
+With `includeAttachments`, a message larger than 50 MB is skipped entirely and counted in `messagesSkipped`, and a single attachment larger than 50 MB is written with a `contentError` field instead of `content`. That limit is not configurable.
 
 ### Response
 
@@ -70,6 +76,8 @@ curl -X POST "https://emailengine.example.com/v1/account/user123/export" \
   "created": "2024-01-15T10:30:00.000Z"
 }
 ```
+
+The request is refused with `429` and the message `Maximum concurrent exports reached` when the account already has `exportMaxConcurrent` exports running, or the instance has `exportMaxGlobalConcurrent`; see [Export Limits](#export-limits).
 
 ## Monitoring Export Progress
 
@@ -95,13 +103,17 @@ Exports progress through these states:
 
 ### Progress Fields
 
-The response includes detailed progress information:
+The response includes the request parameters, progress counters and the file's expiry:
 
 ```json
 {
   "exportId": "exp_abc123def456abc123def456",
   "status": "processing",
   "phase": "exporting",
+  "folders": ["INBOX", "\\Sent"],
+  "startDate": "2024-01-01T00:00:00.000Z",
+  "endDate": "2024-12-31T23:59:59.000Z",
+  "isEncrypted": false,
   "progress": {
     "foldersScanned": 2,
     "foldersTotal": 3,
@@ -111,7 +123,8 @@ The response includes detailed progress information:
     "bytesWritten": 52428800
   },
   "created": "2024-01-15T10:30:00.000Z",
-  "expiresAt": "2024-01-16T10:30:00.000Z"
+  "expiresAt": "2024-01-16T10:30:00.000Z",
+  "error": null
 }
 ```
 
@@ -124,7 +137,7 @@ The response includes detailed progress information:
 | `messagesSkipped` | Messages skipped (deleted or inaccessible) |
 | `bytesWritten` | Total bytes written to export file |
 
-The response also includes a top-level `truncated` field (boolean) that indicates whether the export was cut short due to message count or size limits. When `true`, the export file does not contain all matching messages.
+`bytesWritten` counts uncompressed NDJSON bytes, not the size of the file on disk. A top-level `truncated: true` appears when the export was cut short by `exportMaxMessages` or `exportMaxSize` (see [Export Limits](#export-limits)); it is absent otherwise. The export still completes, but the file does not contain every matching message. `error` carries the failure reason for a `failed` export and is `null` otherwise.
 
 ## Downloading Export Files
 
@@ -136,11 +149,11 @@ curl "https://emailengine.example.com/v1/account/user123/export/exp_abc123def456
   -o export.ndjson.gz
 ```
 
-The response is a gzip-compressed NDJSON file. Each line contains one message as a JSON object:
+The download is only available once `status` is `completed`; before that the endpoint answers `400`, and after the file has expired or been deleted it answers `404`. The response is a gzip-compressed NDJSON file, served with `Content-Disposition: attachment` and the filename `<exportId>.ndjson.gz`. Each line is one message in the same shape as [`GET /v1/account/{account}/message/{message}`](/docs/api/get-v-1-account-account-message-message) returns, plus a `path` field naming the folder it came from:
 
 ```text
-{"id":"AAAAAQAACnA","uid":12345,"folder":"INBOX","subject":"Hello","from":{"name":"Sender","address":"sender@example.com"},"date":"2024-01-15T10:30:00.000Z","text":{"plain":"Message content..."},"attachments":[]}
-{"id":"AAAAAQAACnB","uid":12346,"folder":"INBOX","subject":"Re: Hello","from":{"name":"Reply","address":"reply@example.com"},"date":"2024-01-15T11:00:00.000Z","text":{"plain":"Reply content..."},"attachments":[]}
+{"id":"AAAAAQAACnA","uid":12345,"path":"INBOX","emailId":"1789473523904663830","subject":"Hello","from":{"name":"Sender","address":"sender@example.com"},"to":[{"name":"","address":"recipient@example.com"}],"date":"2024-01-15T10:30:00.000Z","messageId":"<a1b2c3@example.com>","flags":["\\Seen"],"text":{"id":"AAAAAQAACnAAAAAB","encodedSize":{"plain":42},"plain":"Meeting notes attached, see you Tuesday."},"attachments":[]}
+{"id":"AAAAAQAACnB","uid":12346,"path":"INBOX","emailId":"1789473523904663831","subject":"Re: Hello","from":{"name":"Reply","address":"reply@example.com"},"to":[{"name":"Sender","address":"sender@example.com"}],"date":"2024-01-15T11:00:00.000Z","messageId":"<d4e5f6@example.com>","inReplyTo":"<a1b2c3@example.com>","flags":[],"text":{"id":"AAAAAQAACnBAAAAB","encodedSize":{"plain":19},"plain":"Tuesday works for me."},"attachments":[]}
 ```
 
 If the export was encrypted (when `EENGINE_SECRET` is set), decryption happens automatically during download.
@@ -170,48 +183,11 @@ This is further capped by `exportMaxGlobalConcurrent` to prevent system overload
 
 **Example**: With `EENGINE_WORKERS_EXPORT=2` and `EENGINE_EXPORT_QC=2`, you can have up to 4 concurrent exports. If `exportMaxGlobalConcurrent=8`, the global limit won't be a factor. But if you set `exportMaxGlobalConcurrent=3`, only 3 exports will run concurrently even though the worker configuration allows 4.
 
-### Resource Requirements
+### What an Export Costs
 
-Each export job consumes memory and disk I/O. Use the table below to estimate resource needs:
+Each running export holds one connection to the mail server for the account, keeps a queue of message references in Redis while it runs, and streams messages through gzip (and, when encrypted, AES-256-GCM) to one file. Concurrency multiplies all three. There are no published memory figures; watch the instance under a representative export before raising the defaults.
 
-| Concurrent Exports | Memory (Est.) | Disk I/O | Redis Load |
-|-------------------|---------------|----------|------------|
-| 1 (default) | ~150 MB | Low | Low |
-| 4 (2x2) | ~400 MB | Medium | Medium |
-| 8 (4x2 or 2x4) | ~800 MB | High | High |
-| 16 (4x4) | ~1.5 GB | Very High | Very High |
-
-### Recommended Configurations
-
-**Small deployment (2-4GB RAM)**
-
-```bash
-EENGINE_WORKERS_EXPORT=1
-EENGINE_EXPORT_QC=1
-# exportMaxGlobalConcurrent=2
-```
-
-Conservative settings for resource-constrained environments. One export at a time.
-
-**Medium deployment (8GB RAM)**
-
-```bash
-EENGINE_WORKERS_EXPORT=2
-EENGINE_EXPORT_QC=2
-# exportMaxGlobalConcurrent=8
-```
-
-Balanced settings for typical production servers. Up to 4 concurrent exports.
-
-**Large deployment (16GB+ RAM)**
-
-```bash
-EENGINE_WORKERS_EXPORT=4
-EENGINE_EXPORT_QC=2
-# exportMaxGlobalConcurrent=16
-```
-
-Higher throughput for large-scale operations. Up to 8 concurrent exports.
+Every request the export makes to the mail server uses the timeout in `EENGINE_EXPORT_TIMEOUT` (default 5 minutes), which is separate from the API's `EENGINE_TIMEOUT`.
 
 ### Provider-Specific Batch Sizes
 
@@ -238,7 +214,7 @@ curl -X POST "https://emailengine.example.com/v1/settings" \
 
 **Outlook:** Microsoft Graph API limits batch requests to 20 items per batch. Setting a higher value has no effect.
 
-**IMAP accounts:** Batch size is not configurable for IMAP - messages are fetched sequentially.
+**IMAP accounts:** Batch size is not configurable for IMAP - messages are fetched one at a time over the account's connection.
 
 ### Export Limits
 
@@ -246,20 +222,20 @@ Additional settings control maximum export sizes:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `exportMaxMessages` | 500,000 | Maximum messages per export job |
-| `exportMaxSize` | 10 GB | Maximum export file size |
-| `exportMaxConcurrent` | 2 | Max concurrent exports per account |
-| `exportMaxGlobalConcurrent` | 8 | Max concurrent exports system-wide |
+| `exportMaxMessages` | 500,000 | Maximum messages per export job. Indexing stops here and the export is marked `truncated` |
+| `exportMaxSize` | 10 GB | Maximum uncompressed NDJSON bytes per export. Writing stops here and the export is marked `truncated` |
+| `exportMaxConcurrent` | 2 | Max concurrent exports per account. A request over this is refused with `429` |
+| `exportMaxGlobalConcurrent` | 8 | Max concurrent exports system-wide. A request over this is refused with `429` |
 
 ### Tuning Considerations
 
-1. **Memory**: Each export batch loads message data into memory. Monitor memory usage and reduce concurrency if you see memory pressure.
+1. **Memory**: Each export batch loads message data into memory, and `includeAttachments` loads every attachment up to the 50 MB limit. Reduce concurrency if you see memory pressure.
 
-2. **Disk I/O**: Multiple concurrent gzip streams can saturate disk bandwidth. Use SSDs for best performance.
+2. **Disk I/O**: Multiple concurrent gzip streams write to `EENGINE_EXPORT_PATH` at the same time.
 
-3. **Email Provider Limits**: High concurrency may trigger rate limits from email providers. Watch for 429 errors in logs.
+3. **Email Provider Limits**: A rate-limited batch is retried up to five times with exponential backoff starting at 5 seconds before the messages in it are skipped. Watch for those retries in the logs before raising the provider batch sizes.
 
-4. **Redis**: Message queues consume approximately 100 bytes per message. Large exports with many messages increase Redis memory usage.
+4. **Redis**: The index of messages to export lives in Redis for the life of the export and expires with it.
 
 **Tuning tips:**
 - Start with conservative settings and increase gradually
@@ -275,8 +251,9 @@ File storage is configured with environment variables (these options are not ava
 
 | Environment Variable | Default | Description |
 |----------------------|---------|-------------|
-| `EENGINE_EXPORT_PATH` | OS temp dir | Directory for export files |
-| `EENGINE_EXPORT_MAX_AGE` | 24 hours | File retention time in milliseconds |
+| `EENGINE_EXPORT_PATH` | OS temp dir | Directory for export files. Created if missing |
+| `EENGINE_EXPORT_MAX_AGE` | 24 hours | File retention time in milliseconds. Sets `expiresAt` on each export; the record and the file are removed after it |
+| `EENGINE_EXPORT_TIMEOUT` | 5 minutes | Timeout for each request the export makes to the mail server |
 
 ### Encryption
 
@@ -290,27 +267,36 @@ This ensures exported data is protected at rest without requiring separate encry
 
 ## Webhooks
 
-Export completion triggers webhook notifications:
+Export completion triggers webhook notifications. Both need to be in the `webhookEvents` allowlist (or `*`) to be delivered:
 
 | Event | Description |
 |-------|-------------|
-| `exportCompleted` | Export finished successfully |
-| `exportFailed` | Export encountered an error |
+| `exportCompleted` | Export finished, with the counters and the file's `expiresAt` |
+| `exportFailed` | Export failed. Not sent when an export was cancelled through the API or its account was deleted |
 
 Example webhook payload for `exportCompleted`:
 
 ```json
 {
-  "event": "exportCompleted",
+  "serviceUrl": "https://emailengine.example.com",
   "account": "user123",
+  "date": "2024-01-15T10:42:11.000Z",
+  "event": "exportCompleted",
   "data": {
     "exportId": "exp_abc123def456abc123def456",
+    "folders": ["INBOX", "\\Sent"],
+    "startDate": "2024-01-01T00:00:00.000Z",
+    "endDate": "2024-12-31T23:59:59.000Z",
     "messagesExported": 1495,
     "messagesSkipped": 5,
-    "bytesWritten": 104857600
+    "bytesWritten": 104857600,
+    "duration": 731000,
+    "expiresAt": "2024-01-16T10:30:00.000Z"
   }
 }
 ```
+
+The `exportFailed` payload carries `exportId`, `error`, `errorCode`, the `phase` the export was in, `messagesExported` and `messagesQueued`. Both events are documented on the [exportCompleted and exportFailed](/docs/webhooks/exportcompleted) reference.
 
 ## Managing Exports
 
@@ -350,8 +336,14 @@ curl -X DELETE "https://emailengine.example.com/v1/account/user123/export/exp_ab
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
 
+```json
+{
+  "deleted": true
+}
+```
+
 This will:
-- Cancel the export if it's still queued or processing
+- Cancel the export if it's still queued or processing. A running export is marked `cancelled` and the worker removes its partial file and record when it notices, which is within one batch
 - Delete the export file from disk
 - Remove the export record from the system
 
