@@ -1,32 +1,30 @@
 ---
 title: Provider-Specific Threading
 sidebar_position: 2
-description: Detailed threading support for different email providers
+description: Which backends give EmailEngine a native thread ID, what it looks like, and which of them can search a whole thread in one request
 ---
 
 # Provider-Specific Threading Support
 
-Different email providers implement threading in different ways. Understanding these differences helps you choose the right approach for your application.
+Whether a message carries a `threadId`, and whether a whole thread can be fetched in one request, depends on the backend the account uses. This page lists what each one provides.
 
 ## Gmail / Google Workspace
 
-Gmail has the best native threading support, working with both backend types.
+Both Gmail backends assign a thread ID to every message.
 
 ### Native Thread Support
 
 **Backends**:
 
-- IMAP with OAuth2: Full threading support
-- Gmail API: Full threading support
-
-**Thread ID Property**: `X-GM-THRID` (from Gmail-specific `X-GM-EXT-1` IMAP extension)
+- IMAP with OAuth2: `threadId` from the `X-GM-THRID` attribute of Gmail's `X-GM-EXT-1` IMAP extension
+- Gmail API: `threadId` from the API
 
 **Characteristics**:
 
-- Native threading support
-- Thread ID format: Long numeric string (e.g., `"1759349012996310407"`)
-- Availability: Webhooks, message listings, search results
-- Supports `\All` folder for cross-folder thread search
+- Thread ID format: long numeric string, for example `"1759349012996310407"`, the same value over either backend
+- Availability: webhooks, message listings, message details, search results
+- The `\All` folder is available for cross-folder thread search
+- On the Gmail API, `reference.threadId` on submit attaches an outgoing message to a thread directly; see [Sending threaded messages](/docs/sending/threading/sending-threaded#using-the-reference-api)
 
 ### Example Response
 
@@ -50,46 +48,24 @@ curl "https://emailengine.example.com/v1/account/gmail/messages?path=INBOX" \
 }
 ```
 
-### Gmail-Specific Features
+## Microsoft 365 / Outlook
 
-**Cross-Folder Search with `\All`**:
-
-Gmail supports searching across all folders using the special `\All` path:
-
-```bash
-curl -XPOST "https://emailengine.example.com/v1/account/gmail/search?path=%5CAll" \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "search": {
-      "threadId": "1759349012996310407"
-    }
-  }'
-```
-
-This returns all messages in the thread from Inbox, Sent, and any other folder in a single response.
-
-## Microsoft Graph API
-
-Microsoft Graph API provides native threading support for Outlook/Microsoft 365 accounts.
+Which backend the account uses decides everything here.
 
 ### Native Thread Support
 
-**Backend**:
+**Backends**:
 
-- Microsoft Graph API: Full threading support
-- IMAP with OAuth2: No native threading
+- Microsoft Graph API: `threadId` is the message's Graph `conversationId`
+- IMAP with OAuth2: no thread ID
 
-**Important Distinction**: Only accounts added with **Microsoft Graph API backend** have native threading. Outlook/Microsoft 365 accounts added via **IMAP with OAuth2** do not have native thread IDs and must build threads manually from Message-ID headers.
+Only an account added with the **Microsoft Graph API** backend has a `threadId`. A Microsoft 365 account added over **IMAP with OAuth2** talks to Microsoft's IMAP server, which implements neither `OBJECTID` nor a Gmail-style extension, so it behaves like any other IMAP account: threads have to be built from headers.
 
-**Thread ID Property**: Native conversation ID from Graph API
+**Characteristics (Graph API)**:
 
-**Characteristics**:
-
-- Native threading support
-- Thread ID format: Graph API conversation ID
-- Availability: Webhooks, message listings, search results
-- Supports `\All` folder for cross-folder thread search
+- Thread ID format: Graph conversation ID, for example `"AAQkAGI2THY2ZjRhLTVjNzgtNDMxYS05YTBmLTJiN2M4ZDkxZTQyMwAQAF3xTx0nRUxOhKcvLZQ9r1M="`
+- Availability: webhooks, message listings, message details, search results
+- The `\All` folder is available for cross-folder thread search; a `threadId` search on it filters on `conversationId`
 
 ### Example Response
 
@@ -97,8 +73,8 @@ Microsoft Graph API provides native threading support for Outlook/Microsoft 365 
 {
   "messages": [
     {
-      "id": "AAMkAGI2T...",
-      "threadId": "AAQkAGI2TH...",
+      "id": "AAMkAGI2THY2ZjRhLTVjNzgtNDMxYS05YTBmLTJiN2M4ZDkxZTQyMwBGAAAAAABBUq8CzXaBTKl9k7lJ0hJ7BwCXKmSHhLBFTr0AAA==",
+      "threadId": "AAQkAGI2THY2ZjRhLTVjNzgtNDMxYS05YTBmLTJiN2M4ZDkxZTQyMwAQAF3xTx0nRUxOhKcvLZQ9r1M=",
       "subject": "Meeting tomorrow",
       "from": {
         "address": "manager@example.com"
@@ -108,50 +84,22 @@ Microsoft Graph API provides native threading support for Outlook/Microsoft 365 
 }
 ```
 
-### Graph API-Specific Features
+**Backend comparison**:
 
-**Cross-Folder Search with `\All`**:
-
-Like Gmail, Graph API supports the `\All` folder:
-
-```bash
-curl -XPOST "https://emailengine.example.com/v1/account/outlook-graph/search?path=%5CAll" \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "search": {
-      "threadId": "AAQkAGI2TH..."
-    }
-  }'
-```
-
-### Why IMAP Backend Doesn't Have Threading
-
-When you add an Outlook/Microsoft 365 account using **IMAP with OAuth2**, EmailEngine connects via IMAP protocol, not Graph API. IMAP doesn't provide access to Microsoft's conversation/thread IDs, so these accounts behave like generic IMAP accounts and threads must be built manually from Message-ID headers.
-
-**Account Backend Comparison**:
-
-| Backend             | Threading   | \All Support |
-| ------------------- | ----------- | ------------ |
-| Microsoft Graph API | Native      | Yes          |
-| IMAP + OAuth2       | Manual only | No           |
+| Backend             | Threading   | \All folder |
+| ------------------- | ----------- | ----------- |
+| Microsoft Graph API | Native      | Yes         |
+| IMAP with OAuth2    | Manual only | No          |
 
 ## Yahoo / AOL / Verizon
 
-Yahoo, AOL, and Verizon accounts support the OBJECTID extension (RFC 8474).
-
-### Native Thread Support
-
-**IMAP Extension**: `OBJECTID` (RFC 8474)
-
-**Thread ID Property**: `THREADID`
+Yahoo, AOL, and Verizon IMAP servers implement the `OBJECTID` extension (RFC 8474), and EmailEngine passes its `THREADID` attribute on as `threadId`.
 
 **Characteristics**:
 
-- Native threading support
-- Thread ID format: Short numeric string (e.g., `"501"`)
-- Availability: Webhooks, message listings, search results
-- **No `\All` folder support** - must search folders individually
+- Thread ID format: short numeric string, for example `"501"`
+- Availability: webhooks, message listings, message details, search results
+- **No `\All` folder**: search each folder separately and merge the results, as shown in [Searching threads](/docs/sending/threading/searching-threads#folder-by-folder-search)
 
 ### Example Response
 
@@ -170,174 +118,81 @@ Yahoo, AOL, and Verizon accounts support the OBJECTID extension (RFC 8474).
 }
 ```
 
-### Limitations
-
-**Folder-by-Folder Search**:
-
-Unlike Gmail and Graph API, Yahoo/AOL don't support `\All`. To get a complete thread, you must:
-
-1. Search in Inbox
-2. Search in Sent
-3. Search in any other relevant folders
-4. Combine results client-side
-
-**Example**:
-
-```bash
-# Search Inbox
-curl -XPOST "https://emailengine.example.com/v1/account/yahoo/search?path=INBOX" \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "search": { "threadId": "501" }
-  }'
-
-# Search Sent
-curl -XPOST "https://emailengine.example.com/v1/account/yahoo/search?path=Sent" \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "search": { "threadId": "501" }
-  }'
-
-# Combine results in your application
-```
+The same applies to any other IMAP server that advertises `OBJECTID`: the thread ID is available, the `\All` folder is not.
 
 ## Other IMAP Providers
 
-Generic IMAP providers without threading extensions do not have native threading support.
-
-### Manual Threading Required
-
-**Capability**: No native threading
-
-**Thread Building**: Must analyze Message-ID, In-Reply-To, and References headers manually
+An IMAP server without `OBJECTID` or `X-GM-EXT-1` gives EmailEngine no thread identifier.
 
 **Characteristics**:
 
-- **No automatic thread IDs** - EmailEngine doesn't provide `threadId` property
-- **No `\All` folder support** - must search folders individually
-- Must implement client-side threading logic
+- No `threadId` property in any response
+- `threadId` cannot be used as a search term
+- No `\All` folder
+- Threads are reconstructed client-side from `Message-ID`, `In-Reply-To`, and `References`
 
-### How to Build Threads Manually
-
-1. Retrieve messages from relevant folders (Inbox, Sent, etc.)
-2. Extract Message-ID, In-Reply-To, and References headers
-3. Build thread relationships by matching Message-IDs
-4. Group related messages together
-5. Sort chronologically
-
-See [Searching Thread Messages](./searching-threads.md#building-threads-manually) examples.
-
-### Folder-by-Folder Search Required
-
-Generic IMAP doesn't support `\All` folder, so you must search each folder individually:
-
-```bash
-# Search Inbox
-curl -XPOST "https://emailengine.example.com/v1/account/generic/search?path=INBOX" \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "search": { "subject": "Project discussion" }
-  }'
-
-# Search Sent
-curl -XPOST "https://emailengine.example.com/v1/account/generic/search?path=Sent" \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "search": { "subject": "Project discussion" }
-  }'
-```
-
-Then analyze the Message-ID headers to build thread relationships.
+The procedure is: search the relevant folders by `subject`, fetch the candidates, and group them on their headers. [Building threads manually](/docs/sending/threading/searching-threads#building-threads-manually) has the code.
 
 ## Provider Comparison Table
 
-| Provider          | Backend       | Native Threading | Thread ID Format      | \All Folder |
+| Provider          | Backend       | Native threading | Thread ID format      | \All folder |
 | ----------------- | ------------- | ---------------- | --------------------- | ----------- |
 | Gmail             | IMAP + OAuth2 | Yes              | Long numeric          | Yes         |
 | Gmail             | Gmail API     | Yes              | Long numeric          | Yes         |
 | Microsoft 365     | Graph API     | Yes              | Graph conversation ID | Yes         |
 | Microsoft 365     | IMAP + OAuth2 | No               | N/A (manual only)     | No          |
 | Yahoo/AOL/Verizon | IMAP          | Yes (OBJECTID)   | Short numeric         | No          |
-| Generic IMAP      | IMAP          | No               | N/A (manual only)     | No          |
+| Other IMAP        | IMAP          | No               | N/A (manual only)     | No          |
 
-## Choosing the Right Backend
+## Choosing the Backend
 
-### For Gmail Accounts
+### Gmail accounts
 
-Always use either:
+Either backend gives you thread IDs and the `\All` folder. Choose between IMAP and the Gmail API on other grounds; see [Gmail accounts](/docs/accounts/gmail/gmail-imap).
 
-- IMAP with OAuth2 (has native threading)
-- Gmail API (has native threading)
+### Microsoft 365 / Outlook accounts
 
-Both provide excellent threading support with `\All` folder capability.
+Use the **Microsoft Graph API** backend if you need thread IDs or cross-folder thread search. Over IMAP, neither is available.
 
-### For Microsoft 365 / Outlook Accounts
+### Yahoo / AOL / Verizon
 
-**Recommended**: Use **Microsoft Graph API** backend for:
+Standard IMAP. Thread IDs are available; plan for one search per folder.
 
-- Native threading support
-- `\All` folder cross-search capability
-- Better performance
-- Modern API features
+### Other providers
 
-**Avoid**: IMAP with OAuth2 if you need threading, as it requires manual thread building and doesn't support `\All`.
-
-### For Yahoo / AOL / Verizon
-
-Use standard IMAP connection. Threading works natively but:
-
-- No `\All` support
-- Must search multiple folders separately
-
-### For Other Providers
-
-**Manual Threading Required**: Plan to implement client-side threading logic for:
-
-- Building thread relationships from Message-ID headers
-- Cross-folder thread queries
-- Maintaining thread state in your application
+Plan for client-side threading: building thread relationships from headers, searching several folders, and keeping any thread state in your own application.
 
 ## Migration Considerations
 
-### Switching from IMAP to Graph API
+### Switching a Microsoft 365 account from IMAP to the Graph API
 
-If you have Microsoft 365 accounts on IMAP backend and want native threading:
-
-1. Account re-registration required (different authentication flow)
-2. Thread IDs will become available (manual threading → Graph conversation IDs)
-3. Update your application to use native thread IDs from Graph API
-4. Historical thread mappings may need migration
+1. The account has to be re-authorized through an OAuth2 application with the Graph API base scopes; the IMAP grant does not carry over
+2. Messages get new EmailEngine message IDs, and `threadId` becomes available
+3. Update your application to use the Graph conversation IDs
+4. Any thread mapping you built from headers stays valid only as long as you keep the headers it was built from
 
 ## Testing Thread Support
 
-### Check Your Provider
+### Check the account type
 
 ```bash
-# Get account information
 curl "https://emailengine.example.com/v1/account/example" \
   -H "Authorization: Bearer <token>"
 ```
 
-Look for:
+Two fields of the [account response](/docs/api/get-v-1-account-account) settle it together:
 
-- `type`: Account type (imap, gmail, gmailService, outlook, outlookService, mailRu, oauth2)
+- `type` names the provider: `gmail` for a Google account, `outlook` for a Microsoft account, `imap` for a password-authenticated IMAP account
+- `baseScopes` says which backend an OAuth2 account uses: `imap` for IMAP with OAuth2, `api` for the Gmail or Graph API. It is present only for OAuth2 accounts, and defaults to `imap` when the [OAuth2 application](/docs/api/get-v-1-oauth-2-app) does not set it
 
-### Test Thread ID Availability
+### Test thread ID availability
 
 ```bash
-# List messages and check for threadId
 curl "https://emailengine.example.com/v1/account/example/messages?path=INBOX" \
   -H "Authorization: Bearer <token>"
 ```
 
-If `threadId` is missing:
-
-- Provider doesn't support native threading
-- Must build threads manually from Message-ID headers
+If the entries have no `threadId`, the backend assigns none, and threads have to be built from headers.
 
 ## See Also
 

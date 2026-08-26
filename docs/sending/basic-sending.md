@@ -6,7 +6,7 @@ description: Learn how to send emails using EmailEngine's submit API with HTML, 
 
 # Basic Email Sending
 
-EmailEngine simplifies sending emails through registered accounts' SMTP servers. This guide covers the fundamentals of sending emails using the [submit API](/docs/api/post-v-1-account-account-submit).
+EmailEngine sends email through a registered account's own SMTP server, or through the Gmail and MS Graph APIs for accounts registered that way. This guide covers the fundamentals of sending with the [submit API](/docs/api/post-v-1-account-account-submit).
 
 ## Why It Matters
 
@@ -63,7 +63,7 @@ curl "https://emailengine.example.com/v1/account/example" \
   -H "Authorization: Bearer <your-token>"
 ```
 
-Wait until `state` becomes `"connected"`. Submission is rejected while EmailEngine is performing the initial sync.
+Wait until `state` becomes `"connected"`. A submission is handled by the worker that holds the account, and an account is assigned to a worker shortly after registration; until then the API answers `503` with `No active handler for requested account. Try again later.` Replies and forwards also need the mailbox to be reachable, because the referenced message is read from it.
 
 ### 3. Submit a Simple Email
 
@@ -155,7 +155,7 @@ Add attachments using the `attachments` array:
   "attachments": [
     {
       "filename": "document.pdf",
-      "content": "base64-encoded-content-here",
+      "content": "JVBERi0xLjQKJSBtaW5pbWFsIGV4YW1wbGUK",
       "contentType": "application/pdf"
     }
   ]
@@ -165,10 +165,12 @@ Add attachments using the `attachments` array:
 **Attachment options:**
 
 - `filename` - Attachment filename (optional, recommended)
-- `content` - Base64 encoded content (required unless using `reference`)
-- `contentType` - MIME type (optional, auto-detected if omitted)
+- `content` - Base64 encoded content (required, unless `reference` is set, in which case it must be left out)
+- `contentType` - MIME type (optional, derived from `filename` when omitted)
+- `contentDisposition` - `attachment` (the default) or `inline`
 - `cid` - Content ID for inline images (optional)
-- `reference` - Reference an existing attachment by ID instead of providing content (optional)
+- `encoding` - Encoding of `content`. Only `base64` is accepted, and it is the default
+- `reference` - The ID of an attachment on a stored message, taken from that message's attachment list, to attach it without downloading and re-uploading it (optional)
 
 #### Inline Images
 
@@ -179,9 +181,9 @@ Reference inline images in HTML using Content ID:
   "html": "<p>Logo: <img src='cid:logo' /></p>",
   "attachments": [
     {
-      "filename": "logo.png",
-      "content": "iVBORw0KGgoAAAANS...",
-      "contentType": "image/png",
+      "filename": "logo.gif",
+      "content": "R0lGODlhAQABAIAAAP///wAAACwAAAAAAQABAAACAkQBADs=",
+      "contentType": "image/gif",
       "cid": "logo"
     }
   ]
@@ -233,7 +235,7 @@ Override default sender information:
 }
 ```
 
-If omitted, EmailEngine uses the account's configured email and name.
+If `from` is omitted, EmailEngine uses the account's configured email and name. `replyTo` accepts a single address object or a list of them.
 
 ## Advanced Options
 
@@ -250,7 +252,7 @@ Schedule an email for future delivery:
 }
 ```
 
-The message stays in the queue until the specified time.
+The message stays in the queue until the specified time, and the response's `sendAt` echoes it. The `Date` header of the message is set to that time as well. A `sendAt` in the past sends immediately.
 
 ### Skip Sent Folder
 
@@ -265,7 +267,7 @@ Prevent saving a copy to the Sent Mail folder:
 }
 ```
 
-Useful for bulk sending to avoid cluttering the Sent folder.
+Useful for bulk sending to avoid cluttering the Sent folder. Leave `copy` unset to follow the account's default. The flag only applies to SMTP deliveries: Gmail and MS Graph file sent messages themselves, so it is a no-op for accounts that send through those APIs. `sentMailPath` names a different folder for the copy.
 
 ### Custom Message ID
 
@@ -280,7 +282,7 @@ Specify your own Message-ID for threading:
 }
 ```
 
-Important for maintaining email threads (see [Threading](./threading.md)).
+Important for maintaining email threads (see [Threading](/docs/sending/threading)).
 
 ### Delivery Status Notifications
 
@@ -298,7 +300,7 @@ Request delivery status notifications (DSN):
 }
 ```
 
-Note: DSN support varies by email provider.
+`return` is required and is either `headers` or `full`; `notify` takes any of `never`, `success`, `failure`, and `delay`; `id` sets the envelope identifier (ENVID) and `recipient` the address the notification goes to (ORCPT). DSN support varies by email provider.
 
 ### Email Tracking
 
@@ -320,6 +322,8 @@ When enabled, EmailEngine will:
 - Rewrite links to track clicks (`trackClicks`)
 - Send `trackOpen` and `trackClick` webhook events when detected
 
+When a message leaves both fields out, the instance settings apply (`trackOpens` and `trackClicks`, falling back to `trackSentMessages`). The pixel and the rewritten links point at the instance's `serviceUrl`, so tracking is only added when that setting, or `baseUrl` below, is set. Separate `trackOpens` and `trackClicks` fields were added in v2.46.1.
+
 **Optional:** Override the base URL for tracking links:
 
 ```json
@@ -330,7 +334,7 @@ When enabled, EmailEngine will:
 }
 ```
 
-[Learn more about tracking events →](/docs/webhooks/trackopen)
+The [trackOpen](/docs/webhooks/trackopen) and [trackClick](/docs/webhooks/trackclick) pages describe the events and their payloads.
 
 ### Preview Mode (Dry Run)
 
@@ -351,11 +355,11 @@ Generate email preview without actually sending:
 {
   "response": "Dry run",
   "messageId": "<generated-message-id@example.com>",
-  "preview": "BASE64_ENCODED_RFC822_MESSAGE"
+  "preview": "TUlNRS1WZXJzaW9uOiAxLjANClN1YmplY3Q6IGhlbGxvIHdvcmxkDQoNCkhlbGxvIQ0K"
 }
 ```
 
-The `preview` field contains the complete RFC822 formatted email (base64 encoded). Decode it to see exactly what would be sent. Perfect for testing templates and rendering.
+The `preview` field contains the complete RFC822 formatted email (base64 encoded). Decode it to see what would be sent, minus the tracking pixel and rewritten links, which are not added on a dry run. Nothing is queued. A dry run of a mail merge returns no preview.
 
 ### Network Configuration
 
@@ -372,7 +376,7 @@ Route SMTP connection through a proxy server:
 }
 ```
 
-Supports HTTP, HTTPS, SOCKS4, and SOCKS5 proxies.
+Accepted URL schemes are `http`, `https`, `socks`, `socks4`, `socks4a`, and `socks5`. Without it, the instance-wide proxy setting applies, if one is configured.
 
 #### Local Address Binding
 
@@ -388,6 +392,8 @@ Bind to a specific local IP address:
 ```
 
 Useful for multi-interface systems or IP-based routing.
+
+`proxy` decides where a connection carrying the account's credentials goes, so a token with a restricted permission set cannot set it; the request is refused with 403.
 
 ### Delivery Control
 
@@ -464,7 +470,7 @@ If the same request is sent multiple times with the same `Idempotency-Key` heade
 - Return the same response for duplicate requests
 - Prevent accidental double-sends
 
-The idempotency key can be any string (0-1024 characters). Use UUIDs or request-specific identifiers.
+The response carries an `idempotency` object saying which happened: `{"key": "unique-key-12345", "status": "MISS"}` for the request that was processed, `"status": "HIT"` for a replay. The key is scoped to the account and can be any string of up to 1024 characters; use UUIDs or request-specific identifiers. Supported since v2.52.0.
 
 ## Sending Stored Drafts
 
@@ -486,11 +492,11 @@ What happens to the draft after sending depends on the account type:
 - **Gmail and MS Graph accounts** use the provider's native draft-send call. The provider files the message into the Sent Mail folder and removes the draft.
 - **IMAP accounts** download the draft and deliver it over SMTP. A copy is stored in the Sent Mail folder (unless disabled with `copy: false` or the mail server stores sent messages itself, as Gmail and Outlook do for SMTP submissions), and the draft is then deleted. If no sent copy exists anywhere, the draft is moved to Trash instead so its content is not lost.
 
-The request body is optional and accepts the delivery options described above - `envelope`, `copy`, `sentMailPath`, `sendAt`, `deliveryAttempts`, `gateway`, `dsn`, `proxy`, and `localAddress`. Content fields are not accepted; the draft is sent as stored. See the [draft submission API reference](/docs/api/post-v-1-account-account-message-message-submit) for the full schema.
+The request body is optional and accepts the delivery options described above - `envelope`, `copy`, `sentMailPath`, `sendAt`, `deliveryAttempts`, `gateway`, `dsn`, `proxy`, and `localAddress`. Content fields are not accepted; the draft is sent as stored. A draft with no recipients is refused with 400 (`DraftHasNoRecipients`). See the [draft submission API reference](/docs/api/post-v-1-account-account-message-message-submit) for the full schema. Draft submission was added in v2.76.0.
 
 ## Webhook Notifications
 
-EmailEngine sends webhook notifications for delivery status updates. Configure your webhook URL under **Settings → Webhooks**.
+EmailEngine sends webhook notifications for delivery status updates. Configure the webhook URL under **Configuration > Webhooks** and include the events below in the enabled event list (see the [webhooks overview](/docs/webhooks/overview)).
 
 ### messageSent
 
@@ -626,14 +632,13 @@ See [Gmail Setup](../accounts/gmail/gmail-imap.md) and [Outlook Setup](../accoun
 **Solution**:
 
 - Move off Heroku or increase dyno size
-- Configure longer timeouts
 - Use a different deployment platform
 
 ### Account Not Connected
 
-**Problem**: Submission rejected with "Account not ready" error.
+**Problem**: Submission rejected with `503` and `No active handler for requested account. Try again later.`
 
-**Solution**: Wait for initial IMAP sync to complete. Poll `/v1/account/:id` until `state` becomes `"connected"`.
+**Solution**: The account has not been assigned to a worker yet, which happens shortly after registration and after a restart. Poll `/v1/account/:id` until `state` becomes `"connected"`, then retry.
 
 ### Rate Limiting
 

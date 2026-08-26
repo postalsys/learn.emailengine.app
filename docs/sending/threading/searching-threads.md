@@ -6,24 +6,24 @@ description: How to find and retrieve all messages in an email thread
 
 # Searching Thread Messages
 
-Once you have a thread ID, you can search for all related messages across folders. The approach varies by email provider.
+Once you have a thread ID, you can search for every message that carries it. Whether that takes one request or one per folder depends on the backend.
 
 ## Using the `\All` Folder
 
-Gmail and Microsoft Graph API support a special `\All` folder that searches across all mailboxes simultaneously.
+Gmail and the Microsoft Graph API expose a virtual `\All` folder that covers every message in the account, so one search against it returns the whole thread.
 
 ### Supported Providers
 
-- Gmail (IMAP + OAuth2) - Supported
-- Gmail (Gmail API) - Supported
+- Gmail over IMAP - Supported (the `[Gmail]/All Mail` folder carries the `\All` special-use flag)
+- Gmail API - Supported
 - Microsoft Graph API - Supported
-- Outlook/Microsoft 365 (IMAP + OAuth2) - Not supported
-- Yahoo/AOL/Verizon - Not supported
-- Generic IMAP - Not supported
+- Microsoft 365 over IMAP - Not supported
+- Yahoo, AOL, Verizon - Not supported
+- Other IMAP servers - Not supported
 
 ### Search All Folders at Once
 
-**Gmail Example** using the [Search Messages API endpoint](/docs/api/post-v-1-account-account-search):
+**Gmail example** using the [Search messages endpoint](/docs/api/post-v-1-account-account-search):
 
 ```bash
 curl -XPOST "https://emailengine.example.com/v1/account/gmail/search?path=%5CAll" \
@@ -40,7 +40,7 @@ curl -XPOST "https://emailengine.example.com/v1/account/gmail/search?path=%5CAll
 
 ```json
 {
-  "total": 5,
+  "total": 3,
   "page": 0,
   "pages": 1,
   "nextPageCursor": null,
@@ -48,7 +48,7 @@ curl -XPOST "https://emailengine.example.com/v1/account/gmail/search?path=%5CAll
   "messages": [
     {
       "id": "AAAAKAAACKO",
-      "uid": 2213,
+      "path": "INBOX",
       "threadId": "1759349012996310407",
       "subject": "Re: Project discussion",
       "from": { "name": "Colleague", "address": "colleague@example.com" },
@@ -56,7 +56,7 @@ curl -XPOST "https://emailengine.example.com/v1/account/gmail/search?path=%5CAll
     },
     {
       "id": "AAAAKAAACKN",
-      "uid": 445,
+      "path": "[Gmail]/Sent Mail",
       "threadId": "1759349012996310407",
       "subject": "Re: Project discussion",
       "from": { "name": "Me", "address": "me@example.com" },
@@ -64,7 +64,7 @@ curl -XPOST "https://emailengine.example.com/v1/account/gmail/search?path=%5CAll
     },
     {
       "id": "AAAAKAAACKM",
-      "uid": 2211,
+      "path": "INBOX",
       "threadId": "1759349012996310407",
       "subject": "Project discussion",
       "from": { "name": "Colleague", "address": "colleague@example.com" },
@@ -74,9 +74,9 @@ curl -XPOST "https://emailengine.example.com/v1/account/gmail/search?path=%5CAll
 }
 ```
 
-Results are returned newest first.
+Results are returned newest first. Sort client-side if you need chronological order. A `\All` listing carries `path` on every entry, which is how you tell which folder a message actually sits in.
 
-**Microsoft Graph API Example**:
+**Microsoft Graph API example**:
 
 ```bash
 curl -XPOST "https://emailengine.example.com/v1/account/outlook-graph/search?path=%5CAll" \
@@ -84,31 +84,26 @@ curl -XPOST "https://emailengine.example.com/v1/account/outlook-graph/search?pat
   -H "Content-Type: application/json" \
   -d '{
     "search": {
-      "threadId": "AAQkAGI2TH..."
+      "threadId": "AAQkAGI2THY2ZjRhLTVjNzgtNDMxYS05YTBmLTJiN2M4ZDkxZTQyMwAQAF3xTx0nRUxOhKcvLZQ9r1M="
     }
   }'
 ```
 
-### Benefits of `\All` Folder
-
-- **Single Request**: Get entire thread in one API call
-- **Complete View**: Includes messages from Inbox, Sent, and all other folders
-- **Efficient**: Faster than multiple folder queries
-- **Sorted**: Messages are returned newest first - sort client-side if you need chronological order
+On the Gmail API the search resolves the thread through the API's own thread listing; on the Graph API it filters on `conversationId`. Either way one request returns messages from the Inbox, Sent Mail, and every other folder.
 
 ## Folder-by-Folder Search
 
-For providers without `\All` support, you must search each folder individually.
+Where there is no `\All` folder, search each folder in turn.
 
 ### Providers Requiring This Approach
 
-- Yahoo/AOL/Verizon (OBJECTID support but no `\All`)
-- Outlook/Microsoft 365 (IMAP backend)
-- Generic IMAP providers
+- Yahoo, AOL, Verizon (OBJECTID support, no `\All` folder)
+- Microsoft 365 over IMAP
+- Other IMAP servers
 
 ### Search Multiple Folders
 
-**Step 1: Search Inbox**:
+**Step 1: Search the Inbox**:
 
 ```bash
 curl -XPOST "https://emailengine.example.com/v1/account/yahoo/search?path=INBOX" \
@@ -121,10 +116,10 @@ curl -XPOST "https://emailengine.example.com/v1/account/yahoo/search?path=INBOX"
   }'
 ```
 
-**Step 2: Search Sent**:
+**Step 2: Search Sent Mail**:
 
 ```bash
-curl -XPOST "https://emailengine.example.com/v1/account/yahoo/search?path=Sent" \
+curl -XPOST "https://emailengine.example.com/v1/account/yahoo/search?path=%5CSent" \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -134,11 +129,13 @@ curl -XPOST "https://emailengine.example.com/v1/account/yahoo/search?path=Sent" 
   }'
 ```
 
-**Step 3: Combine Results**:
+**Step 3: Combine the results**:
 
 ```javascript
+const token = process.env.EE_TOKEN;
+
 async function getCompleteThread(account, threadId) {
-  const folders = ['INBOX', '\\Sent', '\\Archive', '\\Drafts'];
+  const folders = ['INBOX', '\\Sent', '\\Archive'];
   const path = `https://emailengine.example.com/v1/account/${encodeURIComponent(account)}/search`;
 
   const perFolder = await Promise.all(
@@ -160,31 +157,34 @@ async function getCompleteThread(account, threadId) {
 }
 ```
 
-Searching the folders concurrently rather than one after another keeps this close to the latency of the slowest single folder. Referring to folders by their special-use flags (`\Sent`, `\Archive`) rather than by name avoids breaking on localized mailboxes.
+Searching the folders concurrently keeps the total close to the latency of the slowest single folder. Referring to folders by their special-use flags (`\Sent`, `\Archive`) rather than by name avoids breaking on localized mailbox names.
 
 ### Limitations
 
-- **Multiple Requests**: Slower than `\All` folder
-- **Incomplete Results**: May miss messages moved to unexpected folders
-- **Complexity**: Client-side merging and deduplication needed
-
-## Generic IMAP Threading
-
-For generic IMAP providers without native threading support, threads must be built manually from Message-ID headers. See the "Building Threads Manually" section below for implementation details.
+- **Multiple requests**: slower than one `\All` search
+- **Incomplete results**: a message moved to a folder you did not search is missed
+- **Client-side merging**: results need deduplication, because the same message can appear in more than one folder
 
 ## Building Threads Manually
 
-Without native threading support, you can build threads from Message-ID headers.
+When the server assigns no `threadId`, a thread is the transitive closure over `Message-ID`, `In-Reply-To`, and `References`.
 
-### Extract Thread from Headers
+### What the API Gives You
 
-A thread is the transitive closure over `Message-ID`, `In-Reply-To`, and `References`. Rather than walking parents and children separately, index every message by its `Message-ID` once, then expand outwards from the starting message:
+- Listing and search entries carry `messageId` and `inReplyTo`
+- The full `References` chain is only in the message detail response, under `headers.references`, so fetch each candidate with `GET /v1/account/{account}/message/{message}` when `inReplyTo` alone is not enough
+
+Header values in the detail response are arrays, and both fields hold angle-bracketed IDs, so each one is joined before the IDs are extracted.
+
+### Extract a Thread from Headers
+
+Index every message by its `Message-ID` once, then expand outwards from the starting message in both directions:
 
 ```javascript
 // Every Message-ID this message is connected to, in either direction
 function linkedIds(msg) {
   const refs = (msg.headers?.references || []).join(' ');
-  const inReplyTo = (msg.headers?.['in-reply-to'] || []).join(' ');
+  const inReplyTo = msg.inReplyTo || (msg.headers?.['in-reply-to'] || []).join(' ');
 
   return [...`${refs} ${inReplyTo}`.matchAll(/<([^>]+)>/g)].map(m => m[1]);
 }
@@ -217,14 +217,12 @@ function buildThread(startId, allMessages) {
 }
 ```
 
-Both header fields hold angle-bracketed IDs, and EmailEngine returns raw header values as arrays, so each one is joined before the IDs are extracted. Request the headers explicitly when searching, since they are not part of the default message listing.
-
 ### Limitations
 
-- Must fetch all messages from all folders first
-- Computationally expensive for large mailboxes
-- May miss messages if headers are malformed
-- Doesn't provide persistent thread IDs
+- Every candidate message has to be fetched from every folder first
+- Expensive on large mailboxes
+- A message with malformed or missing headers is left out
+- The result is not a persistent ID; it has to be rebuilt each time
 
 ## Search Strategy by Provider
 
@@ -235,14 +233,14 @@ Which approach applies comes down to one question: does the account expose an `\
 | Gmail (IMAP and API) | One search against `\All` | `threadId` |
 | Microsoft 365 / Outlook (Graph) | One search against `\All` | `threadId` |
 | Yahoo, AOL, Verizon | One search per folder | `threadId` |
-| Generic IMAP | One search per folder, then thread on headers | `subject`, then `References` |
+| Other IMAP servers | One search per folder, then thread on headers | `subject`, then `References` |
 
-A single function covers all four, because the only variables are the folders to search and whether the results need merging:
+One function covers all four cases, because the only variables are the folders to search and whether the results need merging:
 
 ```javascript
 const BASE = 'https://emailengine.example.com';
 const headers = {
-  Authorization: `Bearer ${token}`,
+  Authorization: `Bearer ${process.env.EE_TOKEN}`,
   'Content-Type': 'application/json'
 };
 
@@ -269,7 +267,7 @@ async function searchThread(account, search, folders = ['\\All']) {
 }
 
 // Gmail or Microsoft Graph
-await searchThread('user@gmail.com', { threadId: '501' });
+await searchThread('user@gmail.com', { threadId: '1759349012996310407' });
 
 // Yahoo and other providers without \All
 await searchThread('user@yahoo.com', { threadId: '501' }, ['INBOX', '\\Sent']);
@@ -277,14 +275,14 @@ await searchThread('user@yahoo.com', { threadId: '501' }, ['INBOX', '\\Sent']);
 
 Deduplicating on `id` matters for the per-folder path: a message can legitimately appear in more than one folder, and Gmail's labels make that the norm rather than the exception.
 
-For generic IMAP, search by `subject` first and then group on the `References` and `In-Reply-To` headers, as described in [Building Threads Manually](#building-threads-manually) above.
+For an IMAP server without thread IDs, search by `subject` first and then group on `inReplyTo` and the `References` header, as described in [Building threads manually](#building-threads-manually) above.
 
 ## Pagination
 
-Thread searches support pagination for long threads:
+Thread searches page like any other search:
 
 ```bash
-curl -XPOST "https://emailengine.example.com/v1/account/gmail/search?path=%5CAll&page=0&pageSize=50" \
+curl -XPOST "https://emailengine.example.com/v1/account/gmail/search?path=%5CAll&pageSize=50" \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -294,16 +292,20 @@ curl -XPOST "https://emailengine.example.com/v1/account/gmail/search?path=%5CAll
   }'
 ```
 
-**Response includes pagination metadata**:
+**The response carries the paging metadata**:
 
 ```json
 {
   "total": 127,
   "page": 0,
   "pages": 3,
+  "nextPageCursor": "gmail_kcQIji3UobDDTxc",
+  "prevPageCursor": null,
   "messages": []
 }
 ```
+
+The cursor carries the backend it came from as a prefix: `imap_` for IMAP accounts, `gmail_` for the Gmail API, `ms_` for the Graph API. Pass it back as the `cursor` query parameter rather than incrementing `page`, which only IMAP accounts support.
 
 ## See Also
 

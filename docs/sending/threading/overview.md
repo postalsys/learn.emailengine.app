@@ -1,35 +1,35 @@
 ---
 title: Threading Overview
 sidebar_position: 1
-description: Understanding how email threading works and why it matters
+description: How email threading works, which headers drive it, and which backends give EmailEngine a native thread ID
 ---
 
 # Email Threading Overview
 
-Email threading allows related messages to be grouped together as conversations. Understanding how threading works is essential for building email applications that feel natural to users.
+Email threading groups related messages into a conversation. This page covers the headers that mail clients thread on, the thread identifiers some servers assign, and where EmailEngine exposes them.
 
 ## How Email Threading Works
 
-Email threading is typically managed on the client side as virtual entities. Emails are threaded based on:
+Threading is done by the client, from four pieces of each message:
 
-1. **Message-ID**: Unique identifier for each message
-2. **In-Reply-To**: References the Message-ID being replied to
-3. **References**: Chain of all Message-IDs in the thread
-4. **Subject**: Must remain consistent (with Re:/Fwd: prefixes)
+1. **Message-ID**: the unique identifier of the message
+2. **In-Reply-To**: the `Message-ID` of the message being replied to
+3. **References**: the chain of `Message-ID`s in the thread so far
+4. **Subject**: expected to stay the same apart from `Re:` and `Fwd:` prefixes
 
-### RFC 5256 Limitations
+### RFC 5256
 
-Previous attempts to define server-side threading (RFC5256) were mainly useful for mailing-list type threads, assuming that all related emails were located in the same folder. This approach proved ineffective for one-to-one threads, where half of the emails are in the Inbox and the other half in the Sent Mail folder.
+RFC 5256 defined server-side threading over a single folder. That works for mailing-list traffic, where the whole thread sits in one folder, and poorly for one-to-one conversations, where half the messages are in the Inbox and the other half in Sent Mail.
 
-### RFC 8474 Modern Approach
+### RFC 8474
 
-RFC8474 introduced a new method where each email is assigned a thread ID, making it possible to identify emails belonging to the same thread across different folders. However, this solution is not yet widely supported by email servers, meaning that, for the time being, email threading must still be managed on the client side for most users.
+RFC 8474 (the `OBJECTID` extension) gives each message a server-assigned thread ID that holds across folders. Support depends on the server, so client-side threading from headers remains the fallback for most accounts.
 
 ## Threading Headers Explained
 
 ### Message-ID
 
-Every email must have a unique Message-ID:
+Every message has a unique `Message-ID`:
 
 ```
 Message-ID: <56b3c6d2-f7c0-4272-8beb-e25fdb7c19f1@example.com>
@@ -37,104 +37,103 @@ Message-ID: <56b3c6d2-f7c0-4272-8beb-e25fdb7c19f1@example.com>
 
 **Format**: `<unique-id@domain>`
 
-**Best practices**:
+When you set it yourself:
 
-- Always wrap in angle brackets `< >`
-- Use UUID or similar unique identifier
-- Use the sender's domain from the `From` address (e.g., if `From: user@company.com`, use `@company.com`)
-- Alternatively, use your service domain as fallback
-- Store these IDs for building References later
+- Wrap it in angle brackets `< >`
+- Use a UUID or a comparably unique value
+- Use the domain of the `From` address, or your own service domain
+- Store it, because every follow-up needs it for `References`
+
+If you do not set `messageId` on submit, EmailEngine generates one and returns it in the submit response.
 
 ### In-Reply-To
 
-When replying, reference the original message:
+Names the message being replied to:
 
 ```
 In-Reply-To: <56b3c6d2-f7c0-4272-8beb-e25fdb7c19f1@example.com>
 ```
 
-This creates a parent-child relationship between messages.
+This is the parent-child link between two messages. EmailEngine sets it for `reply` and `reply-all` submissions that use `reference`.
 
 ### References
 
-The full chain of Message-IDs in the conversation:
+The full chain of `Message-ID`s in the conversation:
 
 ```
 References: <original@example.com> <reply1@example.com> <reply2@example.com>
 ```
 
-**Important**:
+- Space-separated
+- Each ID in angle brackets
+- Oldest first, newest last
 
-- Space-separated list of Message-IDs
-- Each ID wrapped in angle brackets
-- Oldest message first, newest last
-- Gmail only reads last 20 entries
+When you use `reference`, EmailEngine builds this header from the referenced message's `Message-ID`, `In-Reply-To`, and `References`, adding missing angle brackets and removing duplicates. It sets no upper bound on the chain, and it does not touch a `references` header you set yourself.
 
 ## Threading Challenges
 
 ### Split Across Folders
 
-One major challenge with email threading is that conversation messages are often split across folders:
+A conversation is rarely in one folder:
 
-- **Inbox**: Contains received messages
-- **Sent**: Contains sent messages
-- **Other folders**: Messages may be moved by filters
+- **Inbox**: received messages
+- **Sent**: your side of the conversation
+- **Other folders**: messages moved by filters or by hand
 
-This makes it difficult to retrieve all messages in a thread with a single query.
+Retrieving a whole thread therefore needs either a cross-folder search or one search per folder. See [Searching threads](/docs/sending/threading/searching-threads).
 
 ### Provider Differences
 
-Different email providers handle threading differently:
+- **Gmail**: a thread ID on every message (`X-GM-THRID` over IMAP, `threadId` in the Gmail API)
+- **Microsoft 365**: a conversation ID over the Graph API, nothing over IMAP
+- **Yahoo and AOL**: a thread ID through the `OBJECTID` extension
+- **Other IMAP servers**: no thread ID unless the server implements `OBJECTID`
 
-- **Gmail**: Native thread support (X-GM-THRID)
-- **Outlook**: Depends on backend (Graph API has native support, IMAP doesn't)
-- **Yahoo/AOL**: THREADID support via OBJECTID extension
-- **Generic IMAP**: No native threading, must build manually
-
-See [Provider Support](./provider-support) for detailed information.
+See [Provider support](/docs/sending/threading/provider-support) for the details.
 
 ### Subject Line Sensitivity
 
-Email clients use subject matching as part of threading. Changing the subject (beyond adding Re:/Fwd:) can break threads in some clients, even with perfect headers.
+Some clients include the subject in their threading decision. Changing the subject text between messages, beyond adding `Re:` or `Fwd:`, can split a thread even when the headers are correct.
 
-## EmailEngine's Threading Solution
+## EmailEngine's Threading Support
 
-EmailEngine exposes native thread IDs whenever the underlying mail server provides them:
+EmailEngine passes on the thread identifier whenever the backend provides one:
 
-1. **Gmail (API)**: Uses Gmail's native thread IDs from the Gmail API
-2. **Microsoft Graph API**: Uses Outlook's conversation IDs
-3. **IMAP with extensions**: The IMAP backend returns `threadId` whenever the server supports the OBJECTID extension (RFC 8474) or Gmail's X-GM-EXT-1 extension. This covers Gmail over IMAP and OBJECTID-capable servers such as Yahoo and AOL.
+1. **Gmail API**: the Gmail API's `threadId`
+2. **Microsoft Graph API**: the message's `conversationId`
+3. **IMAP**: the value the server returns when it supports `OBJECTID` (RFC 8474) or Gmail's `X-GM-EXT-1` extension, which covers Gmail over IMAP and OBJECTID servers such as Yahoo and AOL
 
-Only IMAP servers without these extensions lack native thread IDs. For those accounts, threads must be built manually by analyzing Message-ID, In-Reply-To, and References headers from email messages.
+IMAP servers without either extension give EmailEngine nothing to pass on. For those accounts a thread has to be reconstructed from `Message-ID`, `In-Reply-To`, and `References`.
 
 ## Thread ID Format
 
-EmailEngine provides a `threadId` property in message data when the server supports threading. The format depends on the provider:
+The `threadId` property is a string whose format depends on the provider:
 
-| Provider                           | Format                | Example                 |
-| ---------------------------------- | --------------------- | ----------------------- |
-| Gmail/Google Workspace (API)       | Long numeric string   | `"1759349012996310407"` |
-| Gmail over IMAP (X-GM-EXT-1)       | Long numeric string   | `"1759349012996310407"` |
-| Microsoft Graph API                | Graph conversation ID | `"AAQkAGI2TH..."`       |
-| IMAP with OBJECTID (Yahoo, AOL)    | Server-assigned ID    | `"M6d99fb603329c098"`   |
+| Provider                        | Format                                            | Example                 |
+| ------------------------------- | ------------------------------------------------- | ----------------------- |
+| Gmail API                       | Long numeric string                               | `"1759349012996310407"` |
+| Gmail over IMAP (X-GM-EXT-1)    | Long numeric string                               | `"1759349012996310407"` |
+| Microsoft Graph API             | Graph `conversationId`, a long base64 string       | `"AAQkAGI2THY2..."`     |
+| IMAP with OBJECTID (Yahoo, AOL) | Short numeric string                              | `"501"`                 |
 
-IMAP servers without the OBJECTID or X-GM-EXT-1 extensions do not provide native thread IDs.
+Treat every one of them as an opaque string. [Provider support](/docs/sending/threading/provider-support) has a full Graph conversation ID in context.
+
+A `threadId` is only meaningful within the account it came from. See [Message IDs](/docs/advanced/ids-explained) for how it relates to the other identifiers.
 
 ## Where Thread IDs Appear
 
-The `threadId` property is available in:
+`threadId` is present, when the backend provides one, in:
 
 - Message listing responses
 - Message detail responses
 - Message search responses
-- Webhook payloads (e.g., `messageNew`)
+- Webhook payloads that carry a message, such as `messageNew`
 
-### Important: Message Lists vs Thread Lists
+### Message Lists Are Not Thread Lists
 
-EmailEngine does not support thread grouping in message lists. When you list messages and there are multiple messages in the same thread, EmailEngine lists them as separate individual messages, not grouped by thread - even if the mail server supports threading.
+EmailEngine does not group a listing by thread. Messages in the same thread are listed as separate entries, whatever the backend.
 
-**To list messages in a thread:**
-Use the search API with a `threadId` field in the `search` body object (if the mail server supports it). The `path` query parameter is required:
+To get the messages of one thread, search with `threadId` in the `search` object. The `path` query parameter is required:
 
 ```bash
 curl -XPOST "https://emailengine.example.com/v1/account/example/search?path=INBOX" \
@@ -147,12 +146,15 @@ curl -XPOST "https://emailengine.example.com/v1/account/example/search?path=INBO
   }'
 ```
 
-See [Searching Threads](./searching-threads) for complete details.
+See [Searching threads](/docs/sending/threading/searching-threads) for which folder to search per provider.
 
-**Example webhook**:
+**Example webhook** (abridged; a real `messageNew` payload carries the full message entry):
 
 ```json
 {
+  "account": "example",
+  "date": "2025-10-10T14:30:00.000Z",
+  "path": "INBOX",
   "event": "messageNew",
   "data": {
     "id": "AAABkPHBeR0",

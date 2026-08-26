@@ -18,7 +18,7 @@ When your application needs to send email on behalf of users, direct SMTP integr
 - **Queue management**: Handling message queues and delivery tracking
 - **OAuth complexity**: Modern providers require OAuth2 authentication
 
-EmailEngine abstracts all of this complexity behind a simple REST API.
+EmailEngine puts one REST endpoint in front of all of it, with the same request and response shape whichever provider is behind the account.
 
 ## Key Capabilities
 
@@ -55,6 +55,7 @@ EmailEngine supports multiple sending approaches:
    - Direct SMTP server provided by EmailEngine (its own MSA)
    - Use standard SMTP clients/libraries
    - EmailEngine routes to the correct account based on the authenticated account ID
+   - Same queue and webhooks as the submit API; mail merge, templates, and replies are not available this way
    - Best for legacy applications
 
    Not to be confused with an SMTP **Gateway**, which is a separate feature - an outbound relay account (such as Amazon SES or a corporate smarthost) that you select per message via the `gateway` field.
@@ -109,7 +110,7 @@ curl -XPOST "https://emailengine.example.com/v1/account/example/submit" \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
-    "subject": "Hello {{{params.name}}}",
+    "subject": "Hello {{params.name}}",
     "html": "<p>Personal message for {{params.name}}</p>",
     "mailMerge": [
       {
@@ -176,7 +177,7 @@ Integrate email into your application logic:
 1. **[Basic Sending](./basic-sending.md)** - Learn the fundamentals of sending emails
 2. **[Replies & Forwards](./replies-forwards.md)** - Properly reply to and forward emails
 3. **[Mail Merge](./mail-merge.md)** - Send bulk personalized emails
-4. **[Threading](./threading.md)** - Maintain conversation threads
+4. **[Threading](/docs/sending/threading)** - Maintain conversation threads
 5. **[Templates](./templates.md)** - Use email templates
 6. **[Outbox Queue](./outbox-queue.md)** - Understanding the queue system
 7. **[SMTP Server](./smtp-interface.md)** - Alternative SMTP integration

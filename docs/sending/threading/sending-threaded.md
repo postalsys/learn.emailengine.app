@@ -6,17 +6,17 @@ description: How to send multiple emails in the same conversation thread
 
 # Sending Threaded Messages
 
-To maintain a conversation thread when sending follow-up emails, you need to control the Message-ID and References headers. This guide shows you how to send multiple related emails that appear as a single conversation.
+To keep a sequence of outgoing messages in one conversation, control the `Message-ID` and `References` headers. This page walks through a three-message sequence, then covers when to let EmailEngine build the headers instead, and how to find out when a receiving server rewrote a `Message-ID`.
 
 ## Why Manual Threading is Needed
 
-Email clients rely on RFC 5322 `Message-ID` and `References` headers to decide which messages belong together. If you let EmailEngine autogenerate those values, your perfectly timed sequence may scatter across the inbox. By controlling them yourself, every follow-up lands exactly where the user expects.
+Mail clients decide which messages belong together from the RFC 5322 `Message-ID` and `References` headers. If every message in a sequence gets a generated `Message-ID` and no `References`, each one lands as a separate conversation. Setting the headers yourself keeps every follow-up under the first message.
 
 ## Step-by-Step: Sending a Thread
 
 ### Step 1: Send the Initial Message
 
-Send the first message with a custom Message-ID using the [Submit Email API endpoint](/docs/api/post-v-1-account-account-submit):
+Send the first message with your own `messageId`, using the [Submit endpoint](/docs/api/post-v-1-account-account-submit):
 
 ```bash
 curl -XPOST "https://emailengine.example.com/v1/account/demo/submit" \
@@ -31,7 +31,7 @@ curl -XPOST "https://emailengine.example.com/v1/account/demo/submit" \
   }'
 ```
 
-**Important:** Save the `messageId` value - you'll need it for every follow-up.
+Save the `messageId`; every follow-up needs it.
 
 **Response:**
 
@@ -39,13 +39,16 @@ curl -XPOST "https://emailengine.example.com/v1/account/demo/submit" \
 {
   "response": "Queued for delivery",
   "messageId": "<56b3c6d2-f7c0-4272-8beb-e25fdb7c19f1@example.com>",
-  "queueId": "abc123"
+  "sendAt": "2025-10-15T10:30:00.000Z",
+  "queueId": "1a2b3c4d5e6f7a8b"
 }
 ```
 
+If you leave `messageId` out, EmailEngine generates one and returns it here. Either way, the value to store is the one in the response.
+
 ### Step 2: Send the First Follow-Up
 
-Send a follow-up with the original Message-ID in the References header:
+Send a follow-up with the first message's ID in the `References` header:
 
 ```bash
 curl -XPOST "https://emailengine.example.com/v1/account/demo/submit" \
@@ -65,13 +68,13 @@ curl -XPOST "https://emailengine.example.com/v1/account/demo/submit" \
 
 **Key points:**
 
-- New unique `messageId` for this message
-- `references` header contains the first message's ID
-- Subject stays the same (important!)
+- A new, unique `messageId` for this message
+- `references` carries the first message's ID
+- The subject stays the same
 
 ### Step 3: Keep Extending References
 
-Each subsequent message appends all previous Message-IDs to the References header:
+Each further message appends every previous `Message-ID` to `References`:
 
 ```bash
 curl -XPOST "https://emailengine.example.com/v1/account/demo/submit" \
@@ -91,14 +94,15 @@ curl -XPOST "https://emailengine.example.com/v1/account/demo/submit" \
 
 **References header format:**
 
-- Space-separated list of Message-IDs
+- Space-separated list of `Message-ID`s
 - Each ID wrapped in angle brackets `< >`
-- Oldest message first, newest last
-- Build up the chain with each new message
+- Oldest first, newest last
+
+EmailEngine sends a `references` header you supply exactly as written, with no reordering and no length limit of its own.
 
 ## Using the Reference API
 
-For replies and forwards, EmailEngine can handle threading automatically using the `reference` parameter:
+For replies and forwards to a message EmailEngine can see, the `reference` field does the header work:
 
 ```bash
 curl -XPOST "https://emailengine.example.com/v1/account/example/submit" \
@@ -113,60 +117,61 @@ curl -XPOST "https://emailengine.example.com/v1/account/example/submit" \
   }'
 ```
 
-EmailEngine automatically:
+EmailEngine then:
 
-- Extracts the original Message-ID
-- Builds the References header
-- Sets In-Reply-To header
-- Adds Re: prefix to subject
-- Maintains the thread
+- Builds `References` from the referenced message's `Message-ID`, `In-Reply-To`, and `References`, adding missing angle brackets and dropping duplicates
+- Sets `In-Reply-To` to the referenced message's `Message-ID` for `reply` and `reply-all`
+- Derives the subject with a `Re:` or `Fwd:` prefix unless you supply one
+- Fills in the recipients of a reply
+- Flags the referenced message `\Answered` once the new message is sent, adding `$Forwarded` as well when the action was `forward`
 
-**When to use Reference API:**
+On a **Gmail API** account, `reference.threadId` attaches the outgoing message to a Gmail thread directly. It is the thread ID from the message listing, and it can stand on its own without `reference.message`; a `reference` object has to carry one or the other. When both are given, `threadId` wins over the thread of the referenced message. IMAP and Microsoft Graph accounts ignore it, because those backends thread on the headers.
 
-- Replying to received emails
-- Forwarding existing messages
-- You have the internal message ID from EmailEngine (the `id` field, e.g., `"AAAADQAABl0"`, not the Message-ID header)
+**When to use the reference API:**
 
-**When to use manual threading:**
+- Replying to a received message
+- Forwarding a stored message
+- You have the EmailEngine message ID (the `id` field, for example `"AAAADQAABl0"`, not the `Message-ID` header)
 
-- Sending multiple follow-ups from scratch
-- Building drip campaigns
-- Scheduled message sequences
-- You don't have an original message to reference
+**When to build the headers yourself:**
 
-See [Replies & Forwards](/docs/sending/replies-forwards) for details on the Reference API.
+- Sending a sequence of follow-ups from scratch
+- Drip campaigns and scheduled sequences
+- There is no stored message to reference
+
+See [Replies and forwards](/docs/sending/replies-forwards) for every `reference` option.
 
 ## Common Pitfalls
 
 ### Missing Angle Brackets
 
-**Problem:** Message IDs in References header without `< >`.
+**Problem:** IDs in `References` without `< >`.
 
-**Result:** Threading breaks in many email clients.
+**Result:** Many clients fail to match them.
 
-**Solution:** Always wrap IDs in angle brackets, both in storage and when building References.
+**Solution:** Store IDs with the brackets and keep them when building `References`. EmailEngine adds missing brackets only on the `reference` path, not to headers you set yourself.
 
 ### Subject Drift
 
-**Problem:** Changing the actual subject text between messages in a thread.
+**Problem:** Changing the subject text between messages in a thread.
 
-**Result:** Thread breaks despite correct Message-ID headers.
+**Result:** Some clients split the thread despite correct headers.
 
-**Solution:** Keep the subject text consistent. Adding Re: or Fwd: prefixes is fine and recommended (EmailEngine does this automatically when using the Reference API), but don't change the actual subject content (e.g., "Meeting on Monday" → "Meeting on Tuesday").
+**Solution:** Keep the subject text the same. A `Re:` or `Fwd:` prefix is fine (EmailEngine adds one on the `reference` path); changing the wording, for example "Meeting on Monday" to "Meeting on Tuesday", is not.
 
 ### Not Persisting Message IDs
 
-**Problem:** Not storing Message-IDs after generation.
+**Problem:** Sending without storing the `messageId` from the response.
 
-**Result:** Cannot build References header for follow-up messages.
+**Result:** No way to build `References` for the follow-up.
 
-**Solution:** Store all Message-IDs in your database immediately after generation, indexed by thread.
+**Solution:** Store every `messageId` as soon as the submit response arrives, indexed by thread.
 
 ### Message-ID Rewriting by Mail Servers
 
-**Problem:** Some mail servers override the Message-ID header you set, causing your locally stored Message-ID to become invalid because the recipient receives a different Message-ID.
+**Problem:** Some servers replace the `Message-ID` you set. The recipient then sees a different ID from the one you stored, and a follow-up that references the stored one does not thread.
 
-**Detection:** EmailEngine can detect Message-ID changes in most cases and notifies you via the `messageSent` webhook event:
+**Detection:** the `messageSent` webhook carries the final `Message-ID` as `messageId` and the one EmailEngine sent as `originalMessageId`. The two differ when the receiving server rewrote it:
 
 ```json
 {
@@ -177,6 +182,7 @@ See [Replies & Forwards](/docs/sending/replies-forwards) for details on the Refe
     "messageId": "<rewritten-id@mailserver.com>",
     "originalMessageId": "<56b3c6d2-f7c0-4272-8beb-e25fdb7c19f1@example.com>",
     "response": "250 2.0.0 OK",
+    "queueId": "1a2b3c4d5e6f7a8b",
     "envelope": {
       "from": "sender@example.com",
       "to": ["recipient@example.com"]
@@ -185,24 +191,20 @@ See [Replies & Forwards](/docs/sending/replies-forwards) for details on the Refe
 }
 ```
 
-**Solution:** Listen for `messageSent` webhooks and update your stored Message-ID with the `messageId` value (the rewritten ID) if `originalMessageId` is present. Use the rewritten ID in future References headers to maintain threading.
+EmailEngine learns the final ID in these cases:
 
-**Important limitations** - Message-ID rewriting cannot be detected in these cases:
+- **Outlook and Microsoft 365 SMTP**: the `250 2.0.0 OK` reply names the new ID when it ends in `.prod.outlook.com`, and EmailEngine reads it from there
+- **Amazon SES SMTP**: the `250 Ok <uuid>` reply carries the SES message ID, from which EmailEngine builds `<uuid@<region>.amazonses.com>`. Recognized when the SMTP host ends in `.amazonaws.com` or `.awsapps.com`
+- **Gmail API**: EmailEngine reads the sent message back to get the `Message-ID` Gmail stored
 
-1. **AWS WorkMail**: The Message-ID is rewritten during delivery after the message has been passed from EmailEngine to the mail server, so EmailEngine never sees the final Message-ID.
+**Solution:** Handle `messageSent`, and whenever `messageId` differs from `originalMessageId`, replace the stored ID with `messageId`. Use that value in every later `References` header. On an SMTP delivery `originalMessageId` is present only when the ID was rewritten; on Gmail API and Microsoft Graph accounts it is always present, so compare the two rather than testing for its presence.
 
-2. **Gmail API with send-only scope** (`gmail.send`): Gmail API modifies the Message-ID, but EmailEngine cannot resolve the updated Message-ID because it lacks read access to the mail storage. You need both send and read OAuth2 scopes for Message-ID detection to work.
-
-**Recommendation:**
-
-- Always implement webhook handlers to track Message-ID changes
-- Use full OAuth2 scopes for Gmail (not just `gmail.send`)
-- Be aware that AWS WorkMail requires alternative threading strategies
-- Test your threading implementation with your specific mail server configuration
+**Limitation:** a **Gmail API account with the send-only scope** (`gmail.send`) cannot read the sent message back, so `messageId` in the webhook is the ID you set, and a rewrite goes unnoticed. Register Gmail API accounts with the full scope if you rely on this detection. Any other server that rewrites the ID without reporting it in its SMTP reply is likewise not detected.
 
 ## See Also
 
 - [Threading overview](/docs/sending/threading/overview) - What each header does
 - [Replies and forwards](/docs/sending/replies-forwards) - The automatic alternative to building headers
+- [messageSent webhook](/docs/webhooks/messagesent) - The full payload, including `originalMessageId`
 - [Mail merge](/docs/sending/mail-merge) - Sending a sequence to many recipients
 - [Basic sending](/docs/sending/basic-sending) - The submit fields used here
