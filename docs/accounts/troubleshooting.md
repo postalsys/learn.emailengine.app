@@ -73,7 +73,7 @@ docker logs -f emailengine
      -d '{"reconnect": true}'
    ```
 
-   `"disabled": false` matters when the failures have been going on for more than three days: by then EmailEngine has [switched syncing off](#state-unset). In releases after v2.79.4 a partial update that changes `imap.auth` lifts the switch-off on its own, but in v2.79.4 it does not, and the explicit flag is harmless in either case.
+   `"disabled": false` matters when the failures have been going on for more than three days: by then EmailEngine has [switched syncing off](#state-unset). In v2.79.5 a partial update that changes `imap.auth` lifts the switch-off on its own, but in v2.79.4 it does not, and the explicit flag is harmless in either case.
 
 2. **App password required but not used**
    - Gmail: Account passwords completely disabled, app-specific passwords required for all accounts
@@ -259,9 +259,9 @@ docker logs -f emailengine
 - Set `imap.disabled` to `false`, as in the reconnect example under [disconnected](#state-disconnected)
 
 **Switched off after authentication failures** (since v2.79.4 the account page shows a "Syncing was switched off" alert with the time, and the accounts list badges it "Syncing switched off"):
-- Fix the credentials first. A re-authorization through the hosted authentication form or the account page's **Re-authenticate** button lifts the disable and reconnects the account; so does a `PUT /v1/account/{account}` that carries new OAuth2 tokens, replaces the whole `imap` object, or sets `"disabled": false`. In releases after v2.79.4 a partial update of `imap.auth` lifts it too, and saving the account's edit form with new IMAP credentials does the same
+- Fix the credentials first. A re-authorization through the hosted authentication form or the account page's **Re-authenticate** button lifts the disable and reconnects the account; so does a `PUT /v1/account/{account}` that carries new OAuth2 tokens, replaces the whole `imap` object, or sets `"disabled": false`. In v2.79.5 a partial update of `imap.auth` lifts it too, and saving the account's edit form with new IMAP credentials does the same
 - Or press **Resume syncing** on the account page to retry with the stored credentials. This is the only admin path for a Gmail API or MS Graph account, whose edit page has no IMAP settings
-- A shared mailbox that borrows another account's token is not switched off in releases after v2.79.4; fix the account that owns the credential and the shared mailboxes come back with it
+- A shared mailbox that borrows another account's token is not switched off in v2.79.5; fix the account that owns the credential and the shared mailboxes come back with it
 - `PUT /v1/account/{account}/reconnect` does not help here: it answers `{"reconnect": false}` and changes nothing, because the connection setup checks the flag before dialing out
 
 The full list of what lifts the disable, and the version history behind it, is in [Accounts switched off after authentication failures](/docs/accounts/managing-accounts#accounts-switched-off-after-authentication-failures).

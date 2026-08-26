@@ -471,7 +471,7 @@ curl -X POST https://emailengine.example.com/v1/account \
 
 This is useful when you have full credentials but want to limit EmailEngine to sending only.
 
-EmailEngine sets the same flag on its own when an account keeps failing authentication for three days. The account object's `authFailureDisabledAt` field (since v2.79.4) is a timestamp in that case and `null` when the operator disabled IMAP, so the two are distinguishable. In v2.79.4 such an account is reported as send-only everywhere; in releases after v2.79.4 the accounts listing and the admin interface keep its own type, because a switch-off is a fault rather than a configuration, while `GET /v1/account/{account}` still answers `sending` with `sendOnly: true`. `authFailureDisabledAt` is unambiguous on both. See [Accounts switched off after authentication failures](/docs/accounts/managing-accounts#accounts-switched-off-after-authentication-failures).
+EmailEngine sets the same flag on its own when an account keeps failing authentication for three days. The account object's `authFailureDisabledAt` field (since v2.79.4) is a timestamp in that case and `null` when the operator disabled IMAP, so the two are distinguishable. In v2.79.4 such an account is reported as send-only everywhere; in v2.79.5 the accounts listing and the admin interface keep its own type, because a switch-off is a fault rather than a configuration, while `GET /v1/account/{account}` still answers `sending` with `sendOnly: true`. `authFailureDisabledAt` is unambiguous on both. See [Accounts switched off after authentication failures](/docs/accounts/managing-accounts#accounts-switched-off-after-authentication-failures).
 
 **3. OAuth2 with Send-Only Scopes**
 

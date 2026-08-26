@@ -256,16 +256,16 @@ async function handleAuthenticationError(event) {
 }
 ```
 
-Accounts that 2.79.3 switched off before `authFailureDisabledAt` existed carry no marker, so 2.79.4 cannot tell them from a deliberate disable and re-authorizing them lifts nothing. Releases after 2.79.4 run a one-time backfill at startup that marks the OAuth2 accounts in that situation, after which they recover through the same paths as any other parked account. The recorded `authFailureDisabledAt` is then the time of that startup, not the time the account stopped syncing. Password accounts are not backfilled: their IMAP settings card still has the "Disable IMAP" checkbox, which clears the flag directly.
+Accounts that 2.79.3 switched off before `authFailureDisabledAt` existed carry no marker, so 2.79.4 cannot tell them from a deliberate disable and re-authorizing them lifts nothing. 2.79.5 run a one-time backfill at startup that marks the OAuth2 accounts in that situation, after which they recover through the same paths as any other parked account. The recorded `authFailureDisabledAt` is then the time of that startup, not the time the account stopped syncing. Password accounts are not backfilled: their IMAP settings card still has the "Disable IMAP" checkbox, which clears the flag directly.
 
-Delegated accounts, the shared mailboxes that borrow another account's OAuth2 grant, are switched off together with that account in 2.79.3 and 2.79.4, and re-authorizing the owner lifts only the owner. Releases after 2.79.4 no longer park a delegated account at all: the failures are the owner's, so the owner is what gets switched off, and re-authorizing it brings the shared mailboxes back with it.
+Delegated accounts, the shared mailboxes that borrow another account's OAuth2 grant, are switched off together with that account in 2.79.3 and 2.79.4, and re-authorizing the owner lifts only the owner. 2.79.5 no longer park a delegated account at all: the failures are the owner's, so the owner is what gets switched off, and re-authorizing it brings the shared mailboxes back with it.
 
 ### Re-authenticating an Account
 
 Supplying working credentials lifts the switch-off and reconnects the account. Since 2.79.4 this happens on every path that carries new credentials, without a separate step to clear `imap.disabled`:
 
 - **Re-authorizing an OAuth2 account** through the [hosted authentication form](/docs/accounts/hosted-authentication), or through a [`POST /v1/account`](/docs/api/post-v-1-account) with a fresh `oauth2` block for the existing account ID
-- **Saving new IMAP settings** for a password account with [`PUT /v1/account/{account}`](/docs/api/put-v-1-account-account). The `imap` object you send replaces the stored one, so it carries no `disabled` flag unless you add one. In releases after 2.79.4 a partial update that changes `imap.auth` lifts the switch-off as well; in 2.79.4 itself a partial update needs `"disabled": false` next to the new password:
+- **Saving new IMAP settings** for a password account with [`PUT /v1/account/{account}`](/docs/api/put-v-1-account-account). The `imap` object you send replaces the stored one, so it carries no `disabled` flag unless you add one. In 2.79.5 a partial update that changes `imap.auth` lifts the switch-off as well; in 2.79.4 itself a partial update needs `"disabled": false` next to the new password:
 
 ```bash
 curl -X PUT "https://emailengine.example.com/v1/account/user123" \

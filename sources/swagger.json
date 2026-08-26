@@ -108,7 +108,7 @@
   },
   "info": {
     "title": "EmailEngine API",
-    "version": "2.79.4",
+    "version": "2.79.5",
     "contact": {
       "name": "EmailEngine Support",
       "url": "https://learn.emailengine.app/docs/support",
@@ -10668,7 +10668,7 @@
           "version": {
             "type": "string",
             "description": "EmailEngine version number",
-            "example": "2.79.4"
+            "example": "2.79.5"
           },
           "license": {
             "type": "string",
