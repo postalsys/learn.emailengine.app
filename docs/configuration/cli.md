@@ -12,7 +12,7 @@ The EmailEngine command line interface manages tokens, licenses, passwords, acco
 
 ### Remote Administration
 
-**Important:** The EmailEngine CLI does not need to run on the same server as EmailEngine. You can run CLI commands from any location as long as you can:
+The EmailEngine CLI does not need to run on the same server as EmailEngine. You can run CLI commands from any location as long as you can:
 
 1. **Access the Redis instance** used by EmailEngine
 2. **Know the encryption secret** (for some operations)
@@ -40,14 +40,12 @@ After installation, the `emailengine` command is available system-wide:
 
 ```bash
 emailengine --version
-emailengine tokens --help
+emailengine help tokens
 ```
 
 #### Option 2: Download Binary
 
-Download pre-built binaries from the official website:
-
-**Download from:** https://emailengine.app
+Download a pre-built binary from the [installation guide](/docs/installation):
 
 **Available formats:**
 
@@ -55,7 +53,7 @@ Download pre-built binaries from the official website:
 - Docker images
 - Source distribution
 
-The `emailengine` command is available in the downloaded package and can be run directly:
+The binary is the `emailengine` command and can be run directly:
 
 ```bash
 ./emailengine [command] [options]
@@ -84,17 +82,12 @@ emailengine help
 View command-specific help:
 
 ```bash
-# Show help for specific commands
 emailengine help tokens
 emailengine help license
 emailengine help check-bounce
-
-# Alternative syntax
-emailengine tokens --help
-emailengine license --help
 ```
 
-The help output automatically wraps text based on your terminal width for better readability.
+The `--help` flag is only recognized on its own. `emailengine tokens --help` runs the `tokens` command without a subcommand, so use the `help <command>` form. Help is printed on stderr.
 
 ### Version Information
 
@@ -106,8 +99,8 @@ emailengine version
 
 **Output:**
 
-```
-EmailEngine v2.78.0 (LICENSE_EMAILENGINE)
+```text
+EmailEngine v2.79.4 (LICENSE_EMAILENGINE)
 ```
 
 ## Configuration Arguments
@@ -150,13 +143,12 @@ EmailEngine v2.78.0 (LICENSE_EMAILENGINE)
 
 **When needed:**
 
-- Account export/import with encrypted fields
+- Account export with encrypted fields
 - Encryption migration (`encrypt` command)
-- Field-level encryption operations
 
 **Not needed for:**
 
-- Token operations (tokens are hashed, not encrypted)
+- Token operations (tokens are stored as hashes, not encrypted)
 - License operations
 - Password operations
 
@@ -185,34 +177,31 @@ emailengine \
 
 | Option               | Environment Variable       | Description          | Default     |
 | -------------------- | -------------------------- | -------------------- | ----------- |
-| `--dbs.redis`        | `EENGINE_REDIS`            | Redis connection URL | Required    |
+| `--dbs.redis`        | `EENGINE_REDIS`            | Redis connection URL | `redis://127.0.0.1:6379/8` |
 | `--api.host`         | `EENGINE_HOST`             | API server host      | `127.0.0.1` |
 | `--api.port`         | `EENGINE_PORT`             | API server port      | `3000`      |
 | `--workers.imap`     | `EENGINE_WORKERS`          | Account worker count | `4`         |
 | `--workers.webhooks` | `EENGINE_WORKERS_WEBHOOKS` | Webhook worker count | `1`         |
 | `--log.level`        | `EENGINE_LOG_LEVEL`        | Log level            | `trace`     |
-| `--service.secret`   | `EENGINE_SECRET`           | Encryption secret    | Optional    |
+| `--service.secret`   | `EENGINE_SECRET`           | Encryption secret    | None        |
 
 ### All Server Arguments
 
-Run `emailengine --help` for the authoritative list. The full set:
+These are the options `emailengine --help` lists:
 
 **General**
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--dbs.redis` | Redis connection URL | Required |
-| `--workers.imap` | Account worker threads | `4` |
-| `--workers.api` | API worker threads. Anything above 1 needs SO_REUSEPORT, so it falls back to 1 off Linux | `1` |
-| `--workers.webhooks` | Webhook worker threads | `1` |
-| `--workers.imapProxy` | IMAP proxy worker threads | `1` |
+| `--dbs.redis` | Redis connection URL | `redis://127.0.0.1:6379/8` |
+| `--workers.imap` | Account worker threads. `cpus` uses one per CPU core | `4` |
 | `--settings` | Pre-configured settings as a JSON string | None |
 | `--service.secret` | Key for encrypting stored credentials | None |
 | `--service.commandTimeout` | Maximum time for an IMAP command | `10s` |
 | `--service.setupDelay` | Delay between assigning connections to workers | `0ms` |
-| `--service.localAddresses` | Comma-separated local addresses to originate connections from | None |
 | `--log.level` | Logging level | `trace` |
 | `--log.raw` | Log raw IMAP traffic. Includes unmasked credentials | `false` |
+| `--workers.webhooks` | Webhook worker threads | `1` |
 
 **API server**
 
@@ -234,17 +223,11 @@ Run `emailengine --help` for the authoritative list. The full set:
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--smtp.enabled` | Enable the [SMTP submission server](/docs/sending/smtp-interface) | `false` |
+| `--smtp.secret` | Shared SMTP password accepted for all accounts | None |
 | `--smtp.host` | Bind address | `127.0.0.1` |
 | `--smtp.port` | Port | `2525` |
-| `--smtp.secret` | Shared SMTP password accepted for all accounts | None |
 | `--smtp.proxy` | Accept the HAProxy PROXY protocol | `false` |
 | `--smtp.maxMessageSize` | Maximum accepted email size | `25M` |
-
-**MCP**
-
-| Option | Description | Default |
-|--------|-------------|---------|
-| `--mcp.enabled` | Register the [MCP endpoint](/docs/mcp) routes. A deployment gate, not the on switch: the `mcpEnabled` setting still has to be turned on | `true` |
 
 **Document Store** (deprecated, removed from releases starting October 1, 2026)
 
@@ -252,8 +235,34 @@ Run `emailengine --help` for the authoritative list. The full set:
 |--------|-------------|---------|
 | `--documentStore.enabled` | Enable the Document Store feature gate | `false` |
 
+**MCP**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--mcp.enabled` | Register the [MCP endpoint](/docs/mcp) routes. A deployment gate, not the on switch: the `mcpEnabled` setting still has to be turned on | `true` |
+
+Every configuration key follows the same `--section.key=value` form, including keys that `--help` does not list. The ones EmailEngine reads that are not shown above:
+
+| Option | Environment Variable | Description | Default |
+|--------|----------------------|-------------|---------|
+| `--workers.api` | `EENGINE_WORKERS_API` | API worker threads. Anything above 1 needs `SO_REUSEPORT`, so it falls back to 1 off Linux | `1` |
+| `--workers.submit` | `EENGINE_WORKERS_SUBMIT` | Submission worker threads | `1` |
+| `--workers.export` | none | Export worker threads. This one has no environment variable | `1` |
+| `--workers.imapProxy` | none | IMAP proxy worker threads | `1` |
+| `--queues.export` | `EENGINE_EXPORT_QC` | Concurrent exports per export worker | `1` |
+| `--submitDelay` | `EENGINE_SUBMIT_DELAY` | Pause between submissions | None |
+| `--api.proxy` | `EENGINE_API_PROXY` | Seed for the Behind Reverse Proxy setting on first start | Unset |
+| `--licensePath` | none | Path to a license key file to load and verify at startup. A file that fails verification stops EmailEngine with exit status 13 | None |
+| `--preparedLicense`, `--preparedToken`, `--preparedPassword` | `EENGINE_PREPARED_LICENSE`, `EENGINE_PREPARED_TOKEN`, `EENGINE_PREPARED_PASSWORD` | The [prepared settings](/docs/configuration/prepared-settings) in argument form | None |
+| `--api.maxBodySize` | `EENGINE_MAX_BODY_SIZE` | Maximum request body for message uploads | `50M` |
+| `--api.maxPayloadTimeout` | `EENGINE_MAX_PAYLOAD_TIMEOUT` | Time allowed to receive a request body | `10s` |
+| `--cors.origin` | `EENGINE_CORS_ORIGIN` | Allowed CORS origins | None |
+| `--cors.maxAge` | `EENGINE_CORS_MAX_AGE` | CORS preflight cache time | `60s` |
+| `--service.fetchBatchSize` | `EENGINE_FETCH_BATCH_SIZE` | Messages per fetch batch during sync | `1000` |
+| `--imap-proxy.enabled`, `--imap-proxy.host`, `--imap-proxy.port`, `--imap-proxy.secret`, `--imap-proxy.proxy` | `EENGINE_IMAP_PROXY_ENABLED`, `EENGINE_IMAP_PROXY_HOST`, `EENGINE_IMAP_PROXY_PORT`, `EENGINE_IMAP_PROXY_SECRET`, `EENGINE_IMAP_PROXY_PROXY` | The [IMAP proxy](/docs/accounts/proxying-connections) listener, with the same meaning as the SMTP server options | `false`, `127.0.0.1`, `2993`, none, `false` |
+
 :::tip Environment Variables
-All CLI arguments can also be set as environment variables. See [Environment Variables reference](/docs/configuration/environment-variables) for complete list.
+The [Environment Variables reference](/docs/configuration/environment-variables) lists every variable with its default and the config-file equivalent, including the ones that have no CLI form.
 :::
 
 ---
@@ -301,14 +310,14 @@ emailengine --config=/etc/emailengine/config.toml
 
 # Database configuration
 [dbs]
-redis = "redis://redis-cluster.example.com:6379"
+redis = "redis://redis.example.com:6379"
 
 # API server configuration
 [api]
 host = "0.0.0.0"
 port = 3000
 proxy = true
-maxSize = 20971520  # 20 MB
+maxSize = "20M"
 
 # Worker configuration
 [workers]
@@ -323,7 +332,7 @@ level = "info"
 # Service settings
 [service]
 secret = "your-encryption-secret-32-chars-min"
-commandTimeout = 30000
+commandTimeout = "30s"
 
 # IMAP Proxy (optional)
 [imap-proxy]
@@ -348,12 +357,7 @@ emailengine --config=/etc/emailengine/production.toml
 
 ### Configuration Precedence
 
-When multiple configuration sources are used:
-
-1. **Environment variables** (highest priority)
-2. **CLI arguments**
-3. **Configuration file**
-4. **Default values** (lowest priority)
+A CLI argument loses to the matching `EENGINE_*` environment variable and wins over everything else, so a flag has no effect when the variable is set as well. [Configuration Precedence](/docs/configuration#configuration-precedence) lists all five layers in order.
 
 **Example:**
 
@@ -388,7 +392,7 @@ emailengine tokens issue [options]
 | `--description` | `-d`  | Token description | `Generated at <timestamp>` |
 | `--scope`       | `-s`  | One of `*`, `api`, `metrics`, `smtp`, `imap-proxy`, `mcp`. Repeat the flag for several | `*` |
 | `--account`     | `-a`  | Bind the token to one account | None |
-| `--dbs.redis`   |       | Redis connection      | Required |
+| `--dbs.redis`   |       | Redis connection      | `redis://127.0.0.1:6379/8` |
 
 An unknown scope is refused with the allowed list, rather than issuing a token that cannot be used.
 
@@ -434,7 +438,9 @@ The CLI does not set a permissions record, so an `mcp` token issued here reaches
 
 **Output:**
 
-```
+The token value, on stdout, with no trailing newline:
+
+```text
 f05d76644ea39c4a2ee33e7bffe55808b716a34b51d67b388c7d60498b0f89bc
 ```
 
@@ -463,8 +469,10 @@ emailengine tokens export \
 
 **Output:**
 
-```
-hKJpZNlAMzAxZThjNTFhZjgxM2Q3MzUxNTYzYTFlM2I1NjVkYmEzZWJjMzk4ZjI4OWZjNjgzN...
+The token record, msgpack-encoded and base64url-encoded, on stdout:
+
+```text
+hKJpZNlAMzAxZThjNTFhZjgxM2Q3MzUxNTYzYTFlM2I1NjVkYmEzZWJjMzk4ZjI4OWZjNjgzN
 ```
 
 **Use cases:**
@@ -485,24 +493,24 @@ emailengine tokens import [options]
 
 | Option        | Short | Description                  |
 | ------------- | ----- | ---------------------------- |
-| `--token`     | `-t`  | Exported token data (base64) |
+| `--token`     | `-t`  | Exported token data (base64url) |
 | `--dbs.redis` |       | Redis connection             |
 
 **Example:**
 
 ```bash
 emailengine tokens import \
-  -t "hKJpZNlAMzAxZThjNTFhZjgxM2Q3MzUxNTYzYTFlM2I1NjVkYmEzZWJjMzk4ZjI4OWZjNjgzN..." \
+  -t "hKJpZNlAMzAxZThjNTFhZjgxM2Q3MzUxNTYzYTFlM2I1NjVkYmEzZWJjMzk4ZjI4OWZjNjgzN" \
   --dbs.redis="redis://127.0.0.1:6379/8"
 ```
 
 **Output:**
 
-```
+```text
 Token was imported
 ```
 
-**Important:** Use the exported base64 data, not the original token.
+**Important:** Use the exported data, not the original token. The same exported value is what `EENGINE_PREPARED_TOKEN` accepts.
 
 ---
 
@@ -522,7 +530,7 @@ For the installed key, read [`GET /v1/license`](/docs/api/get-v-1-license), whic
 
 ### Export License
 
-Export license for backup or transfer:
+Export the installed license key for backup or transfer:
 
 ```bash
 emailengine license export --dbs.redis="redis://127.0.0.1:6379/8"
@@ -530,8 +538,10 @@ emailengine license export --dbs.redis="redis://127.0.0.1:6379/8"
 
 **Output:**
 
-```
-eyJsaWNlbnNlIjoiZXlKaGJHY2lPaUpJVXpJMU5pSXNJblI1Y0NJNklrcFhWQ0o5...
+The key as one base64url string on stdout. When no license is installed the command reports `Failed to load license information` on stderr and exits with status 1.
+
+```text
+eyJsaWNlbnNlIjoiZXlKaGJHY2lPaUpJVXpJMU5pSXNJblI1Y0NJNklrcFhWQ0o5
 ```
 
 ### Import License
@@ -546,16 +556,24 @@ emailengine license import [options]
 
 | Option        | Short | Description         |
 | ------------- | ----- | ------------------- |
-| `--license`   | `-l`  | Encoded license key |
+| `--license`   | `-l`  | The license key, either the `BEGIN LICENSE` block or the string from `license export` |
 | `--dbs.redis` |       | Redis connection    |
 
 **Example:**
 
 ```bash
 emailengine license import \
-  -l "eyJsaWNlbnNlIjoiZXlKaGJHY2lPaUpJVXpJMU5pSXNJblI1Y0NJNklrcFhWQ0o5..." \
+  -l "eyJsaWNlbnNlIjoiZXlKaGJHY2lPaUpJVXpJMU5pSXNJblI1Y0NJNklrcFhWQ0o5" \
   --dbs.redis="redis://127.0.0.1:6379/8"
 ```
+
+**Output:**
+
+```text
+License key was imported
+```
+
+A key that fails verification is reported as `Failed to import license information` and the command exits with status 1. Both success and failure messages go to stderr.
 
 **Use cases:**
 
@@ -569,11 +587,11 @@ See [Prepared License](/docs/configuration/prepared-settings/license) for automa
 
 ## Password Management
 
-Manage admin password for web interface.
+Manage the admin password for the web interface.
 
 ### Set Password
 
-Set or reset admin password:
+Set or reset the admin password:
 
 ```bash
 emailengine password [options]
@@ -584,7 +602,7 @@ emailengine password [options]
 | Option        | Short | Description                                 |
 | ------------- | ----- | ------------------------------------------- |
 | `--password`  | `-p`  | Password to set (auto-generated if omitted) |
-| `--hash`      | `-r`  | Return password hash for imports            |
+| `--hash`      | `-r`  | Print the password hash instead of the password |
 | `--dbs.redis` |       | Redis connection                            |
 
 **Examples:**
@@ -608,30 +626,28 @@ emailengine password \
 
 **Auto-generated output:**
 
-```
-a7f3c9e1d2b4f8a6
+```text
+5b0c9b3e5f0d4a7c8e1f2a3b4c5d6e7f
 ```
 
 **Hash output (with `-r`):**
 
-```
-JDJhJDEyJGVYdEJ5Q3VrZXJlTGNXRkJ...
+```text
+JHBia2RmMi1zaGEyNTYkaT02MDAwMDAkMEwwRUVtSkZPNC8vSmtDWlZDTTRTUSRiNCt3QURwWVhOL0ZDUndtMW1QcDdqRkhqR2tjdndxaDBKWFFpS1ZxQTRr
 ```
 
-**Security notes:**
+**Notes:**
 
-- Minimum 8 characters required
+- Minimum 8 characters
 - Auto-generated passwords are 32 hex characters
-- Password hash can be used in prepared settings
-- Resets TOTP 2FA if enabled
+- The hash is a PBKDF2-SHA256 string, base64url-encoded, and is what `EENGINE_PREPARED_PASSWORD` accepts
+- Resetting the password also disables TOTP two-factor authentication and removes every registered passkey
 
 See [Reset Password](/docs/configuration/reset-password) for details.
 
 ---
 
 ## Account Management
-
-Export and manage account data.
 
 ### Export Account
 
@@ -675,7 +691,7 @@ Passing `--service.secret` is what lets the command read the stored values, and 
 
 ## Encryption Management
 
-Manage field-level encryption for account credentials.
+Manage field-level encryption for stored secrets: account credentials, SMTP gateway passwords, OAuth2 application secrets, and the encrypted settings values.
 
 ### Encrypt Command
 
@@ -689,14 +705,16 @@ emailengine encrypt [options]
 
 | Option             | Description                                               |
 | ------------------ | --------------------------------------------------------- |
-| `--service.secret` | New encryption secret                                     |
-| `--decrypt`        | Old secret(s) for decrypting (can be used multiple times) |
+| `--service.secret` | New encryption secret. Leave out to remove encryption     |
+| `--decrypt`        | Old secret for decrypting. Repeat the flag if values were encrypted with different secrets |
 | `--dbs.redis`      | Redis connection (required)                               |
+
+Running it with neither option prints the usage text and changes nothing.
 
 **Use cases:**
 
-1. **Enable encryption** (no encryption → encrypted)
-2. **Disable encryption** (encrypted → plain text)
+1. **Enable encryption** (no encryption to encrypted)
+2. **Disable encryption** (encrypted to plain text)
 3. **Re-encrypt** (change encryption key)
 4. **Migrate from multiple old keys**
 
@@ -738,11 +756,13 @@ emailengine encrypt \
   --dbs.redis="redis://127.0.0.1:6379/8"
 ```
 
+The command reports each updated account, gateway, and OAuth2 app, and a value it cannot decrypt with any of the given secrets as `Check decryption secrets`.
+
 **Important:**
 
-- Backup your data before encryption changes
+- Back up your data before encryption changes
 - All EmailEngine instances must use the same secret
-- Changing keys requires access to old key(s)
+- Changing keys requires access to the old key or keys
 
 See [Field Encryption](/docs/advanced/encryption) for details.
 
@@ -750,31 +770,28 @@ See [Field Encryption](/docs/advanced/encryption) for details.
 
 ## Redis Keyspace Scan
 
-Scan and analyze Redis keyspace usage.
-
 ### Scan Command
 
-Scan Redis and display keyspace statistics:
+Scan Redis and count keys by pattern:
 
 ```bash
 emailengine scan --dbs.redis="redis://127.0.0.1:6379/8"
 ```
 
-**Output:** CSV format with key patterns and statistics.
+**Output:** CSV on stdout with a `KEY,COUNT` header. Account IDs, hashes, numbers, email addresses, and dates in key names are replaced with placeholders so that keys of the same kind are counted together; progress and the final `Checked N keys` line go to stderr.
 
 **Example output:**
 
 ```csv
-Pattern,Count,TotalSize,AvgSize
-ee:account:*,150,45000,300
-ee:tokens,1,2048,2048
-ee:settings,1,512,512
+KEY,COUNT
+"iad:hash(16)",150
+"ia:accounts",1
+"settings",1
+"bull:submit:*",42
 ```
 
 **Use cases:**
 
-- Monitor Redis memory usage
-- Identify large keys
 - Audit keyspace structure
 - Capacity planning
 - Debugging
@@ -782,8 +799,6 @@ ee:settings,1,512,512
 ---
 
 ## Bounce Email Analysis
-
-Analyze bounce emails to understand delivery failures.
 
 ### Check Bounce Command
 
@@ -810,14 +825,21 @@ emailengine check-bounce --file /path/to/bounce.eml
 emailengine check-bounce -f /path/to/bounce.eml
 ```
 
-**Output:** JSON object with bounce analysis including:
+**Output:** a JSON object with the fields the bounce detector could extract:
 
 - `recipient` - The email address that bounced
-- `action` - Type of bounce action (failed, delayed, etc.)
-- `response` - Server response message
-- `headers` - Relevant message headers
-- `category` - ML-based classification of bounce type
-- `recommendedAction` - Suggested action to take
+- `action` - The delivery action from the report, for example `failed` or `delayed`
+- `response.message` - The error message from the remote server
+- `response.status` - Enhanced status code, for example `5.1.1`
+- `response.source` - Where the diagnostic code came from
+- `response.category` - Classifier label, for example `user_unknown` or `mailbox_full`
+- `response.recommendedAction` - One of `remove`, `retry`, `retry_different_ip`, `fix_configuration`, `review`, `remove_content`
+- `response.blocklist` and `response.retryAfter` - Set when the classifier recognized a blocklist listing or a retry hint
+- `mta` - The mail server that reported the failure
+- `queueId` - Queue ID from the sending MTA, when present
+- `messageId` - Message-ID of the original message
+
+Fields that could not be determined are left out. A file that is not a bounce produces `{}`.
 
 **Example output:**
 
@@ -827,26 +849,24 @@ emailengine check-bounce -f /path/to/bounce.eml
   "action": "failed",
   "response": {
     "message": "550 5.1.1 User unknown",
-    "status": "5.1.1"
+    "status": "5.1.1",
+    "source": "smtp",
+    "category": "user_unknown",
+    "recommendedAction": "remove"
   },
-  "headers": {
-    "from": "mailer-daemon@mail.example.com",
-    "subject": "Delivery Status Notification (Failure)"
-  },
-  "category": "hard-bounce",
-  "recommendedAction": "remove"
+  "mta": "mx.example.com",
+  "messageId": "<original@example.com>"
 }
 ```
 
 **Use cases:**
 
 - Debug delivery issues
-- Classify bounce types (hard bounce vs soft bounce)
-- Automate bounce handling workflows
-- Test bounce detection accuracy
+- Classify bounce types
+- Test bounce detection against a saved message
 
 :::tip
-This command uses the same enhanced bounce detection engine as EmailEngine's automatic bounce handling, including support for Exim-style diagnostic messages, legacy bounce formats, and non-standard patterns.
+This command uses the same bounce detection and classification as EmailEngine's automatic bounce handling, so its output matches what a [`messageBounce`](/docs/webhooks/messagebounce) webhook would carry for the same message.
 :::
 
 ---
@@ -855,7 +875,7 @@ This command uses the same enhanced bounce detection engine as EmailEngine's aut
 
 ### Scenario 1: Automated Deployment
 
-Deploy EmailEngine with pre-configured token:
+Deploy EmailEngine with a pre-configured token:
 
 ```bash
 #!/bin/bash
@@ -881,23 +901,25 @@ ssh prod-server "export EENGINE_PREPARED_TOKEN='$PREPARED' && emailengine"
 # .github/workflows/deploy.yml
 steps:
   - name: Create deployment token
+    id: create-token
     run: |
       TOKEN=$(emailengine tokens issue \
         -d "CI deployment token" \
-        -s "*" \
+        -s "api" \
         --dbs.redis="${REDIS_URL}")
-      echo "::set-output name=token::$TOKEN"
+      echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
 
-  - name: Run migrations
+  - name: Check the account list
     env:
       EMAILENGINE_TOKEN: ${{ steps.create-token.outputs.token }}
     run: |
-      # Run deployment scripts using token
-      curl -H "Authorization: Bearer $EMAILENGINE_TOKEN" \
-        http://emailengine.example.com/v1/accounts
+      curl -fsS -H "Authorization: Bearer $EMAILENGINE_TOKEN" \
+        https://emailengine.example.com/v1/accounts
 ```
 
 ### Scenario 3: Backup Automation
+
+The CLI has no command that lists tokens or accounts, so the script needs the token values and account IDs as input. Account IDs can come from `GET /v1/accounts`.
 
 ```bash
 #!/bin/bash
@@ -908,29 +930,33 @@ BACKUP_DIR="/backups/emailengine/$(date +%Y%m%d)"
 
 mkdir -p "$BACKUP_DIR"
 
-# Export all tokens
-emailengine tokens export \
-  --dbs.redis="$REDIS_URL" \
-  > "$BACKUP_DIR/tokens.txt"
-
-# Export license
+# Export the license
 emailengine license export \
   --dbs.redis="$REDIS_URL" \
   > "$BACKUP_DIR/license.txt"
 
-# Export accounts (if you have account list)
-for ACCOUNT in $(cat accounts.txt); do
+# Export tokens, one per line in tokens.txt
+while read -r TOKEN; do
+  emailengine tokens export \
+    -t "$TOKEN" \
+    --dbs.redis="$REDIS_URL" \
+    >> "$BACKUP_DIR/tokens.txt"
+  echo >> "$BACKUP_DIR/tokens.txt"
+done < tokens.txt
+
+# Export accounts, one ID per line in accounts.txt
+while read -r ACCOUNT; do
   emailengine export \
     -a "$ACCOUNT" \
     --dbs.redis="$REDIS_URL" \
     --service.secret="$ENCRYPTION_SECRET" \
     > "$BACKUP_DIR/account-$ACCOUNT.json"
-done
+done < accounts.txt
 ```
 
 ### Scenario 4: Multi-Instance Management
 
-Manage tokens across multiple EmailEngine instances:
+Issue a token on several EmailEngine instances:
 
 ```bash
 #!/bin/bash
@@ -941,13 +967,14 @@ INSTANCES=(
   "redis://instance3.example.com:6379/0"
 )
 
-# Create same token on all instances
+# Each instance gets its own token value
 for REDIS_URL in "${INSTANCES[@]}"; do
   echo "Creating token on $REDIS_URL"
   emailengine tokens issue \
-    -d "Shared monitoring token" \
+    -d "Monitoring token" \
     -s "metrics" \
     --dbs.redis="$REDIS_URL"
+  echo
 done
 ```
 
@@ -974,6 +1001,8 @@ emailengine tokens issue -d "Prod token" --dbs.redis="$REDIS_URL"
 
 ### Pattern 2: Token Rotation Script
 
+The CLI can issue tokens but not delete them, so revoke the old one with [`DELETE /v1/tokens/{token}`](/docs/api/delete-v-1-tokens-token) once the new one is in place.
+
 ```bash
 #!/bin/bash
 # rotate-tokens.sh
@@ -981,20 +1010,18 @@ emailengine tokens issue -d "Prod token" --dbs.redis="$REDIS_URL"
 OLD_TOKEN="$1"
 REDIS_URL="$2"
 
-# Export old token
-EXPORTED=$(emailengine tokens export \
-  -t "$OLD_TOKEN" \
-  --dbs.redis="$REDIS_URL")
-
-# Create new token with same settings
+# Create the replacement
 NEW_TOKEN=$(emailengine tokens issue \
   -d "Rotated token $(date +%Y%m%d)" \
   -s "api" \
   --dbs.redis="$REDIS_URL")
 
-echo "Old token: $OLD_TOKEN"
 echo "New token: $NEW_TOKEN"
-echo "Exported: $EXPORTED"
+
+# Revoke the old one through the API, using the new token
+curl -fsS -X DELETE \
+  -H "Authorization: Bearer $NEW_TOKEN" \
+  "https://emailengine.example.com/v1/tokens/$OLD_TOKEN"
 ```
 
 ### Pattern 3: Health Check
@@ -1005,7 +1032,7 @@ echo "Exported: $EXPORTED"
 #!/bin/bash
 # check-emailengine.sh
 
-if curl -fsS http://localhost:3000/health > /dev/null; then
+if curl -fsS https://emailengine.example.com/health > /dev/null; then
   echo "EmailEngine is healthy"
   exit 0
 else

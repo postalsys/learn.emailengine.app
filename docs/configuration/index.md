@@ -84,7 +84,7 @@ services:
       - EENGINE_REDIS=redis://redis:6379
 ```
 
-`REDIS_URL` is accepted as a fallback when `EENGINE_REDIS` is unset, which is what makes EmailEngine work unchanged on platforms that inject that variable.
+`REDIS_URL` is accepted as a fallback when `EENGINE_REDIS` is unset, and `PORT` as a fallback for `EENGINE_PORT`, which is what makes EmailEngine work unchanged on platforms that inject those variables. Most variables can also be supplied as a file path by appending `_FILE` to the name, the usual way to mount secrets in containers; see [Loading values from files](/docs/configuration/environment-variables#loading-values-from-files) for the few that cannot.
 
 :::tip Interchangeable Configuration
 Environment variables and CLI arguments can be used together. Environment variables take precedence over CLI arguments. See the [mapping table](/docs/configuration/environment-variables#environment-variable-to-cli-mapping) for equivalents.
@@ -150,7 +150,7 @@ emailengine --config=/path/to/config.toml
 **For runtime configuration.** (See: [Settings API](/docs/api/post-v-1-settings))
 
 ```bash
-curl -X POST http://localhost:3000/v1/settings \
+curl -X POST https://emailengine.example.com/v1/settings \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -159,24 +159,29 @@ curl -X POST http://localhost:3000/v1/settings \
   }'
 ```
 
+The response lists the keys that were written, as `{"updated": ["webhooks", "webhookEvents"]}`.
+
 ### Web Interface
 
-**User-friendly configuration management.**
+Runtime settings are also editable in the admin interface:
 
-1. Navigate to `http://localhost:3000`
-2. Log in with admin credentials
-3. Go to Settings
-4. Update configuration
-5. Click "Save"
+1. Open the admin interface at your service URL and log in
+2. Open **Configuration** in the menu and pick the page for the setting (General, Webhooks, and so on)
+3. Change the value and click **Save Changes**
 
 ## Configuration Precedence
 
 When multiple configuration methods are used, they follow this precedence (highest to lowest):
 
-1. **Environment Variables** (highest priority)
-2. **Command-Line Arguments**
-3. **Configuration Files** (TOML)
-4. **Default Values** (lowest priority)
+1. **`EENGINE_*` environment variables** (highest priority)
+2. **Command-line arguments**
+3. **`APPCONF_*` environment variables**, a generic form the configuration loader accepts for any key: `APPCONF_workers_imap=8` is `--workers.imap=8`. Underscores become dots, so a key that itself contains an underscore cannot be set this way
+4. **Configuration file**, given with `--config` or the `NODE_CONFIG_PATH` environment variable
+5. **Default values** (lowest priority, from the bundled `config/default.toml`)
+
+The configuration file and the command line can set any key; environment variables cover the keys listed in the [mapping table](/docs/configuration/environment-variables#environment-variable-to-cli-mapping) and the other `EENGINE_*` variables on the environment variables page. A key with no environment variable, such as `smtp.maxMessageSize`, is set on the command line or in the file.
+
+Runtime settings are not part of this order. They live in Redis and are read from there, so an environment variable that seeds one has an effect only on the first start, before a stored value exists. See [Configuration Options Reference](/docs/reference/configuration-options) for those.
 
 **Example:**
 
@@ -219,8 +224,10 @@ environment:
 :::warning Password Hash Required
 `EENGINE_PREPARED_PASSWORD` requires a **password hash**, not a plain password. Generate it with:
 ```bash
-emailengine password -p "your-password" --hash
+emailengine password -p "your-password" --hash --dbs.redis="redis://127.0.0.1:6379/8"
 ```
+
+The command writes the password to the Redis database it is pointed at as well as printing the hash, so run it against the instance's own database or a scratch one. See [Reset Password](/docs/configuration/reset-password).
 :::
 
 **Keep secrets secure:**
@@ -238,7 +245,7 @@ EENGINE_HOST=0.0.0.0
 EENGINE_PORT=3000
 EENGINE_REDIS=redis://localhost:6379
 # Generate hash: emailengine password -p "your-password" --hash
-EENGINE_PREPARED_PASSWORD=JHBia2RmMi1zaGE1MTIk...
+EENGINE_PREPARED_PASSWORD=JHBia2RmMi1zaGEyNTYkaT02MDAwMDAk...
 ```
 
 ### Development Setup
@@ -306,7 +313,7 @@ metadata:
   name: emailengine-secrets
 type: Opaque
 stringData:
-  EENGINE_PREPARED_PASSWORD: "JHBia2RmMi1zaGE1MTIk..."
+  EENGINE_PREPARED_PASSWORD: "JHBia2RmMi1zaGEyNTYkaT02MDAwMDAk..."
   EENGINE_PREPARED_LICENSE: "your-license-key"
 
 ---
@@ -364,11 +371,10 @@ EENGINE_REDIS=redis://localhost:6379/8
 EENGINE_REDIS_PREFIX=ee-prod
 ```
 
-**Development Mode:**
+**Verbose logging:**
 
 ```bash
 EENGINE_LOG_LEVEL=trace
-NODE_ENV=development
 ```
 
 ## Configuration Categories
@@ -434,9 +440,11 @@ Pre-configured settings, tokens, and licenses.
 **View current settings via API:** (See: [Get Settings](/docs/api/get-v-1-settings))
 
 ```bash
-curl http://localhost:3000/v1/settings \
+curl https://emailengine.example.com/v1/settings \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
+
+The startup configuration (ports, worker counts, Redis URL) is not part of that response. The **Workers** page in the admin menu shows the configured worker counts, and the first log line at startup, `EmailEngine starting up`, records the version and Node.js runtime.
 
 **Check application config:**
 
@@ -486,23 +494,14 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
 
 ## Migration & Updates
 
-### Version Upgrades
-
 When upgrading EmailEngine:
 
-1. **Review changelog** for breaking changes
-2. **Backup Redis** database
-3. **Test in staging** environment
-4. **Update configuration** if needed
-5. **Deploy to production**
+1. **Review the [changelog](https://github.com/postalsys/emailengine/blob/master/CHANGELOG.md)** for upgrade notes
+2. **Back up Redis** (see [Redis](/docs/configuration/redis#backups))
+3. **Test in staging** with the same prepared configuration
+4. **Deploy to production**
 
-### Configuration Migration
-
-**From v1.x to v2.x:**
-
-- Update environment variable names (see changelog)
-- Migrate runtime settings via Settings API
-- Update OAuth2 configuration format
+Runtime settings that a release retires are dropped from `EENGINE_SETTINGS` with an error log line naming the ignored keys (since v2.79.1); the instance still starts.
 
 ## See Also
 
