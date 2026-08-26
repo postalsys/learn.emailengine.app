@@ -71,10 +71,11 @@ curl -X POST "https://emailengine.example.com/v1/account" \
   -H "Content-Type: application/json" \
   -d '{
     "account": "user123",
+    "name": "User 123",
     "email": "user@gmail.com",
     "oauth2": {
       "provider": "AAABlf_0iLgAAAAQ",
-      "refreshToken": "1//0gF...",
+      "refreshToken": "1//0gExampleRefreshTokenFromGoogle",
       "auth": { "user": "user@gmail.com" }
     }
   }'
@@ -116,8 +117,8 @@ claude mcp add --transport http emailengine https://emailengine.example.com/mcp 
 
 - **Self-hosted** - The mail and the credentials stay on your infrastructure
 - **Tunable** - Worker counts, connection limits, and Redis sit under your control
-- **Self-healing** - Dropped connections are re-established and failed jobs retried
-- **Pooled** - Connections are reused across requests rather than opened per call
+- **Self-healing** - Dropped connections are re-established with backoff and failed deliveries retried
+- **Persistent** - One IMAP connection per account stays open, so reads do not pay for a login on every request
 
 ## Quick Start
 
@@ -203,10 +204,7 @@ The REST API is documented in four parts, plus the generated endpoint reference:
 
 ## System Requirements
 
-- **Node.js** 20 or newer, and only when running from source. The packaged builds carry their own runtime
-- **Redis** 6.0 or newer, or a Redis-compatible service such as Upstash
-- **Memory** 2 GB to evaluate, 4 to 8 GB for production
-- **OS** Linux, macOS, or Windows
+Redis, and Node.js 20 or newer when running from source; the packaged builds carry their own runtime. [Installation](/docs/installation#system-requirements) has the memory figures and what drives them.
 
 ## License
 
@@ -248,7 +246,7 @@ EmailEngine is a self-hosted email gateway that provides a unified REST API for 
 
 ### How is EmailEngine different from Nylas?
 
-EmailEngine is self-hosted with flat annual pricing, while Nylas is a managed service charging per connected mailbox. EmailEngine gives you full data control and becomes more cost-effective at 50+ mailboxes. [See detailed comparison →](/docs/comparison/emailengine-vs-nylas)
+EmailEngine is self-hosted with flat annual pricing, while Nylas is a managed service charging per connected mailbox. EmailEngine gives you full data control, and the flat fee comes out ahead once the mailbox count passes a crossover that depends on both vendors' current prices. [See detailed comparison →](/docs/comparison/emailengine-vs-nylas)
 
 ### What email providers does EmailEngine support?
 

@@ -6,15 +6,16 @@ sidebar_position: 1
 
 # Troubleshooting EmailEngine
 
-What to check when EmailEngine, an account, a webhook, or a submission is not behaving.
+What to check when EmailEngine, an account, a webhook, or a submission is not behaving. The API calls below use `https://emailengine.example.com` for the instance and `TOKEN` for an access token; replace both.
 
 :::tip Quick Diagnostic
 
-1. Check `/health` endpoint: `curl http://localhost:3000/health`
-2. Check logs: `journalctl -u emailengine -n 100` or `docker logs emailengine`
-3. Verify Redis: `redis-cli ping`
-4. Test account connection from web interface
-   :::
+1. Check the health endpoint: `curl https://emailengine.example.com/health`
+2. Check the logs: `journalctl -u emailengine -n 100` or `docker logs emailengine`
+3. Check Redis: `redis-cli ping`
+4. Open the account in the admin interface and read its state and last error
+
+:::
 
 ## Quick Diagnostic Checklist
 
@@ -37,7 +38,7 @@ Use this checklist for initial troubleshooting:
 
 #### EmailEngine Won't Start
 
-**Symptom:** Service fails to start or crashes immediately
+**Symptom:** Service fails to start or exits immediately
 
 **Diagnostic steps:**
 
@@ -50,18 +51,22 @@ journalctl -u emailengine -n 50
 # Or for Docker
 docker logs emailengine
 
-# Test manual start
-emailengine --version
-emailengine --help
+# Check the installed version
+emailengine version
 ```
 
 **Common causes and solutions:**
 
 1. **Redis connection failed**
 
-   ```
-   Error: Redis connection to 127.0.0.1:6379 failed - connect ECONNREFUSED
-   ```
+   A Redis problem at startup is printed to the console in a boxed message rather than only logged, and the process exits. The wording names the cause:
+
+   - `Can not connect to the database. Redis might not be running. Are you using correct hostname and port values?` for `ECONNREFUSED`
+   - `Connection to the database timed out. Seems like you are firewalled. Are you using correct hostname and port values?` for `ETIMEDOUT`
+   - `Redis password is required but not provided` or `Redis requires a valid password` when the server answered `NOAUTH`
+   - `Provided Redis password was not accepted` when it answered `WRONGPASS`
+
+   Anything else is logged as `Redis connection error` with the underlying error attached; a hostname that does not resolve shows up there as `ENOTFOUND`.
 
    **Solution:**
 
@@ -73,31 +78,17 @@ emailengine --help
    # Test connection
    redis-cli ping
 
-   # Verify URL
+   # Verify the URL EmailEngine uses
    echo $EENGINE_REDIS
    # Should be: redis://localhost:6379
    ```
 
-2. **Missing required configuration**
+2. **Port already in use**
+
+   The API listener binds to `127.0.0.1:3000` by default, and a bind failure surfaces as an `EADDRINUSE` error naming that address:
 
    ```
-   Error: EENGINE_SECRET is required
-   ```
-
-   **Solution:**
-
-   ```bash
-   # Generate a secret
-   openssl rand -hex 32
-
-   # Add it to your .env file so the same value persists across restarts
-   echo "EENGINE_SECRET=generated-value-here" >> .env
-   ```
-
-3. **Port already in use**
-
-   ```
-   Error: listen EADDRINUSE: address already in use :::3000
+   Error: listen EADDRINUSE: address already in use 127.0.0.1:3000
    ```
 
    **Solution:**
@@ -111,15 +102,13 @@ emailengine --help
    export EENGINE_PORT=3001
    ```
 
-4. **Node.js version incompatible**
+   `EENGINE_HOST` changes the bind address the same way. The built-in SMTP server, which starts on `127.0.0.1:2525`, and the IMAP proxy are separate listeners with their own port settings.
 
-   ```
-   Error: Node.js version must be 20.x or higher
-   ```
+3. **Node.js version too old**
+
+   EmailEngine declares Node.js 20 or newer in its `engines` field. The startup guard is older than that requirement and only refuses to run below Node.js 17, exiting immediately with `Node.js version vX.Y.Z is not supported. Please upgrade to Node.js 17 or later.`. A version between 17 and 19 starts but is untested, so treat a strange failure on one as a version problem.
 
    **Solution:**
-
-   EmailEngine requires Node.js 20 or higher. Update your Node.js installation:
 
    ```bash
    # Check version
@@ -133,23 +122,25 @@ emailengine --help
    nvm install --lts
    ```
 
+   The packaged builds (Docker image, macOS installer, Linux and Windows binaries) bundle their own Node.js runtime.
+
 #### Accounts Stay Disconnected
 
-**Symptom:** Most or all accounts show "disconnected" status and don't recover
+**Symptom:** Most or all accounts show `disconnected` or `connectError` and do not recover
 
 **Diagnostic steps:**
 
 ```bash
-# Check account status via API
-curl http://localhost:3000/v1/accounts \
-  -H "Authorization: Bearer TOKEN" | jq
+# Check every account's state
+curl https://emailengine.example.com/v1/accounts \
+  -H "Authorization: Bearer TOKEN" | jq '.accounts[] | {account, state}'
 
-# Check specific account
-curl http://localhost:3000/v1/account/user@example.com \
-  -H "Authorization: Bearer TOKEN" | jq '.state'
+# Check one account
+curl https://emailengine.example.com/v1/account/user@example.com \
+  -H "Authorization: Bearer TOKEN" | jq '{state, lastError, authFailureDisabledAt}'
 
 # Check logs for connection errors
-journalctl -u emailengine | grep -i "connection\|error"
+journalctl -u emailengine | grep -i "ECONNREFUSED\|ETIMEDOUT\|ENOTFOUND"
 ```
 
 **Common causes:**
@@ -159,31 +150,23 @@ journalctl -u emailengine | grep -i "connection\|error"
    **Check Redis memory:**
 
    ```bash
-   # Via redis-cli
    redis-cli INFO memory | grep used_memory_human
    redis-cli INFO memory | grep maxmemory_human
-
-   # Via monitoring endpoint
-   curl http://localhost:3000/v1/stats \
-     -H "Authorization: Bearer TOKEN" | jq '.redis'
    ```
 
-   **Solution:**
+   **Solution:** with no `maxmemory` set, Redis uses whatever the host has, so the fix is more RAM on the host. With one set, raise it in `/etc/redis/redis.conf` or remove the directive, then restart:
 
    ```bash
-   # Option 1: Add more memory to your server
-   # Redis will automatically use available memory if maxmemory is not set
-
-   # Option 2: If maxmemory is set and you need to increase it
-   # Edit /etc/redis/redis.conf
-   # Increase maxmemory value or remove it entirely
-
-   # Restart Redis
    sudo systemctl restart redis
-
-   # Option 3: Clean up old data (WARNING: deletes data)
-   redis-cli FLUSHDB
    ```
+
+   Check the eviction policy while you are there. EmailEngine needs everything it stores, so an `allkeys-*` policy silently discards live data; `noeviction` is the setting to use:
+
+   ```bash
+   redis-cli CONFIG GET maxmemory-policy
+   ```
+
+   Redis holds every account's credentials and sync state, so `FLUSHDB` is not a cleanup option; it deletes the accounts. Size the instance with [Performance tuning](/docs/advanced/performance-tuning#redis).
 
 2. **Network connectivity issues**
 
@@ -211,43 +194,53 @@ journalctl -u emailengine | grep -i "connection\|error"
 
    For a complete list of domains and ports EmailEngine needs to reach, see [Outbound Connection Whitelist](/docs/deployment/security#outbound-connection-whitelist).
 
-3. **Rate limiting by email provider**
+3. **Rate limiting by the email provider**
 
-   **Solution:**
-
-   - Reduce `maxConnections` per account
-   - Increase connection timeout
-   - Implement exponential backoff
+   Providers limit simultaneous IMAP connections per mailbox and per source address. Spread accounts across instances or egress addresses, and route the affected accounts through a proxy with the account-level `proxy` field:
 
    ```json
    {
-     "maxConnections": 5,
-     "imap": {
-       "connectionTimeout": 120000
-     }
+     "proxy": "socks5://proxy.example.com:1080"
    }
    ```
 
-4. **Too many accounts**
+   See [Proxying connections](/docs/accounts/proxying-connections).
 
-   **Solution:**
+4. **Too many accounts for the worker count**
 
    ```bash
-   # Increase worker threads
+   # Increase IMAP worker threads
    export EENGINE_WORKERS=8
 
    # Check resource usage
-   top -p $(pgrep emailengine)
+   top -p $(pgrep -f emailengine | head -1)
    ```
 
-#### IMAP Connection Timeouts
+#### Account Switched Off After Authentication Failures
 
-**Symptom:** Accounts connect but frequently timeout
+**Symptom:** An account shows `unset` in the API and a **Syncing switched off** badge in the accounts list, and `PUT /v1/account/{account}/reconnect` returns `{"reconnect": false}`
+
+When credentials keep being rejected for longer than `EENGINE_MAX_IMAP_AUTH_FAILURE_TIME` (3 days by default), EmailEngine stops connecting the account rather than retrying a dead password or grant forever.
 
 **Diagnostic:**
 
 ```bash
-# Enable protocol logging
+curl https://emailengine.example.com/v1/account/user@example.com \
+  -H "Authorization: Bearer TOKEN" | jq '{state, authFailureDisabledAt, disabled: .imap.disabled}'
+```
+
+`authFailureDisabledAt` (since v2.79.4) is the time EmailEngine switched the account off. It is `null` when the operator disabled the account deliberately, in which case `imap.disabled` is the setting to clear. To find every parked account at once, the same field is on each entry of `GET /v1/accounts`.
+
+**Solution:** supply working credentials, or resume with the stored ones. Re-authorizing an OAuth2 account, saving new IMAP settings, or **Resume syncing** on the account page all lift it; which forms of `PUT /v1/account/{account}` count has changed between releases. [Accounts switched off after authentication failures](/docs/accounts/managing-accounts#accounts-switched-off-after-authentication-failures) is the canonical description of the mechanism, the recovery paths and the per-version differences, and [`EENGINE_MAX_IMAP_AUTH_FAILURE_TIME`](/docs/configuration/environment-variables#max-imap-auth-failure-time) is the setting behind the window.
+
+#### IMAP Connection Timeouts
+
+**Symptom:** Accounts connect but frequently time out
+
+**Diagnostic:**
+
+```bash
+# Enable protocol logging (writes the raw IMAP conversation, credentials included)
 export EENGINE_LOG_RAW=true
 export EENGINE_LOG_LEVEL=trace
 
@@ -261,11 +254,11 @@ traceroute imap.gmail.com
 
 **Solutions:**
 
-1. **Increase fetch timeout:**
+1. **Raise the IMAP socket timeout:**
 
    ```bash
-   # Increase the fetch timeout (default is 90 seconds)
-   export EENGINE_FETCH_TIMEOUT=180000  # 180 seconds
+   # Milliseconds or a duration string; unset by default
+   export EENGINE_IMAP_SOCKET_TIMEOUT=120s
    ```
 
 2. **Check network quality:**
@@ -278,12 +271,11 @@ traceroute imap.gmail.com
    sudo iptables -L -v
    ```
 
-3. **Use proxy if needed:**
+3. **Route through a proxy if the direct path is the problem:**
+
    ```json
    {
-     "imap": {
-       "proxy": "socks5://proxy.example.com:1080"
-     }
+     "proxy": "socks5://proxy.example.com:1080"
    }
    ```
 
@@ -296,16 +288,16 @@ traceroute imap.gmail.com
 **Diagnostic:**
 
 ```bash
-# Check OAuth2 applications via API
-curl http://localhost:3000/v1/oauth2 \
+# List OAuth2 applications
+curl https://emailengine.example.com/v1/oauth2 \
   -H "Authorization: Bearer TOKEN" | jq '.'
 
-# Check specific OAuth2 app configuration
-curl http://localhost:3000/v1/oauth2/gmail \
+# Check one application (use the app ID from the listing)
+curl https://emailengine.example.com/v1/oauth2/AAABhaBPHscAAAAH \
   -H "Authorization: Bearer TOKEN" | jq '.'
 
-# Test OAuth2 endpoint
-curl https://oauth2.googleapis.com/token
+# Check that the provider's token endpoint is reachable
+curl -I https://oauth2.googleapis.com/token
 ```
 
 **Common causes:**
@@ -317,7 +309,7 @@ curl https://oauth2.googleapis.com/token
    - Verify the client ID and secret in Google Cloud Console (or the Microsoft Entra app for Outlook)
    - Update the values in the EmailEngine OAuth2 application (dashboard under Integrations > OAuth2 Apps, or `PUT /v1/oauth2/{app}`). OAuth2 credentials are stored on the OAuth2 application, not in environment variables
    - Check for trailing spaces when pasting the client ID/secret into the app form
-   - After updating, use the OAuth2 app "Verify setup" action to confirm the credentials work
+   - After updating, use the OAuth2 app's **Verify setup** action (`POST /v1/oauth2/{app}/verify`) to confirm the credentials work
 
 2. **Incorrect redirect URI**
 
@@ -335,16 +327,17 @@ curl https://oauth2.googleapis.com/token
 
 3. **OAuth2 scopes insufficient**
 
-   **Gmail required scopes:**
+   The scopes EmailEngine requests depend on the application's base scopes. The provider console has to allow them:
 
-   - `https://mail.google.com/`
-   - `https://www.googleapis.com/auth/gmail.send`
-   - `https://www.googleapis.com/auth/gmail.modify`
+   **Gmail:**
 
-   **Outlook required scopes:**
+   - IMAP backend: `https://mail.google.com/`
+   - Gmail API backend: `https://www.googleapis.com/auth/gmail.modify`
 
-   - `https://outlook.office.com/IMAP.AccessAsUser.All`
-   - `https://outlook.office.com/SMTP.Send`
+   **Microsoft 365** (the global cloud; the GCC High, DoD, and China clouds use their own hostnames for the same scopes):
+
+   - IMAP backend: `https://outlook.office.com/IMAP.AccessAsUser.All`, `https://outlook.office.com/SMTP.Send`, `offline_access`, `openid`, `profile`
+   - Graph API backend: `https://graph.microsoft.com/Mail.ReadWrite`, `https://graph.microsoft.com/Mail.Send`, `https://graph.microsoft.com/User.Read`, `offline_access`
 
 #### Token Refresh Fails
 
@@ -354,28 +347,28 @@ curl https://oauth2.googleapis.com/token
 
 ```bash
 # Check token expiry
-curl http://localhost:3000/v1/account/user@example.com \
-  -H "Authorization: Bearer TOKEN" | jq '.oauth2'
+curl https://emailengine.example.com/v1/account/user@example.com \
+  -H "Authorization: Bearer TOKEN" | jq '.oauth2 | {expires, scope, provider}'
 
 # Check logs for refresh errors
-journalctl -u emailengine | grep -i "refresh\|token"
+journalctl -u emailengine | grep -i "refresh\|invalid_grant"
 ```
 
 **Solutions:**
 
-1. **Refresh token expired:**
+1. **Refresh token expired or revoked:**
 
-   - Re-authenticate account
-   - Check OAuth2 app approval screen settings
+   - Re-authorize the account
+   - An account that has been failing for three days is switched off; see [Account switched off after authentication failures](#account-switched-off-after-authentication-failures)
 
 2. **OAuth2 app disabled:**
 
    - Verify app status in provider console
    - Check for security alerts
 
-3. **Encryption key changed:**
-   - Tokens encrypted with old key can't be decrypted
-   - Re-authenticate all accounts
+3. **Encryption secret changed:**
+   - Tokens encrypted with the previous `EENGINE_SECRET` cannot be decrypted with the new one
+   - Restore the previous secret, or re-encrypt the data with `emailengine encrypt` as described in [Secret encryption](/docs/advanced/encryption#changing-encryption-secret), before re-authorizing every account
 
 ### Webhook Delivery Issues
 
@@ -387,11 +380,11 @@ journalctl -u emailengine | grep -i "refresh\|token"
 
 ```bash
 # Check webhook configuration
-curl http://localhost:3000/v1/settings \
-  -H "Authorization: Bearer TOKEN" | jq '.webhooksUrl'
+curl https://emailengine.example.com/v1/settings?webhooks=true\&webhooksEnabled=true\&webhookEvents=true \
+  -H "Authorization: Bearer TOKEN"
 
 # Check webhook queue
-curl http://localhost:3000/v1/settings/queue/notify \
+curl https://emailengine.example.com/v1/settings/queue/notify \
   -H "Authorization: Bearer TOKEN"
 
 # Test webhook endpoint
@@ -405,15 +398,17 @@ journalctl -u emailengine | grep -i webhook
 
 **Common causes:**
 
-1. **Webhook URL not set**
+1. **Webhook URL not set, or no events selected**
+
+   `webhookEvents` is an allowlist with no default: with nothing selected, nothing is delivered. `["*"]` selects every event.
 
    **Solution:**
 
    ```bash
-   curl -X POST http://localhost:3000/v1/settings \
+   curl -X POST https://emailengine.example.com/v1/settings \
      -H "Authorization: Bearer TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"webhooksUrl": "https://your-app.com/webhooks"}'
+     -d '{"webhooks": "https://your-app.com/webhooks", "webhooksEnabled": true, "webhookEvents": ["*"]}'
    ```
 
 2. **Webhook endpoint unreachable**
@@ -440,16 +435,15 @@ journalctl -u emailengine | grep -i webhook
 
    The retry policy itself is fixed: 10 attempts with exponential backoff. It is not configurable.
 
-4. **SSL certificate issues**
+4. **TLS certificate issues**
 
-   **Check certificate:**
+   The webhook destination's certificate has to validate against the system's trust store. Check the chain the endpoint serves:
 
    ```bash
    openssl s_client -connect your-app.com:443 -servername your-app.com
-
-   # If self-signed, disable verification (not recommended)
-   # Set NODE_TLS_REJECT_UNAUTHORIZED=0
    ```
+
+   A self-signed or incomplete chain is fixed at the endpoint; there is no setting that disables verification for webhooks.
 
 5. **Destination refused by EmailEngine**
 
@@ -465,7 +459,7 @@ journalctl -u emailengine | grep -i webhook
 
 ```bash
 # Check queue status
-curl http://localhost:3000/v1/settings/queue/notify \
+curl https://emailengine.example.com/v1/settings/queue/notify \
   -H "Authorization: Bearer TOKEN" | jq
 
 # Check backlog
@@ -475,33 +469,42 @@ redis-cli LLEN "bull:notify:wait"
 journalctl -u emailengine -f | grep webhook
 ```
 
+A growing `waiting` count means deliveries are being produced faster than they complete, so the fix is either fewer or cheaper deliveries, or more of them at once.
+
 **Solutions:**
 
-1. **Pause and resume queue to clear backlog:**
+1. **Deliver in parallel:**
+
+   One webhook worker processes one delivery at a time by default. Total concurrency is workers times per-worker concurrency:
 
    ```bash
-   # Pause the queue
-   curl -X PUT http://localhost:3000/v1/settings/queue/notify \
-     -H "Authorization: Bearer TOKEN" \
-     -H "Content-Type: application/json" \
-     -d '{"paused": true}'
+   # 4 webhook worker threads
+   EENGINE_WORKERS_WEBHOOKS=4
 
-   # Resume the queue
-   curl -X PUT http://localhost:3000/v1/settings/queue/notify \
+   # each handling 2 deliveries at a time, so 8 in flight
+   EENGINE_NOTIFY_QC=2
+   ```
+
+   Raise this only as far as the receiving endpoint can absorb; a slow receiver saturates at its own rate whatever EmailEngine does. [Webhook configuration](/docs/advanced/performance-tuning#webhook-configuration) has the sizing guidance.
+
+2. **Reduce the webhook payload:**
+
+   - Turn off `notifyText` and `notifyAttachments` in the webhook settings
+   - Fetch content on demand through the API instead
+
+3. **Deliver fewer events:**
+
+   - Narrow `webhookEvents` from `["*"]` to the events the integration acts on
+   - Check Redis latency, which is added to every queue operation
+
+   Confirm the queue is not paused at all. `GET /v1/settings/queue/notify` reports `paused`; resume it with:
+
+   ```bash
+   curl -X PUT https://emailengine.example.com/v1/settings/queue/notify \
      -H "Authorization: Bearer TOKEN" \
      -H "Content-Type: application/json" \
      -d '{"paused": false}'
    ```
-
-2. **Reduce webhook payload:**
-
-   - Disable including full message content
-   - Fetch content on-demand via API
-
-3. **Scale vertically:**
-   - Increase server CPU and RAM
-   - Optimize worker configuration
-   - Upgrade Redis memory
 
 ### Performance Issues
 
@@ -514,49 +517,32 @@ journalctl -u emailengine -f | grep webhook
 ```bash
 # Check memory usage
 ps aux | grep emailengine
-top -p $(pgrep emailengine)
 
-# Check Node.js heap via Prometheus metrics endpoint
-curl http://localhost:3000/metrics \
-  -H "Authorization: Bearer TOKEN" | grep heap
+# Check the Node.js heap through the Prometheus metrics endpoint.
+# The token needs the "metrics" scope, which only the admin interface and
+# `emailengine tokens issue` can grant.
+curl https://emailengine.example.com/metrics \
+  -H "Authorization: Bearer METRICS_TOKEN" | grep heap
 
 # Check account count
-curl http://localhost:3000/v1/accounts \
-  -H "Authorization: Bearer TOKEN" | jq 'length'
+curl https://emailengine.example.com/v1/accounts \
+  -H "Authorization: Bearer TOKEN" | jq '.total'
 ```
 
 **Solutions:**
 
 1. **Too many accounts:**
 
-   - **Rule of thumb:** 1-2 MB per account
-   - 100 accounts ≈ 200 MB
-   - 1000 accounts ≈ 2 GB
+   Budget 1-2 MiB of Redis memory per account and provision twice that, more for very large mailboxes; see [Redis sizing](/docs/advanced/performance-tuning#redis). Add instances or RAM when the budget is exceeded.
 
-   **Solution:**
-
-   - Add more instances
-   - Increase system RAM
-
-2. **Large mailboxes:**
+2. **Memory growth over time:**
 
    ```bash
-   # Reduce chunk size
-   export EENGINE_CHUNK_SIZE=2500
-
-   # Limit messages synced
-   # (via API per-account setting)
-   ```
-
-3. **Memory leak:**
-
-   ```bash
-   # Update to latest version
-   npm update -g emailengine
-
-   # Restart service
+   # Update to the latest release, then restart
    sudo systemctl restart emailengine
    ```
+
+   [Installation](/docs/installation) has the update procedure for each install method. Report growth that persists on the current release as a [GitHub issue](https://github.com/postalsys/emailengine/issues) with the `/metrics` output.
 
 #### Slow Performance
 
@@ -576,7 +562,7 @@ top
 # (enable EENGINE_LOG_RAW=true and check logs)
 
 # Test API performance
-time curl http://localhost:3000/v1/accounts \
+time curl https://emailengine.example.com/v1/accounts \
   -H "Authorization: Bearer TOKEN"
 ```
 
@@ -584,35 +570,32 @@ time curl http://localhost:3000/v1/accounts \
 
 1. **Redis latency high:**
 
+   Redis is EmailEngine's only data store, so its round-trip time is added to nearly every operation. A cross-region Redis is not a workable setup; move it onto the same host or the same LAN. Check what the current one costs:
+
    ```bash
-   # Check Redis is on same machine/network
-   ping <redis-host>
-
-   # Move Redis to same datacenter
-   # Use local Redis (not remote)
-
-   # Optimize Redis
-   # Edit /etc/redis/redis.conf
-   tcp-backlog 511
-   timeout 0
-   tcp-keepalive 300
+   # Average round-trip in milliseconds, sampled continuously
+   redis-cli --latency
    ```
+
+   Leave `tcp-keepalive` at the Redis default. Setting it to `0` leaves half-open connections behind after a network hiccup, which shows up as stalled accounts rather than as an error.
 
 2. **Too few workers:**
 
    ```bash
-   # Increase workers
-   export EENGINE_WORKERS=$(nproc)  # Match CPU cores
+   # One IMAP worker thread per CPU core
+   export EENGINE_WORKERS=cpus
    ```
 
-3. **Database performance:**
+   [Performance tuning](/docs/advanced/performance-tuning) covers how many accounts a thread can carry.
+
+3. **Slow Redis commands:**
 
    ```bash
-   # Check Redis slow queries
-   redis-cli SLOWLOG GET 10
-
-   # Optimize Redis
+   # Log every command that takes longer than 10 ms
    redis-cli CONFIG SET slowlog-log-slower-than 10000
+
+   # Read the ten most recent entries back
+   redis-cli SLOWLOG GET 10
    ```
 
 ### Email Sync Issues
@@ -625,11 +608,11 @@ time curl http://localhost:3000/v1/accounts \
 
 ```bash
 # Check account state
-curl http://localhost:3000/v1/account/user@example.com \
+curl https://emailengine.example.com/v1/account/user@example.com \
   -H "Authorization: Bearer TOKEN" | jq '.state'
 
-# Force sync
-curl -X PUT http://localhost:3000/v1/account/user@example.com/sync \
+# Request a sync
+curl -X PUT https://emailengine.example.com/v1/account/user@example.com/sync \
   -H "Authorization: Bearer TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"sync": true}'
@@ -640,42 +623,37 @@ journalctl -u emailengine | grep -i "sync\|idle"
 
 **Solutions:**
 
-1. **IMAP IDLE not working:**
+1. **IMAP IDLE not available:**
 
-   - Check if server supports IDLE
-   - Enable regular polling
+   Without IDLE, changes are picked up on the periodic full resync, every `imap.resyncDelay` seconds (900 by default). Lower it on the account if the delay is too long.
 
-2. **Sync paused:**
+2. **Account not in a syncing state:**
 
-   ```bash
-   # Resume sync
-   curl -X PUT http://localhost:3000/v1/account/user@example.com/sync \
-     -H "Authorization: Bearer TOKEN" \
-     -H "Content-Type: application/json" \
-     -d '{"sync": true}'
-   ```
+   `connected` and `syncing` are the two healthy states. `paused` and `unset` mean no connection is maintained at all, and `authenticationError` means the credentials were rejected and have to be replaced. `disconnected` and `connectError` are retried with backoff, so those recover on their own if the underlying problem clears. [Account states](/docs/accounts/managing-accounts#account-states) lists what each one needs.
 
-3. **Mailbox not monitored:**
-   - Check which folders are synced
-   - Add folder to sync list
+3. **Folder not monitored:**
+   - Check the account's `path` setting, which lists the folders EmailEngine syncs; `"*"` means all of them
+   - Add the folder, or set `path` to `"*"`
 
 #### Deleted Messages Re-appear
 
-**Symptom:** Deleted emails come back after sync
+**Symptom:** Deleted emails come back after sync, or turn up under a different message ID
 
-**Cause:** IMAP sync issue or message moved to Trash
+**Cause:** `DELETE /v1/account/{account}/message/{message}` moves the message to Trash rather than erasing it, and deletes it only when it is already in Trash. A message that reappears is normally the copy now sitting in Trash, which has its own ID because the ID encodes the folder and the IMAP UID.
 
-**Solution:**
+**Solution:** check Trash first, then delete permanently if that is what you meant:
 
 ```bash
-# Permanently delete a single message (expunge)
-curl -X DELETE "http://localhost:3000/v1/account/user123/message/AAAAAQAACnA?force=true" \
-  -H "Authorization: Bearer TOKEN"
+# Find the Trash folder
+curl https://emailengine.example.com/v1/account/user123/mailboxes \
+  -H "Authorization: Bearer TOKEN" | jq '.mailboxes[] | select(.specialUse=="\\Trash")'
 
-# Check Trash folder
-curl http://localhost:3000/v1/account/user123/mailboxes \
-  -H "Authorization: Bearer TOKEN" | jq '.[] | select(.specialUse=="\\Trash")'
+# Delete outright, wherever the message currently is (IMAP accounts only)
+curl -X DELETE "https://emailengine.example.com/v1/account/user123/message/AAAAAQAACnA?force=true" \
+  -H "Authorization: Bearer TOKEN"
 ```
+
+`force` has no effect on a Gmail API account: those always move the message to Trash.
 
 ## Step-by-Step Diagnostic Procedures
 
@@ -695,7 +673,7 @@ redis-cli ping
 
 # 3. Check health endpoint
 echo "3. Health endpoint:"
-curl -s http://localhost:3000/health | jq
+curl -s https://emailengine.example.com/health | jq
 
 # 4. Check memory
 echo "4. Redis memory:"
@@ -703,13 +681,13 @@ redis-cli INFO memory | grep -E "used_memory_human|maxmemory_human"
 
 # 5. Check accounts
 echo "5. Account status:"
-curl -s http://localhost:3000/v1/accounts \
+curl -s https://emailengine.example.com/v1/accounts \
   -H "Authorization: Bearer TOKEN" | \
-  jq '[.[] | {account: .account, state: .state}]'
+  jq '[.accounts[] | {account: .account, state: .state}]'
 
 # 6. Check logs for errors
 echo "6. Recent errors:"
-journalctl -u emailengine --since "5 minutes ago" | grep -i error
+journalctl -u emailengine --since "5 minutes ago" | grep '"level":50'
 ```
 
 ### Procedure 2: Network Connectivity Test
@@ -746,22 +724,26 @@ echo "=== Account Connection Test ==="
 
 # 1. Get account info
 echo "1. Account info:"
-curl -s "http://localhost:3000/v1/account/$ACCOUNT" \
-  -H "Authorization: Bearer $TOKEN" | jq '.state, .syncError'
+curl -s "https://emailengine.example.com/v1/account/$ACCOUNT" \
+  -H "Authorization: Bearer $TOKEN" | jq '{state, lastError, authFailureDisabledAt}'
 
-# 2. Test reconnection
+# 2. Request a reconnect (answers {"reconnect": false} for an account that was switched off)
 echo "2. Testing reconnection:"
-curl -X PUT "http://localhost:3000/v1/account/$ACCOUNT/reconnect" \
-  -H "Authorization: Bearer $TOKEN"
+curl -X PUT "https://emailengine.example.com/v1/account/$ACCOUNT/reconnect" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"reconnect": true}'
 
 # 3. Wait and check
 sleep 10
 echo "3. New state:"
-curl -s "http://localhost:3000/v1/account/$ACCOUNT" \
+curl -s "https://emailengine.example.com/v1/account/$ACCOUNT" \
   -H "Authorization: Bearer $TOKEN" | jq '.state'
 ```
 
 ## Log Analysis Tips
+
+EmailEngine writes one JSON object per line. `level` is numeric: 30 is info, 40 warning, 50 error, 60 fatal.
 
 ### Useful Log Commands
 
@@ -773,7 +755,7 @@ journalctl -u emailengine -f
 journalctl -u emailengine -n 100
 
 # Errors only
-journalctl -u emailengine -p err
+journalctl -u emailengine | grep '"level":50'
 
 # Specific time range
 journalctl -u emailengine --since "1 hour ago"
@@ -781,37 +763,31 @@ journalctl -u emailengine --since "1 hour ago"
 # Export logs
 journalctl -u emailengine --since "today" > emailengine-$(date +%Y%m%d).log
 
-# Search for pattern
-journalctl -u emailengine | grep -i "connection\|error\|timeout"
+# Entries for one account
+journalctl -u emailengine | grep '"account":"user@example.com"'
 
 # Count errors
-journalctl -u emailengine --since "1 hour ago" | grep -c ERROR
+journalctl -u emailengine --since "1 hour ago" | grep -c '"level":50'
 ```
 
 ### Log Patterns to Look For
 
-**Connection issues:**
+**Connection issues** (the `code` of the attached error):
 
 ```
-grep -i "econnrefused\|etimedout\|enotfound" emailengine.log
+grep -i "ECONNREFUSED\|ETIMEDOUT\|ENOTFOUND\|ECONNRESET" emailengine.log
 ```
 
-**Authentication failures:**
+**Authentication failures** (the IMAP client logs one line per rejected login, and the attached error carries the flag):
 
 ```
-grep -i "authentication failed\|invalid credentials" emailengine.log
+grep '"msg":"Failed to authenticate"\|"authenticationFailed":true' emailengine.log
 ```
 
-**Rate limiting:**
+**Webhook failures**:
 
 ```
-grep -i "rate limit\|too many requests\|throttle" emailengine.log
-```
-
-**Memory issues:**
-
-```
-grep -i "out of memory\|heap\|fatal" emailengine.log
+grep '"msg":"Failed posting webhook"' emailengine.log
 ```
 
 ## Getting Help
@@ -823,7 +799,7 @@ When requesting support, provide:
 1. **EmailEngine version:**
 
    ```bash
-   emailengine --version
+   emailengine version
    ```
 
 2. **System information:**
@@ -836,10 +812,7 @@ When requesting support, provide:
 
 3. **Configuration:**
 
-   ```bash
-   # Sanitize sensitive data before sharing
-   cat /etc/emailengine.toml
-   ```
+   The environment variables or the TOML file the service runs with, for example `/etc/emailengine/config.toml` on a [SystemD install](/docs/deployment/systemd). Remove `EENGINE_SECRET`, passwords, and license keys before sharing.
 
 4. **Logs:**
 
@@ -849,17 +822,16 @@ When requesting support, provide:
 
 5. **Account state:**
    ```bash
-   curl http://localhost:3000/v1/accounts \
+   curl https://emailengine.example.com/v1/accounts \
      -H "Authorization: Bearer TOKEN" | \
-     jq '[.[] | {account, state, syncError}]'
+     jq '[.accounts[] | {account, state, lastError}]'
    ```
 
 ### Support Channels
 
-- **Documentation:** [https://docs.emailengine.app](https://docs.emailengine.app)
-- **GitHub Issues:** [https://github.com/postalsys/emailengine/issues](https://github.com/postalsys/emailengine/issues)
-- **Email Support:** [support@postalsys.com](mailto:support@postalsys.com)
-- **Community Forum:** [https://emailengine.app/support](/docs/licensing)
+- **Documentation:** [learn.emailengine.app](https://learn.emailengine.app)
+- **GitHub Issues:** [github.com/postalsys/emailengine/issues](https://github.com/postalsys/emailengine/issues)
+- **Email support:** [support@emailengine.app](mailto:support@emailengine.app), see [Support](/docs/support)
 
 ## See Also
 

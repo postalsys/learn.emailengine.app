@@ -18,7 +18,7 @@ EmailEngine integrates with OpenAI's API to provide AI-powered email processing 
 - **Action Items**: Extract tasks and due dates
 - **Fraud Detection**: Assess risk of scam or phishing emails
 - **Reply Detection**: Identify if sender expects a response
-- **Conversational Search**: Ask questions about your email history
+- **Conversational Search**: Ask questions about your email history (Document Store feature, being removed)
 
 :::tip Looking for agent access instead?
 This page is about EmailEngine calling a model to process incoming mail. If you want the opposite - an AI assistant calling EmailEngine to search, read and send mail on demand - see [MCP for AI Agents](/docs/mcp).
@@ -26,37 +26,39 @@ This page is about EmailEngine calling a model to process incoming mail. If you 
 
 ### OpenAI API Access
 
-- **Paid Account**: Recommended for production (free accounts have strict rate limits)
+- An OpenAI API key, or a key for an OpenAI-compatible endpoint. The **API Endpoint** field (`openAiAPIUrl`) points EmailEngine at Azure OpenAI or a compatible gateway instead of `https://api.openai.com`
 
 ## Feature 1: Email Processing and Summarization
 
 ### Enable AI Processing
 
-1. Navigate to **Configuration** → **AI Processing** in EmailEngine
-2. Enter your OpenAI API key
-3. Check "Enable AI Email Processing"
-4. Select a model from the dropdown
-5. Save configuration
+1. Navigate to **Configuration** > **AI Processing** in EmailEngine
+2. Enter your OpenAI API key in the **API Key** field
+3. Check **Enable AI Email Processing**
+4. Select a model from the **AI Model** dropdown
+5. Click **Save Changes**
+
+The summaries are generated from the message text, and EmailEngine only fetches text for a new message when **Include email text and HTML** is enabled under **Configuration** > **Webhooks**. Turn that on as well, or every message is skipped for having no text.
 
 ![AI Processing configuration page](/img/screenshots/ai-config.png)
 _The AI Configuration section with the enable checkbox, API key field and model dropdown_
 
 ### Model Selection
 
-The dropdown is populated from your own API key: **Refresh Models** calls OpenAI's model listing endpoint and stores what came back, so the choices are whatever that key can actually use. Until the first refresh, the dropdown offers a small built-in list, currently GPT-5 Mini, GPT-5, and GPT-5 Nano.
+The dropdown is populated from your own API key: **Refresh Models** calls the model listing endpoint of the configured API and stores what came back, so the choices are whatever that key can use. Until the first refresh, the dropdown offers a small built-in list; in EmailEngine 2.79.4 (August 2026) that list is GPT-5 Mini (`gpt-5-mini`), GPT-5, and GPT-5 Nano, and the first entry is the one the form starts on.
 
-The default is `gpt-5-mini`, and it is the right starting point for this workload: email processing is short-context classification and summarization rather than deep reasoning, so a larger model mostly buys latency and cost. Move up only if the summaries or the extracted fields are visibly worse than you need, and compare on your own mail rather than on the model's benchmark reputation.
+`openAiModel` has no built-in default of its own. The admin form always submits the selected entry, but a configuration written through the Settings API must set `openAiModel` explicitly, or summary requests fail. Email processing is short-context classification and summarization rather than deep reasoning, so the smallest model in the list is the reasonable starting point; move up only if the summaries or the extracted fields are visibly worse than you need, and compare on your own mail.
 
-Because the list comes from OpenAI, a model named here can be retired and a better one can appear without this page changing. Check what the dropdown offers rather than planning around a specific name.
+Because the list comes from the API, a model named here can be retired and a new one can appear without this page changing. Check what the dropdown offers rather than planning around a specific name.
 
 ### How It Works
 
-When AI processing is enabled, EmailEngine automatically processes every new email arriving in the INBOX folder:
+When AI processing is enabled, EmailEngine processes every new message whose folder is the account's Inbox (`messageSpecialUse` of `\Inbox`) and that is not older than the account's `notifyFrom` date, and nothing from other folders:
 
 1. Email arrives in monitored account
-2. EmailEngine extracts text content
-3. Content sent to OpenAI API for analysis
-4. Analysis results added to webhook payload
+2. EmailEngine runs the [pre-processing filter](#ai-pre-processing-filter-openaipreprocessingfn), if one is configured
+3. The headers, sender, subject, attachment list, and text are sent to the API for analysis, with a two-minute timeout per message
+4. Analysis results are added to the `messageNew` webhook payload
 
 ### Webhook Enhancement
 
@@ -191,16 +193,6 @@ Risk score from 1 to 5 (5 being highest risk) with explanation:
 
 **Note**: AI is good at detecting scams but less effective with spam.
 
-#### 7. Reply/Forward Text Extraction
-
-For reply emails, removes threaded content leaving only new text:
-
-```json
-{
-  "replyText": "Thanks for the update! I'll review the document and get back to you by Friday."
-}
-```
-
 ### Metadata Storage
 
 #### Token Usage
@@ -234,7 +226,7 @@ The `id` field contains the OpenAI request ID for troubleshooting:
 
 Customize the AI analysis by modifying the system prompt:
 
-1. Go to **Configuration** → **AI Processing**
+1. Go to **Configuration** > **AI Processing**
 2. Scroll to **AI Instructions** section
 3. Edit the AI Prompt
 4. Add custom instructions
@@ -290,13 +282,13 @@ Everything on the **Configuration > AI Processing** page is also settable throug
 | `openAiAPIKey` | API key. Required before any AI processing runs |
 | `generateEmailSummary` | Turn on summaries, sentiment, events, actions, and risk assessment |
 | `openAiGenerateEmbeddings` | Turn on embedding generation |
-| `openAiModel` | Model name, for example `gpt-5-mini` |
+| `openAiModel` | Model name, for example `gpt-5-mini`. No default |
 | `openAiPrompt` | The system prompt, as edited above |
-| `openAiAPIUrl` | Base URL of the API. Point this at Azure OpenAI or an OpenAI-compatible gateway |
-| `openAiTemperature` | Sampling temperature |
-| `openAiTopP` | Nucleus sampling cutoff |
-| `openAiMaxTokens` | Cap on tokens per request |
-| `openAiPreProcessingFn` | JavaScript filter deciding which messages are worth processing, see [below](#ai-pre-processing-filter-openaipreprocessingfn) |
+| `openAiAPIUrl` | Base URL of the API. Point this at Azure OpenAI (`https://<resource>.openai.azure.com/openai/v1`) or an OpenAI-compatible gateway |
+| `openAiTemperature` | Sampling temperature, 0 to 2 |
+| `openAiTopP` | Nucleus sampling cutoff, 0 to 1 |
+| `openAiMaxTokens` | Cap on tokens per request. When unset, the cap follows the model name: 3000 for a name starting with `gpt-3`, 6500 for `gpt-4`, and 18000 for `gpt-5` and every other name |
+| `openAiPreProcessingFn` | JavaScript filter deciding which messages are worth processing, see [below](#ai-pre-processing-filter-openaipreprocessingfn). In 2.79.4 a stored filter is also what switches processing on: with the setting empty, no message is processed. The admin form stores `return true;` when the editor is left at its default, so a configuration written through the Settings API has to set it too |
 
 Lowering `openAiMaxTokens` truncates long messages before they reach the model, which is the most direct lever on cost. `openAiPreProcessingFn` is the more selective one, since a message it rejects costs nothing at all.
 
@@ -304,16 +296,16 @@ Lowering `openAiMaxTokens` truncates long messages before they reach the model, 
 
 EmailEngine skips AI processing if:
 
-- OpenAI API request fails
-- Rate limit exceeded
-- Timeout occurs
-- Email has no text content
+- The API request fails or is rate limited
+- The request takes longer than two minutes
+- The message has no text content
+- The pre-processing filter returned a falsy value or threw, or no filter is stored at all (see the settings table above)
 
-In these cases, the `summary` section is omitted from webhook payload. Check EmailEngine logs for details.
+In these cases the `summary` and `riskAssessment` sections are omitted from the webhook payload, which is otherwise delivered as usual. A failed API call is logged as `Failed to fetch summary from OpenAI` with the error, and the most recent one is kept for the AI Processing page to display.
 
 ### Webhook Content Configuration
 
-If webhooks are configured not to include email content, AI summarization may fail (nothing to summarize). Ensure webhook configuration includes at least text content.
+Text is only fetched for a new message when **Include email text and HTML** (`notifyText`) is enabled under **Configuration** > **Webhooks**, and it is truncated to the **Content Size Limit** (`notifyTextSize`) set there. With text disabled there is nothing to summarize and every message is skipped.
 
 ## Use Cases and Applications
 
@@ -362,7 +354,6 @@ Which field drives which workflow:
 | `summary.actions[]` | Creating tasks with a `description` and `dueDate` |
 | `summary.events[]` | Creating calendar entries from `startTime` and `endTime` |
 | `riskAssessment.risk` | Fraud and phishing quarantine, 1 to 5 |
-| `replyText` | Storing just the new text of a reply, without the quoted thread |
 
 The model does not always populate every field. Treat each one as optional and fall back to your existing routing when it is missing, since an OpenAI outage or a rate limit leaves the message delivered but unenriched. See [Handling Failures](#handling-failures).
 
@@ -407,22 +398,15 @@ curl -X POST "https://emailengine.example.com/v1/chat/user123" \
 }
 ```
 
-```bash
-curl -X POST "https://emailengine.example.com/v1/chat/user123" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{ "question": "Did I receive the invoice from Acme Corp?" }'
-```
-
 The response carries the generated `answer` along with the `messages` it was drawn from, so you can link the reader back to the source email rather than asking them to trust the summary.
 
 ## Privacy and Compliance
 
 ### Data Processing
 
-**Important**: When OpenAI integration is enabled, EmailEngine uploads email text content to OpenAI servers.
+**Important**: When AI processing is enabled, EmailEngine sends the headers, sender, subject, attachment list, and text of every processed message to the configured API endpoint, which is OpenAI unless `openAiAPIUrl` points elsewhere.
 
-**OpenAI Policy**: OpenAI does not use API data for training models.
+**Provider Terms**: What the provider does with that data is governed by its own API terms, not by EmailEngine. Read the current data-usage terms of the provider you configure before enabling the feature.
 
 **Your Responsibility**: Verify this behavior complies with:
 
@@ -442,20 +426,25 @@ Recommendations:
 
 ### Per-Account Control
 
-You can enable/disable AI processing per account if needed (would require custom implementation).
+There is no per-account switch, but the pre-processing filter below receives the account ID, so a filter that returns `true` only for listed accounts limits processing to those:
+
+```javascript
+const optedIn = ["user-1", "user-2"];
+return optedIn.includes(payload.account);
+```
 
 ## AI Pre-Processing Filter (openAiPreProcessingFn)
 
-By default, AI processing is applied to all incoming emails in the INBOX folder. The `openAiPreProcessingFn` setting allows you to define a JavaScript function that filters which emails get processed by the AI, giving you fine-grained control over AI usage and costs.
+With the filter at its default (`return true;`, which is what the admin form stores when the editor is left alone), AI processing is applied to every incoming email in the Inbox. The `openAiPreProcessingFn` setting holds a JavaScript function that decides which of those emails get processed, which is the most direct control over AI usage and costs. In 2.79.4 the setting has to be present for any processing to happen: an empty filter switches processing off rather than passing everything.
 
 ### How It Works
 
 When configured, the pre-processing filter runs before any AI processing occurs:
 
-1. New email arrives in monitored account
+1. New email arrives in the account's Inbox
 2. Pre-processing filter function evaluates the email
-3. If function returns `true`, email is sent to OpenAI for analysis
-4. If function returns any other value, AI processing is skipped
+3. If the function returns a truthy value, the email is sent to the API for analysis
+4. If it returns a falsy value or throws, AI processing is skipped
 
 ### Configuration
 
@@ -466,25 +455,25 @@ curl -X POST "https://emailengine.example.com/v1/settings" \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "openAiPreProcessingFn": "// Only process emails from specific domains\nconst senderDomain = payload.data.from?.address?.split(\"@\")[1];\nif ([\"important-client.com\", \"vip-customer.org\"].includes(senderDomain)) {\n  return true;\n}\nreturn false;"
+    "openAiPreProcessingFn": "// Only process emails from specific domains\nconst senderDomain = payload.from?.address?.split(\"@\")[1];\nif ([\"important-client.com\", \"vip-customer.org\"].includes(senderDomain)) {\n  return true;\n}\nreturn false;"
   }'
 ```
 
 ### Filter Function Structure
 
-The filter function receives the webhook payload and must return `true` to allow AI processing:
+The filter function receives the message itself as `payload`, not a webhook envelope: the message fields sit at the top level next to `payload.account`, so it is `payload.from` and `payload.subject` here, where a [webhook filter](/docs/advanced/pre-processing) would read `payload.data.from`. Return a truthy value to allow AI processing:
 
 ```javascript
-// payload contains the full messageNew webhook data
+// payload is the new message, with the account ID added
 // Return true to process with AI, false to skip
 
 // Skip automated emails
-if (payload.data.headers && payload.data.headers["auto-submitted"]) {
+if (payload.headers && payload.headers["auto-submitted"]) {
   return false;
 }
 
 // Skip emails from no-reply addresses
-if (payload.data.from?.address?.includes("noreply")) {
+if (payload.from?.address?.includes("noreply")) {
   return false;
 }
 
@@ -499,7 +488,7 @@ return true;
 ```javascript
 // Only AI-process emails from VIP domains
 const vipDomains = ["client.com", "partner.org", "executive.net"];
-const senderDomain = payload.data.from?.address?.split("@")[1]?.toLowerCase();
+const senderDomain = payload.from?.address?.split("@")[1]?.toLowerCase();
 
 if (vipDomains.includes(senderDomain)) {
   return true;
@@ -511,8 +500,8 @@ return false;
 
 ```javascript
 // Skip common newsletter and automated email patterns
-const from = payload.data.from?.address?.toLowerCase() || "";
-const subject = payload.data.subject?.toLowerCase() || "";
+const from = payload.from?.address?.toLowerCase() || "";
+const subject = payload.subject?.toLowerCase() || "";
 
 // Skip newsletters
 if (from.includes("newsletter") || from.includes("digest")) {
@@ -520,7 +509,7 @@ if (from.includes("newsletter") || from.includes("digest")) {
 }
 
 // Skip automated messages
-if (payload.data.headers?.["auto-submitted"] || payload.data.headers?.["x-auto-response-suppress"]) {
+if (payload.headers?.["auto-submitted"] || payload.headers?.["x-auto-response-suppress"]) {
   return false;
 }
 
@@ -536,7 +525,7 @@ return true;
 
 ```javascript
 // Only process emails with specific keywords
-const subject = payload.data.subject?.toLowerCase() || "";
+const subject = payload.subject?.toLowerCase() || "";
 const keywords = ["urgent", "invoice", "contract", "proposal", "meeting"];
 
 for (const keyword of keywords) {
@@ -551,7 +540,7 @@ return false;
 
 ```javascript
 // Skip very short or very long emails (likely spam or bulk)
-const textSize = payload.data.text?.encodedSize?.plain || 0;
+const textSize = payload.text?.encodedSize?.plain || 0;
 
 if (textSize < 50) {
   // Too short - likely spam
@@ -568,7 +557,7 @@ return true;
 
 ```javascript
 // Only process recent emails (skip old backlog)
-const emailDate = new Date(payload.data.date);
+const emailDate = new Date(payload.date);
 const now = new Date();
 const hoursDiff = (now - emailDate) / (1000 * 60 * 60);
 
@@ -581,20 +570,23 @@ return true;
 
 ### Available Payload Data
 
-The filter function has access to the full `messageNew` webhook payload:
+`payload` is the message object EmailEngine built for the `messageNew` event (the same fields that end up under `data` in the webhook), with the account ID added at the top level:
 
 ```javascript
 payload.account;           // Account ID
 payload.path;              // Mailbox path (e.g., "INBOX")
-payload.data.id;           // Message ID
-payload.data.from;         // { name, address }
-payload.data.to;           // [{ name, address }, ...]
-payload.data.subject;      // Email subject
-payload.data.date;         // Message date
-payload.data.headers;      // Email headers object
-payload.data.text;         // { encodedSize: { plain, html } }
-payload.data.attachments;  // Attachment metadata array
+payload.messageSpecialUse; // Always "\\Inbox" here; other folders are never processed
+payload.id;                // Message ID
+payload.from;              // { name, address }
+payload.to;                // [{ name, address }, ...]
+payload.subject;           // Email subject
+payload.date;              // Message date
+payload.headers;           // Lowercased header name to array of values
+payload.text;              // { plain, html, encodedSize: { plain, html } }
+payload.attachments;       // Attachment metadata array
 ```
+
+The **Test Filter** dialog on the AI Processing page runs the same function in the browser against a sample message of this shape.
 
 ### Execution Environment
 
@@ -602,10 +594,9 @@ The filter function runs in the same execution context as other pre-processing f
 
 **Available:**
 
-- Standard JavaScript (ES6+)
-- `Date`, `Math`, `JSON`, `RegExp`
-- `fetch` - Make HTTP requests (a wrapped fetch implementation is injected)
-- `env` - Script environment variables (from `scriptEnv` setting)
+- Standard JavaScript, with top-level `await`
+- `fetch` - HTTP requests through EmailEngine's own HTTP agent, and `URL`
+- `env` - Script environment variables (the parsed `scriptEnv` setting)
 - `logger` - Pino.js logger for debugging
 
 **Not injected as globals:**
@@ -619,7 +610,7 @@ Filter and pre-processing functions run on Node's `vm` module, which is an isola
 
 ### Debugging Filters
 
-Errors in the filter function are logged and the email is skipped (treated as returning `false`). Check EmailEngine logs for filter errors:
+Errors in the filter function are logged and the email is skipped (treated as returning `false`). The **Error Log** tab next to the filter editor on the AI Processing page keeps the last 20 errors with the payload that triggered each. The same errors go to EmailEngine's log with the component `llm-pre-process`:
 
 ```bash
 # View filter-related log entries
@@ -629,7 +620,7 @@ journalctl -u emailengine | grep "llm-pre-process"
 You can also use the logger for debugging:
 
 ```javascript
-logger.info({ from: payload.data.from?.address, subject: payload.data.subject, msg: "Evaluating email" });
+logger.info({ from: payload.from?.address, subject: payload.subject, msg: "Evaluating email" });
 
 const result = payload.path === "INBOX";
 logger.info({ result, msg: "Filter decision" });
@@ -649,27 +640,14 @@ return result;
 
 ### Estimating Costs
 
-OpenAI charges based on token usage. Pricing varies by model and changes over time. Check [OpenAI's pricing page](https://openai.com/pricing) for current rates.
-
-**General pricing tiers:**
-
-- **Mini/Nano models** (GPT-5 Mini, GPT-4o Mini) - Lowest cost, best for high-volume processing
-- **Standard models** (GPT-5, GPT-4o) - Moderate cost, balanced performance
-- **Pro models** (GPT-5 Pro, O3 Pro) - Higher cost, maximum capability
-
-**Example**: Processing 100 emails per day with GPT-5 Mini:
-
-- Average email: ~500 tokens input, 200 tokens output
-- Daily tokens: ~70,000 tokens
-- Monthly cost varies by current pricing - typically very affordable with mini models
+The provider charges per token, at a rate that depends on the model and changes over time; check the provider's own pricing page. Every processed message costs the prompt (the system prompt plus the headers, subject, and text, capped by `openAiMaxTokens`) and the structured answer. The `tokens` field in each enriched webhook reports the exact total, so a day of real traffic gives a better estimate than any figure this page could state.
 
 ### Cost Optimization
 
-1. **Use Mini Models**: GPT-5 Mini or GPT-4o Mini for most email processing
-2. **Filter Emails**: Only process emails from Inbox (skip spam, notifications)
-3. **Selective Processing**: Process only emails matching certain criteria
-4. **Monitor Usage**: Track `tokens` field in webhooks
-5. **Rate Limiting**: Limit processing during high-volume periods
+1. **Pick the smallest model that gives usable output**: the fallback list orders them from smallest to largest
+2. **Filter Emails**: `openAiPreProcessingFn` rejects messages before they cost anything; Inbox-only processing is already built in
+3. **Cap the input**: a lower `openAiMaxTokens` truncates long messages before they reach the model
+4. **Monitor Usage**: Track the `tokens` field in webhooks per account
 
 ### Monitoring Token Usage
 

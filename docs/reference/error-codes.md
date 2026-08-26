@@ -6,38 +6,38 @@ sidebar_position: 2
 
 # Error Codes Reference
 
-Complete reference for HTTP status codes, EmailEngine error codes, and provider-specific errors.
+Every HTTP status the EmailEngine API answers with, every `code` string an API error body can carry, and the provider, SMTP and OAuth2 errors that reach you through webhooks and the account's `lastError`.
 
 ## Error Response Format
 
-All EmailEngine API errors follow this structure:
+Every API error is a JSON body in this shape:
 
 ```json
 {
-  "statusCode": 400,
-  "error": "Bad Request",
-  "message": "Human-readable error message",
-  "code": "ERROR_CODE",
-  "details": {}
+  "statusCode": 404,
+  "error": "Not Found",
+  "message": "Requested message was not found",
+  "code": "MessageNotFound"
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `statusCode` | number | HTTP status code, repeated in the body |
-| `error` | string | HTTP status text, such as `Bad Request` |
+| `error` | string | HTTP status phrase, such as `Not Found` |
 | `message` | string | Human-readable reason for the failure |
-| `code` | string | Machine-readable error code. Only present when the failure has one |
-| `details` | object | Optional additional error context |
-| `fields` | array | Present on validation failures, one entry per rejected input |
+| `code` | string | Machine-readable error code. Present only for the failures listed under [EmailEngine Error Codes](#emailengine-error-codes) and [Provider-Mapped Codes](#provider-mapped-codes) |
+| `fields` | array | Validation failures only: one `{message, key}` entry per rejected input |
+| `state` | string | Account-state failures (`503`) only: the account's current state |
+| `ttl` | number | Rate limit responses (`429`) only: seconds until the window resets |
+| `requestedScope` | string | Scope refusals (`403`) only: the scope the route required |
+| `details`, `info` | object or array | Extra context a few routes attach, such as delivery test results or the IMAP server's response to a mailbox operation |
 
 :::warning `error` is the status text, not the reason
 Show and log `message`. The `error` field only repeats the HTTP status phrase, so a handler that reports `error` tells the operator "Bad Request" instead of what was actually wrong.
 :::
 
 ## HTTP Status Codes
-
-Standard HTTP status codes used by EmailEngine API.
 
 ### 2xx Success
 
@@ -51,149 +51,155 @@ Standard HTTP status codes used by EmailEngine API.
 
 ### 4xx Client Errors
 
-Client-side errors that require action from the caller.
-
 #### 400 Bad Request
 
-Request validation failed due to invalid parameters or malformed request.
+The request itself is wrong: a missing or malformed field, invalid JSON, or an operation that contradicts stored data.
 
-**Example:**
+**Validation failure:**
+
 ```json
 {
   "statusCode": 400,
   "error": "Bad Request",
-  "message": "Invalid request payload input",
+  "message": "Invalid input",
   "fields": [
     { "message": "\"account\" is required", "key": "account" }
   ]
 }
 ```
 
-Input validation failures carry a `fields` array naming each rejected input, and no `code`. Read `fields` to report the specific problem back to the caller.
+Input validation failures carry a `fields` array naming each rejected input, and no `code`. Read `fields` to report the specific problem back to the caller. An invalid recipient list or a submit call with no recipients is rejected this way, not with a dedicated code.
 
-**Common Causes:**
-- Missing required fields
-- Invalid field format
-- Invalid JSON syntax
-- Parameter type mismatch
+**OAuth2 user already bound:**
 
-**Solutions:**
-- Check required fields
-- Validate parameter types
-- Verify JSON syntax
-- Review API documentation
+Registering or updating an OAuth2 account for a user who is already bound to another account under the same OAuth2 application answers `400` with the code `AccountAlreadyExists` and names the other account. EmailEngine does not use `409 Conflict`. Re-registering an existing account ID is not an error: `POST /v1/account` updates the account in place.
+
+```json
+{
+  "statusCode": 400,
+  "error": "Bad Request",
+  "message": "Another account for the same OAuth2 user already exists",
+  "code": "AccountAlreadyExists",
+  "existingAccount": "user-a"
+}
+```
 
 ---
 
 #### 401 Unauthorized
 
-Missing or invalid authentication credentials.
+No usable access token was presented. Neither variant carries a `code`; the reason a token was refused (unknown, expired, malformed) is written to the log, not returned to the caller.
 
-**Example:**
+**No credential:**
+
 ```json
 {
   "statusCode": 401,
   "error": "Unauthorized",
-  "message": "Missing or invalid API key"
+  "message": "Unauthorized"
 }
 ```
 
-A `code` field is included only when EmailEngine recognizes a specific token problem (for example `InvalidToken`). A plain missing-credentials response returns the standard 401 without a custom `code`.
+**Credential refused:**
 
-**Common Causes:**
-- Missing Authorization header
-- Invalid or expired access token
-- Token revoked
+```json
+{
+  "statusCode": 401,
+  "error": "Unauthorized",
+  "message": "Bad token",
+  "attributes": {
+    "error": "Bad token"
+  }
+}
+```
 
 **Solutions:**
-- Include Authorization header: `Bearer YOUR_TOKEN`
-- Generate new access token
-- Verify token is still valid
+- Send the token as `Authorization: Bearer TOKEN` (or the `access_token` query parameter)
+- Check that the token has not been deleted or expired; issue a new one if needed
+
+When `EENGINE_REQUIRE_API_AUTH=false`, a request with no token is accepted instead of answering 401.
 
 ---
 
 #### 403 Forbidden
 
-Valid authentication but insufficient permissions.
+The token is valid but is not allowed to do this. A 403 carries a descriptive `message` and no `code`:
 
-**Example:**
+| Message | Cause |
+|---------|-------|
+| `Unauthorized scope` | The token lacks the scope the route requires. The body also carries `requestedScope` |
+| `Unauthorized permission` | The token's `permissions` record does not admit this action or group |
+| `Unauthorized account` | The token is bound to a different account |
+| `Unauthorized address` | The caller's IP is not in the token's address restrictions |
+| `Unauthorized referrer` | The `Referer` header is not in the token's referrer restrictions |
+
 ```json
 {
   "statusCode": 403,
   "error": "Forbidden",
-  "message": "Unauthorized scope"
+  "message": "Unauthorized scope",
+  "requestedScope": "api"
 }
 ```
 
-A 403 response carries a descriptive message such as `Unauthorized scope`, `Unauthorized account`, `Unauthorized address`, or `Unauthorized referrer`, but no custom `code` field.
-
-**Common Causes:**
-- Token has restricted scope
-- Account-specific token used for a different account
-- Request origin not in the allowed referrer/address list
-
-**Solutions:**
-- Use a token with the appropriate scope
-- Verify the token is bound to the correct account
-- Check the allowed referrers/addresses configuration
+The license endpoints also answer 403 when the operation fails: `GET /v1/license` when license information cannot be loaded, `POST /v1/license` when the key is invalid or expired, and `DELETE /v1/license` when the key cannot be removed.
 
 ---
 
 #### 404 Not Found
 
-Requested resource does not exist.
+The addressed entity does not exist. A missing account is a plain 404 with no `code`:
 
-**Example:**
 ```json
 {
   "statusCode": 404,
   "error": "Not Found",
-  "message": "Account not found",
-  "code": "AccountNotFound"
+  "message": "Account record was not found for requested ID"
 }
 ```
 
-**Common Causes:**
-- Invalid resource ID
-- Resource deleted
-- Typo in endpoint URL
+A missing message, folder, template, webhook route, OAuth2 application or gateway carries a `code`:
 
-**Solutions:**
-- Verify resource ID
-- Check resource still exists
-- Verify correct endpoint
+```json
+{
+  "statusCode": 404,
+  "error": "Not Found",
+  "message": "Requested message was not found",
+  "code": "MessageNotFound"
+}
+```
+
+`SMTPUnavailable` is also a 404: the account has no SMTP or OAuth2 configuration to send with.
 
 ---
 
-#### 400 - Duplicate resource
+#### 413 Payload Too Large
 
-EmailEngine reports a duplicate account as a `400 Bad Request` with the code `AccountAlreadyExists` (it does not use `409 Conflict`).
+Two sources. A request body over the route's limit is refused by the HTTP server before the handler runs; message upload routes accept up to `EENGINE_MAX_BODY_SIZE` (50 MB by default), other routes 1 MB. A Microsoft Graph account whose provider rejects an outgoing message for size answers with the mapped code `MessageTooLarge`.
 
-**Example:**
+---
+
+#### 422 Unprocessable Entity
+
+The request is well formed, but the account's backend cannot carry it out. The only code is `MissingServerExtension`: the IMAP server lacks an extension the operation needs, for example a label filter on a mailbox that is not Gmail.
+
 ```json
 {
-  "statusCode": 400,
-  "error": "Bad Request",
-  "message": "This account already exists",
-  "code": "AccountAlreadyExists"
+  "statusCode": 422,
+  "error": "Unprocessable Entity",
+  "message": "Server does not support X-GM-EXT-1 extension required for label search",
+  "code": "MissingServerExtension"
 }
 ```
 
-**Common Causes:**
-- Registering an account ID that already exists
-- Registering an OAuth2 account whose user already belongs to another account
-
-**Solutions:**
-- Use a different account ID
-- Update the existing account instead (the create endpoint also updates an existing account)
+Do not retry: the answer will not change until the account or the server does.
 
 ---
 
 #### 429 Too Many Requests
 
-Rate limit exceeded.
+The token's rate limit is exhausted.
 
-**Example:**
 ```json
 {
   "statusCode": 429,
@@ -203,21 +209,17 @@ Rate limit exceeded.
 }
 ```
 
-**Response Headers:**
-```
+**Response headers:**
+
+```text
 X-RateLimit-Limit: 1000
 X-RateLimit-Reset: 60
 ```
 
-Note: `X-RateLimit-Reset` contains the TTL (time-to-live) in seconds until the rate limit window resets, not a Unix timestamp. The `X-RateLimit-Remaining` header is only included in successful (non-rate-limited) responses.
+`X-RateLimit-Reset` and `ttl` both carry the seconds until the window resets, not a Unix timestamp. `X-RateLimit-Remaining` is only sent on requests that were allowed.
 
-**Solutions:**
-- Implement exponential backoff
-- Wait for `ttl` seconds before retrying
-- Reduce request frequency
-- Implement request queuing
+**Retry logic:**
 
-**Example Retry Logic:**
 ```javascript
 async function makeRequestWithRetry(url, options, maxRetries = 3) {
   for (let i = 0; i < maxRetries; i++) {
@@ -239,269 +241,28 @@ async function makeRequestWithRetry(url, options, maxRetries = 3) {
 
 ---
 
-#### 422 Unprocessable Entity
-
-The request is well formed, but the mail server or provider cannot carry it out. This is the code for an operation the account's backend does not support, rather than for a mistake in the request.
-
-**Example:**
-```json
-{
-  "statusCode": 422,
-  "error": "Unprocessable Entity",
-  "message": "The mail server does not support the requested operation",
-  "code": "MissingServerExtension"
-}
-```
-
-**Common Causes:**
-- The IMAP server lacks an extension the operation needs
-- The operation exists only on some backends, such as a label change on a mailbox that is not Gmail
-
-**Solutions:**
-- Check what the account's backend supports before offering the operation
-- Do not retry: the answer will not change until the account or the server does
-
----
-
 ### 5xx Server Errors
-
-Server-side errors that may be transient.
 
 #### 500 Internal Server Error
 
-Unexpected server error occurred.
+An error the handler did not classify. The body is the generic Boom message; a `code` is present when the underlying error carried one.
 
-**Example:**
 ```json
 {
   "statusCode": 500,
   "error": "Internal Server Error",
-  "message": "Internal server error"
+  "message": "An internal server error occurred"
 }
 ```
 
-**Common Causes:**
-- Unexpected exception
-- Database error
-- Configuration issue
-
-**Solutions:**
-- Retry request after delay
-- Check server logs
-- Report to support if persists
+Retry after a delay, then check the EmailEngine log for the request.
 
 ---
 
 #### 503 Service Unavailable
 
-EmailEngine is temporarily unavailable (startup, shutdown, maintenance), or the account's IMAP connection is not up, which answers `IMAPUnavailable` with this code.
+The account is not in a state that can serve the request. The body carries the account's `state` alongside the `code`:
 
-**Example:**
-```json
-{
-  "statusCode": 503,
-  "error": "Service Unavailable",
-  "message": "Service unavailable",
-  "code": "ServiceUnavailable",
-  "details": {
-    "retryAfter": 30
-  }
-}
-```
-
-**Common Causes:**
-- EmailEngine restarting
-- Redis connection lost
-- Maintenance mode
-
-**Solutions:**
-- Wait and retry after delay
-- Check EmailEngine status
-- Verify Redis connectivity
-
----
-
-## EmailEngine Error Codes
-
-Application-specific error codes.
-
-### Account Errors
-
-#### AccountNotFound
-
-Specified account does not exist.
-
-**HTTP Status:** 404
-
-**Example:**
-```json
-{
-  "statusCode": 404,
-  "error": "Not Found",
-  "message": "Account not found",
-  "code": "AccountNotFound",
-  "details": {
-    "account": "nonexistent@example.com"
-  }
-}
-```
-
-**Solutions:**
-- Verify account ID
-- Check account was registered
-- List accounts to verify
-
----
-
-#### AccountAlreadyExists
-
-An account with this ID (or, for OAuth2 accounts, the same upstream user) already exists.
-
-**HTTP Status:** 400
-
-**Example:**
-```json
-{
-  "statusCode": 400,
-  "error": "Bad Request",
-  "message": "This account already exists",
-  "code": "AccountAlreadyExists"
-}
-```
-
-**Solutions:**
-- Use a different account ID
-- Update the existing account instead (the create endpoint also updates an existing account)
-
----
-
-### Message Errors
-
-#### MessageNotFound
-
-Specified message does not exist.
-
-**HTTP Status:** 404
-
-**Example:**
-```json
-{
-  "statusCode": 404,
-  "error": "Not Found",
-  "message": "Message not found",
-  "code": "MessageNotFound",
-  "details": {
-    "message": "AAAABAABNc"
-  }
-}
-```
-
-**Solutions:**
-- Verify message ID
-- Check message wasn't deleted
-- Resync mailbox
-
----
-
-#### MessageTooLarge
-
-Message exceeds size limits.
-
-**HTTP Status:** 413
-
-**Example:**
-```json
-{
-  "statusCode": 413,
-  "error": "Payload Too Large",
-  "message": "Message size exceeds limit",
-  "code": "MessageTooLarge",
-  "details": {
-    "size": 26214400,
-    "limit": 20971520
-  }
-}
-```
-
-**Solutions:**
-- Reduce message size
-- Compress attachments
-- Increase `EENGINE_MAX_BODY_SIZE`
-
-Note: invalid request payloads (such as a submit call with no recipients or a malformed address) are rejected as a generic `400 Bad Request` validation error, not a dedicated message-format code.
-
----
-
-### Authentication Errors
-
-#### InvalidToken
-
-Access token is invalid or expired.
-
-**HTTP Status:** 401
-
-**Example:**
-```json
-{
-  "statusCode": 401,
-  "error": "Unauthorized",
-  "message": "Invalid access token",
-  "code": "InvalidToken"
-}
-```
-
-**Solutions:**
-- Generate new token
-- Verify token format
-- Check token not revoked
-
-Note: a request with a restricted-scope or wrong-account token is rejected as a `403 Forbidden` with a descriptive message (such as `Unauthorized scope`), without a dedicated permissions code.
-
----
-
-### Connection Errors
-
-#### ConnectionError
-
-Failed to connect to the mail server.
-
-**HTTP Status:** 503
-
-**Example:**
-```json
-{
-  "statusCode": 503,
-  "error": "Service Unavailable",
-  "message": "Failed to connect to IMAP server",
-  "code": "ConnectionError",
-  "details": {
-    "host": "imap.example.com",
-    "reason": "ECONNREFUSED"
-  }
-}
-```
-
-**Common Causes:**
-- Mail server down
-- Firewall blocking connection
-- Incorrect host/port
-- Network issue
-
-**Solutions:**
-- Verify mail server is accessible
-- Check firewall rules
-- Verify host and port
-- Test connection manually
-
----
-
-#### AuthenticationFails
-
-Authentication to mail server failed.
-
-**HTTP Status:** 503
-
-**Example:**
 ```json
 {
   "statusCode": 503,
@@ -512,52 +273,95 @@ Authentication to mail server failed.
 }
 ```
 
-**Common Causes:**
-- Incorrect password
-- Password changed
-- 2FA/App password required
-- OAuth2 token expired
-
-**Solutions:**
-- Verify credentials
-- Update password
-- Use app-specific password
-- Refresh OAuth2 token
+| Code | State | Meaning |
+|------|-------|---------|
+| `NotYetConnected` | `init` | The account has not connected yet. Wait |
+| `AuthenticationFails` | `authenticationError` | The credentials are rejected. Update them or re-authorize |
+| `ConnectionError` | `connectError` | The mail server cannot be reached. Check the host, port and network |
+| `NotSyncing` | `unset` | Syncing is switched off, by the operator or by the [authentication-failure safety net](/docs/configuration/environment-variables#max-imap-auth-failure-time). Check `authFailureDisabledAt` on the account |
+| `NoAvailable` | other | The account is disconnected or paused |
+| `IMAPUnavailable` | any | The account's IMAP connection is not up right now. Retry shortly |
 
 ---
 
-### License Errors
+#### 504 Gateway Timeout
 
-#### ELicenseExpired
+The API worker asked an account worker to do something and got no answer within `EENGINE_TIMEOUT` (10 seconds by default; a request can raise it with the `X-EE-Timeout` header, in milliseconds).
 
-License has expired.
-
-**HTTP Status:** 403
-
-**Example:**
 ```json
 {
-  "statusCode": 403,
-  "error": "Forbidden",
-  "message": "License has expired",
-  "code": "ELicenseExpired"
+  "statusCode": 504,
+  "error": "Gateway Timeout",
+  "message": "Timeout waiting for command response [T2]",
+  "code": "Timeout"
 }
 ```
 
-**Solutions:**
-- Renew license
-- Contact support
-- Update license key
+A slow IMAP server on a large mailbox is the usual cause. Raise `EENGINE_TIMEOUT` or send `X-EE-Timeout` for the operations that need it.
 
 ---
 
+## EmailEngine Error Codes
+
+Every `code` the API itself puts in an error body:
+
+| Code | Status | When |
+|------|--------|------|
+| `AccountAlreadyExists` | 400 | The OAuth2 user is already bound to another account under the same OAuth2 application; the body names it in `existingAccount` |
+| `AccountNotFound` | 404 | Export endpoints only: the account does not exist |
+| `MessageNotFound` | 404 | The message ID does not exist in the mailbox |
+| `FolderNotFound` | 404 | The mailbox path does not exist |
+| `NotFound` | 404 | The template, webhook route, OAuth2 application or gateway does not exist |
+| `SMTPUnavailable` | 404 | The account has no SMTP or OAuth2 configuration to send with |
+| `MissingServerExtension` | 422 | The IMAP server lacks an extension the operation needs |
+| `NotYetConnected` | 503 | The account has not connected yet |
+| `AuthenticationFails` | 503 | The account's credentials are rejected |
+| `ConnectionError` | 503 | The mail server cannot be reached |
+| `NotSyncing` | 503 | Syncing is switched off for the account |
+| `NoAvailable` | 503 | The account is disconnected or paused |
+| `IMAPUnavailable` | 503 | The IMAP connection is not available at the moment |
+| `Timeout` | 504 | A worker thread did not answer within `EENGINE_TIMEOUT` |
+
+## Provider-Mapped Codes
+
+For Gmail API and Microsoft Graph accounts, a provider error that the operation cannot recover from is translated to an EmailEngine code and status and returned from the API call that triggered it.
+
+**Gmail API:**
+
+| Gmail status | Code | HTTP status |
+|--------------|------|-------------|
+| `INVALID_ARGUMENT` | `InvalidArgument` | 400 |
+| `FAILED_PRECONDITION` | `FailedPrecondition` | 400 |
+| `NOT_FOUND` | `NotFound` | 404 |
+| `PERMISSION_DENIED` | `PermissionDenied` | 403 |
+| `RESOURCE_EXHAUSTED` | `RateLimitExceeded` | 429 |
+| `UNAUTHENTICATED` | `Unauthenticated` | 401 |
+| `INTERNAL` | `InternalError` | 500 |
+| `UNAVAILABLE` | `ServiceUnavailable` | 503 |
+
+**Microsoft Graph:**
+
+| Graph error code | Code | HTTP status |
+|------------------|------|-------------|
+| `ErrorItemNotFound` | `MessageNotFound` | 404 |
+| `ErrorInvalidIdMalformed` | `InvalidMessageId` | 400 |
+| `ErrorAccessDenied` | `AccessDenied` | 403 |
+| `ErrorQuotaExceeded` | `QuotaExceeded` | 429 |
+| `ErrorExecuteSearchStaleData` | `SearchCursorExpired` | 400 |
+| `ErrorMailboxNotEnabledForRESTAPI` | `MailboxNotEnabled` | 403 |
+| `ErrorInvalidRecipients` | `InvalidRecipients` | 400 |
+| `ErrorMessageSizeExceeded` | `MessageTooLarge` | 413 |
+| `ErrorSendAsDenied` | `SendAsDenied` | 403 |
+
+Rate-limited Gmail and Graph requests are retried by EmailEngine before the error is reported, so a `429` from either provider means the retries were exhausted.
+
 ## Provider-Specific Errors
 
-Errors from mail servers (IMAP/SMTP) and OAuth2 providers.
+Errors from mail servers and OAuth2 providers. These do not come back from API calls; they arrive through webhooks and the account's `lastError`.
 
 ### IMAP Errors
 
-Common IMAP server response codes:
+Common IMAP server responses:
 
 | Response | Meaning | Solution |
 |----------|---------|----------|
@@ -568,23 +372,13 @@ Common IMAP server response codes:
 | `NO [LIMIT]` | Rate limit exceeded | Wait and retry |
 | `NO [OVERQUOTA]` | Mailbox quota exceeded | Free up space |
 
-**Example Error:**
-```json
-{
-  "statusCode": 503,
-  "error": "Service Unavailable",
-  "message": "IMAP connection is currently not available for requested account",
-  "code": "IMAPUnavailable"
-}
-```
-
-The IMAP server's own response is not returned here. It is recorded as the account's `lastError` and in the [per-account log](/docs/advanced/logging#per-account-protocol-logs).
+The IMAP server's own response is recorded as the account's `lastError`, sent in the [`authenticationError`](/docs/webhooks/authenticationerror) and [`connectError`](/docs/webhooks/connecterror) webhooks as `data.response` and `data.serverResponseCode`, and written to the [per-account log](/docs/advanced/logging#per-account-logs). An API call made while the account is in that state answers `503` with `AuthenticationFails` or `ConnectionError`.
 
 ---
 
 ### SMTP Errors
 
-Common SMTP error codes:
+An SMTP rejection is not returned from the submit call, because submission is queued: the call answers 200 with a `queueId` and the rejection arrives later as a [`messageDeliveryError`](/docs/webhooks/messagedeliveryerror) webhook (one per failed attempt) or a [`messageFailed`](/docs/webhooks/messagefailed) webhook (when the attempts are exhausted), carrying `smtpResponse` and `smtpResponseCode`.
 
 #### 4xx Temporary Errors
 
@@ -605,56 +399,41 @@ Common SMTP error codes:
 | 553 | Mailbox name invalid | Fix recipient address |
 | 554 | Transaction failed | Check message content/format |
 
-An SMTP rejection is not returned from the submit call, because submission is queued: the call answers 200 with a `queueId` and the rejection arrives later as a [`messageDeliveryError`](/docs/webhooks/messagedeliveryerror) or [`messageFailed`](/docs/webhooks/messagefailed) webhook carrying `smtpResponse` and `smtpResponseCode`.
+**Common SMTP responses:**
 
-`SMTPUnavailable` is the separate case of an account with no usable SMTP configuration at all:
-
-```json
-{
-  "statusCode": 404,
-  "error": "Not Found",
-  "message": "SMTP configuration not found",
-  "code": "SMTPUnavailable"
-}
-```
-
-**Common SMTP Errors:**
-
-**550 5.1.1 - User Unknown:**
-```
+```text
 550 5.1.1 <user@example.com>: Recipient address rejected: User unknown
 ```
-**Solution:** Verify email address is correct and exists.
+Verify the address exists.
 
-**550 5.7.1 - Relay Denied:**
-```
+```text
 550 5.7.1 Relaying denied
 ```
-**Solution:** Check SMTP authentication and permissions.
+Check SMTP authentication and the account's sending permissions.
 
-**552 5.2.2 - Mailbox Full:**
-```
+```text
 552 5.2.2 Mailbox full
 ```
-**Solution:** Recipient needs to free up space, retry later.
+The recipient needs to free up space; retry later.
 
-**554 5.7.1 - Spam Rejected:**
-```
+```text
 554 5.7.1 Message rejected as spam
 ```
-**Solution:** Review message content, check sender reputation.
+Review the message content and the sender's reputation.
 
 ---
 
 ### OAuth2 Errors
 
-Common OAuth2 provider errors:
+Errors from Google and Microsoft token endpoints. They are reported in the [`authenticationError`](/docs/webhooks/authenticationerror) webhook (`data.tokenRequest` carries the request details) and in the account's `lastError`.
 
-#### invalid_grant
+| Error | Meaning | Solution |
+|-------|---------|----------|
+| `invalid_grant` | The refresh token is expired or revoked | Re-authorize the account |
+| `invalid_client` | The OAuth2 client ID or secret is wrong | Fix the credentials in the OAuth2 application |
+| `redirect_uri_mismatch` | The redirect URI registered with the provider does not match EmailEngine's | Register `serviceUrl` + `/oauth` with the provider, with the same protocol and host |
+| `insufficient_scope` | The grant lacks a scope the operation needs | Re-authorize with the required scopes |
 
-OAuth2 token is invalid or expired.
-
-**Example:**
 ```json
 {
   "error": "invalid_grant",
@@ -662,67 +441,7 @@ OAuth2 token is invalid or expired.
 }
 ```
 
-**Solutions:**
-- Refresh OAuth2 token
-- Re-authenticate user
-- Check token expiration
-
----
-
-#### invalid_client
-
-OAuth2 client credentials are invalid.
-
-**Example:**
-```json
-{
-  "error": "invalid_client",
-  "error_description": "Client authentication failed"
-}
-```
-
-**Solutions:**
-- Verify OAuth2 client ID and secret
-- Check credentials in configuration
-- Regenerate client credentials
-
----
-
-#### redirect_uri_mismatch
-
-OAuth2 redirect URI doesn't match configured value.
-
-**Example:**
-```json
-{
-  "error": "redirect_uri_mismatch",
-  "error_description": "Redirect URI mismatch"
-}
-```
-
-**Solutions:**
-- Verify EmailEngine's `serviceUrl` setting is correct (set it in the dashboard or via `EENGINE_SETTINGS`); the OAuth2 redirect URI is derived from it
-- Check that the redirect URI registered in the OAuth2 provider (Google/Microsoft) matches EmailEngine's `serviceUrl` + `/oauth`
-- Ensure the protocol (http/https) matches
-
----
-
-#### insufficient_scope
-
-OAuth2 token lacks required permissions.
-
-**Example:**
-```json
-{
-  "error": "insufficient_scope",
-  "error_description": "Insufficient permission to access this resource"
-}
-```
-
-**Solutions:**
-- Request additional OAuth2 scopes
-- Re-authenticate with correct scopes
-- Verify OAuth2 app permissions
+A refresh token that keeps failing for longer than `EENGINE_MAX_IMAP_AUTH_FAILURE_TIME` switches syncing off for the account; see [Max IMAP auth failure time](/docs/configuration/environment-variables#max-imap-auth-failure-time).
 
 ---
 
@@ -730,11 +449,11 @@ OAuth2 token lacks required permissions.
 
 ### Retry Logic
 
-Implement exponential backoff for transient errors:
+Retry transient failures with exponential backoff:
 
 ```javascript
 async function makeRequestWithRetry(url, options, maxRetries = 3) {
-  const retriableStatusCodes = [429, 500, 503];
+  const retriableStatusCodes = [429, 500, 503, 504];
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
@@ -746,15 +465,14 @@ async function makeRequestWithRetry(url, options, maxRetries = 3) {
 
       const data = await response.json();
 
-      // Don't retry client errors (except rate limit)
+      // Do not retry client errors, except the rate limit
       if (response.status >= 400 && response.status < 500 &&
           response.status !== 429) {
         throw new Error(data.message);
       }
 
-      // Retry on specific status codes
       if (retriableStatusCodes.includes(response.status)) {
-        const delay = Math.pow(2, attempt) * 1000; // Exponential backoff
+        const delay = Math.pow(2, attempt) * 1000;
         await new Promise(resolve => setTimeout(resolve, delay));
         continue;
       }
@@ -772,27 +490,26 @@ async function makeRequestWithRetry(url, options, maxRetries = 3) {
 
 ### Error Categorization
 
-Categorize errors for appropriate handling:
+Check the `code` before the status range: an account that is failing authentication is a `503`, but retrying will not fix it, and only new credentials will.
 
 ```javascript
 function categorizeError(statusCode, errorCode) {
-  // Check the error code before the status range: an auth failure is a 4xx too,
-  // and it is fixable by refreshing credentials rather than by changing the request
-  if (errorCode === 'AuthenticationFails' || errorCode === 'InvalidToken') {
+  if (errorCode === 'AuthenticationFails' || errorCode === 'NotSyncing') {
     return 'AUTH_ERROR';
   }
 
-  // Rate limit - retry after the window given in ttl
   if (statusCode === 429) {
     return 'RATE_LIMIT';
   }
 
-  // Remaining client errors - the request itself is wrong, retrying will not help
+  if (statusCode === 503 || statusCode === 504) {
+    return 'TEMPORARY';
+  }
+
   if (statusCode >= 400 && statusCode < 500) {
     return 'CLIENT_ERROR';
   }
 
-  // Server errors - retry
   if (statusCode >= 500) {
     return 'SERVER_ERROR';
   }
@@ -805,27 +522,25 @@ async function handleError(error, context) {
 
   switch (category) {
     case 'CLIENT_ERROR':
-      // Log and alert - requires code fix
+      // The request is wrong; retrying will not help
       console.error('Client error:', error);
       await alertDevelopers(error);
       break;
 
     case 'RATE_LIMIT':
-      // Wait and retry
       await sleep(error.ttl * 1000);
       return retryRequest(context);
 
+    case 'TEMPORARY':
     case 'SERVER_ERROR':
-      // Retry with exponential backoff
       return retryWithBackoff(context);
 
     case 'AUTH_ERROR':
-      // Refresh credentials
-      await refreshCredentials(context.account);
-      return retryRequest(context);
+      // Ask the user for new credentials or a fresh OAuth2 grant
+      await requestReauthorization(context.account);
+      break;
 
     default:
-      // Log for investigation
       console.error('Unknown error:', error);
   }
 }
@@ -833,15 +548,15 @@ async function handleError(error, context) {
 
 ### User-Friendly Messages
 
-Convert error codes to user-friendly messages:
+Map codes to messages for end users:
 
 ```javascript
 const ERROR_MESSAGES = {
-  'AccountNotFound': 'Email account not found. Please check the account ID.',
-  'AuthenticationFails': 'Email login failed. Please check your password.',
+  'AuthenticationFails': 'Email login failed. Please check your password or sign in again.',
+  'NotSyncing': 'Syncing is switched off for this mailbox. Sign in again to resume it.',
   'MessageNotFound': 'Email message not found. It may have been deleted.',
-  'ConnectionError': 'Unable to connect to email server. Please try again later.',
-  'InvalidToken': 'Your session has expired. Please log in again.'
+  'ConnectionError': 'Unable to connect to the email server. Please try again later.',
+  'SMTPUnavailable': 'This mailbox is not set up for sending.'
 };
 
 function getUserMessage(errorCode) {
@@ -859,6 +574,8 @@ EENGINE_LOG_LEVEL=trace
 EENGINE_LOG_RAW=true
 ```
 
+`EENGINE_LOG_RAW` writes unmasked credentials to the log; use it only while debugging.
+
 ### Check Logs
 
 **Docker:**
@@ -873,32 +590,28 @@ journalctl -u emailengine -f
 
 ### Common Debug Steps
 
-1. **Check error response:**
+1. **Read the full error response:**
    ```bash
-   curl -X GET http://localhost:3000/v1/account/test \
+   curl -X GET https://emailengine.example.com/v1/account/test \
      -H "Authorization: Bearer TOKEN" \
      -v
    ```
 
-2. **Verify credentials:**
+2. **Check the account's state and last error:**
    ```bash
-   # Test IMAP connection
+   curl https://emailengine.example.com/v1/account/test \
+     -H "Authorization: Bearer TOKEN"
+   ```
+   `state`, `lastError` and `authFailureDisabledAt` say why an account answers `503`.
+
+3. **Verify the mail server is reachable:**
+   ```bash
    openssl s_client -connect imap.example.com:993
    ```
 
-3. **Check connectivity:**
+4. **Check Redis:**
    ```bash
-   # Test Redis
    redis-cli ping
-
-   # Test mail server
-   telnet imap.example.com 993
-   ```
-
-4. **Review configuration:**
-   ```bash
-   curl http://localhost:3000/v1/settings \
-     -H "Authorization: Bearer TOKEN"
    ```
 
 ## See Also
@@ -907,3 +620,4 @@ journalctl -u emailengine -f
 - [Quick reference](/docs/reference/quick-reference) - The same codes in one table
 - [Troubleshooting](/docs/troubleshooting) - Diagnosing the conditions behind these codes
 - [Account troubleshooting](/docs/accounts/troubleshooting) - Connection and authentication failures
+- [Webhook events reference](/docs/reference/webhook-events) - The events that carry provider errors

@@ -13,9 +13,9 @@ Quick lookup tables for common EmailEngine configuration and API usage.
 | Event | Description | When Triggered |
 |-------|-------------|----------------|
 | `messageNew` | New email received | Email arrives in any folder |
-| `messageDeleted` | Email deleted | Email moved to trash or permanently deleted |
+| `messageDeleted` | Email deleted | A message previously seen in a folder is no longer there (deleted or moved) |
 | `messageUpdated` | Email flags changed | Read/unread, flagged, labels modified |
-| `messageSent` | Email sent successfully | Outgoing email delivered to server |
+| `messageSent` | Email accepted | A queued email is accepted by the outgoing mail server |
 | `messageFailed` | Email send failed | Delivery error after retries |
 | `messageBounce` | Bounce notification | Bounce report received |
 | `messageDeliveryError` | Delivery issue | SMTP error during send |
@@ -51,6 +51,8 @@ See [Webhook Events Reference](/docs/reference/webhook-events) for complete payl
 | `DELETE` | `/v1/account/{account}` | Delete account |
 | `GET` | `/v1/accounts` | List all accounts |
 | `PUT` | `/v1/account/{account}/reconnect` | Force reconnect |
+
+`PUT /v1/account/{account}/reconnect` answers `{"reconnect": false}` for an account whose syncing was switched off after repeated authentication failures (`authFailureDisabledAt` is set). Supplying working credentials lifts that; a reconnect request does not.
 
 ### Message Operations
 
@@ -146,28 +148,29 @@ See [Environment Variables](/docs/configuration/environment-variables) for compl
 | Code | Meaning | Common Cause |
 |------|---------|--------------|
 | `200` | Success | Request completed |
-| `400` | Bad Request | Invalid parameters, or a duplicate account ID (`AccountAlreadyExists`) |
+| `400` | Bad Request | Invalid parameters (`fields` names them), or an OAuth2 user already bound to another account (`AccountAlreadyExists`) |
 | `401` | Unauthorized | Missing/invalid token |
 | `403` | Forbidden | Insufficient scope |
-| `404` | Not Found | Account/message doesn't exist |
+| `404` | Not Found | Account, message or folder does not exist, or the account has no SMTP configuration (`SMTPUnavailable`) |
 | `422` | Unprocessable Entity | The request is valid but the account cannot satisfy it, such as a label search on a non-Gmail mailbox |
 | `429` | Too Many Requests | Rate limited. The body carries `ttl` seconds |
 | `500` | Server Error | Internal error |
-| `503` | Service Unavailable | The mail server could not be reached, or the account is not connected |
+| `503` | Service Unavailable | The account is not connected: still initializing, failing authentication, unreachable, or not syncing (the body carries `state` and a `code`) |
+| `504` | Gateway Timeout | A worker thread did not answer within `EENGINE_TIMEOUT` (`Timeout`) |
 
 ### Account Connection States
 
 | State | Description | Action |
 |-------|-------------|--------|
 | `init` | Registered, not connected yet | Wait |
-| `unset` | No IMAP or OAuth2 configuration | Add connection settings |
+| `unset` | Not syncing: no IMAP or OAuth2 configuration is set, or syncing was switched off, by the operator (`imap.disabled`) or automatically after repeated authentication failures (`authFailureDisabledAt` is set) | Add connection settings, or supply working credentials to lift an automatic switch-off |
 | `connecting` | Establishing connection | Wait for completion |
 | `syncing` | Sync in progress | Wait for completion |
 | `connected` | Connected and watching for changes | Normal operation |
 | `disconnected` | Connection dropped | Retried automatically with backoff |
 | `connectError` | Network or TLS failure | Check server availability |
 | `authenticationError` | Credentials rejected | Update credentials or re-authenticate |
-| `paused` | Syncing paused through the API | Resume when needed |
+| `paused` | Syncing paused through the API; no connection is maintained | Resume when needed |
 
 ### Webhook Delivery Status
 
@@ -256,7 +259,7 @@ docker-compose down
 docker-compose pull && docker-compose up -d
 
 # Check health
-curl http://localhost:3000/health
+curl https://emailengine.example.com/health
 ```
 
 ## API Authentication
@@ -264,10 +267,10 @@ curl http://localhost:3000/health
 ```bash
 # Using Bearer token
 curl -H "Authorization: Bearer YOUR_TOKEN" \
-  http://localhost:3000/v1/accounts
+  https://emailengine.example.com/v1/accounts
 
 # Using query parameter
-curl "http://localhost:3000/v1/accounts?access_token=YOUR_TOKEN"
+curl "https://emailengine.example.com/v1/accounts?access_token=YOUR_TOKEN"
 ```
 
 ## Common API Examples
@@ -275,7 +278,7 @@ curl "http://localhost:3000/v1/accounts?access_token=YOUR_TOKEN"
 ### Register Account (OAuth2)
 
 ```bash
-curl -X POST http://localhost:3000/v1/account \
+curl -X POST https://emailengine.example.com/v1/account \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -292,7 +295,7 @@ curl -X POST http://localhost:3000/v1/account \
 ### Send Email
 
 ```bash
-curl -X POST http://localhost:3000/v1/account/user123/submit \
+curl -X POST https://emailengine.example.com/v1/account/user123/submit \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -307,7 +310,7 @@ curl -X POST http://localhost:3000/v1/account/user123/submit \
 Search is a `POST` request - the search criteria go in the JSON body, and the mailbox path is passed as the `path` query parameter:
 
 ```bash
-curl -X POST "http://localhost:3000/v1/account/user123/search?path=INBOX" \
+curl -X POST "https://emailengine.example.com/v1/account/user123/search?path=INBOX" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -320,7 +323,7 @@ curl -X POST "http://localhost:3000/v1/account/user123/search?path=INBOX" \
 ### Configure Webhooks
 
 ```bash
-curl -X POST http://localhost:3000/v1/settings \
+curl -X POST https://emailengine.example.com/v1/settings \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

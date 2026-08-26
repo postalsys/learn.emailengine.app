@@ -22,9 +22,10 @@ EmailEngine is a **self-hosted email API gateway** that provides REST API access
 
 | Aspect | Details |
 |--------|---------|
+| Reference version | EmailEngine 2.79.4 (the OpenAPI spec this page is checked against) |
 | API Style | RESTful JSON |
 | Authentication | Bearer token (`Authorization: Bearer TOKEN`) |
-| Base URL | `http://localhost:3000/v1` (default) |
+| Base URL | `https://emailengine.example.com/v1` (a fresh local install listens on `http://127.0.0.1:3000`) |
 | Webhooks | HTTP POST to configured endpoint |
 | Data Storage | Redis (credentials encrypted with `EENGINE_SECRET`) |
 | Message Storage | None - fetched from mail server on demand |
@@ -40,7 +41,7 @@ EmailEngine is a **self-hosted email API gateway** that provides REST API access
 | **Get account** | `GET /v1/account/{account}` | - |
 | **Update account** | `PUT /v1/account/{account}` | Partial updates supported |
 | **Delete account** | `DELETE /v1/account/{account}` | optional `?revoke=true` to revoke the OAuth2 grant |
-| **Reconnect account** | `PUT /v1/account/{account}/reconnect` | - |
+| **Reconnect account** | `PUT /v1/account/{account}/reconnect` | `reconnect: true`; answers `{"reconnect": false}` when syncing was switched off after repeated authentication failures |
 | **Send email** | `POST /v1/account/{account}/submit` | `to`, `subject`, `text`/`html` |
 | **Send stored draft** | `POST /v1/account/{account}/message/{message}/submit` | optional delivery options |
 | **List messages** | `GET /v1/account/{account}/messages` | `path`, `page`, `pageSize` |
@@ -270,7 +271,7 @@ Bind an agent token to one account whenever possible - a bound credential loses 
 
 Replies and forwards go through the `reference` block on `send_message` and `create_draft`: `{message, action: reply|reply-all|forward, inline, forwardAttachments}`. EmailEngine derives the subject, the recipients and the threading headers from the referenced message.
 
-## Webhook Events (24 Total)
+## Webhook Events
 
 ### Message Events
 
@@ -297,7 +298,7 @@ Replies and forwards go through the `reference` block on `send_message` and `cre
 |-------|-------------|-------------------|
 | `accountAdded` | Account registered | `account` |
 | `accountDeleted` | Account removed | `account` |
-| `accountInitialized` | Account ready | `account`, `state` |
+| `accountInitialized` | Account ready, first sync done | `account`, `data.initialized` |
 | `authenticationError` | Auth failed | `account`, `data.response` |
 | `authenticationSuccess` | Auth succeeded | `account` |
 | `connectError` | Connection failed | `account`, `data.response` |
@@ -570,7 +571,9 @@ curl -X POST "https://emailengine.example.com/v1/authentication/form" \
 | MS Graph API | `outlook` | Microsoft native API | Azure AD app, graph subscription |
 | Outlook Application Access | `outlookService` | Microsoft 365 via client credentials | Azure AD app, tenant ID |
 | Mail.ru OAuth2 | `mailRu` | Mail.ru via OAuth2 + IMAP | OAuth2 app, refresh token |
-| Generic OAuth2 | `oauth2` | Generic OAuth2 provider | OAuth2 app configuration |
+| Delegated (Microsoft 365 shared mailbox) | `delegated` | Reported type: the account borrows another account's OAuth2 grant (`oauth2.auth.delegatedAccount`) | Parent `outlook` or `outlookService` account with a working OAuth2 app |
+
+The `type` field in an account response is derived, not stored. Besides the values above it can be `sending` (SMTP-only account, no IMAP or OAuth2 configuration), `oauth2` (the account references an OAuth2 application that no longer exists) and `invalid` (a delegated account whose parent is missing or broken). None of these three is something a request can ask for.
 
 ## Account States
 
@@ -584,7 +587,34 @@ curl -X POST "https://emailengine.example.com/v1/authentication/form" \
 | `authenticationError` | Credentials rejected | Update credentials or re-authorize |
 | `connectError` | Network/server error | Check connectivity |
 | `paused` | Syncing paused through the API | Resume syncing |
-| `unset` | No usable IMAP or OAuth2 configuration, or `imap.disabled` is set | Finish setup, or clear `imap.disabled` |
+| `unset` | Not syncing: no IMAP or OAuth2 configuration is set, or syncing was switched off, by the operator (`imap.disabled`) or automatically after repeated authentication failures (`authFailureDisabledAt` is set) | Finish setup, or supply working credentials to lift an automatic switch-off |
+
+## Account Object
+
+`GET /v1/account/{account}` returns these fields (`GET /v1/accounts` returns the same shape per entry, without `imap`, `smtp` and `oauth2` credentials):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `account` | string | Account ID |
+| `name`, `email` | string | Display name and default address |
+| `state` | string | One of the states above |
+| `type` | string | `imap`, `gmail`, `gmailService`, `outlook`, `outlookService`, `mailRu`, `oauth2`, `delegated`, `sending` or `invalid` |
+| `app` | string | OAuth2 application ID, for OAuth2 accounts |
+| `imap` | object | Stored IMAP settings with the password masked. `imap.disabled: true` means syncing is switched off |
+| `smtp` | object | Stored SMTP settings with the password masked |
+| `oauth2` | object | OAuth2 grant details (provider, user, scopes, token expiry), no secrets |
+| `authFailureDisabledAt` | string or null | Read-only. When the authentication-failure safety net switched syncing off, or `null`. `imap.disabled` is also the operator's own send-only switch, so this is what tells an automatic disable from a deliberate one. Supplying working credentials (re-authorize an OAuth2 account, or save new IMAP settings) lifts it |
+| `sendOnly` | boolean | The account sends mail but does not sync a mailbox |
+| `lastError` | object | Most recent error (`response`, `serverResponseCode`) |
+| `syncTime` | string | Last sync time (IMAP accounts) |
+| `connections` | integer | Open IMAP connections (IMAP accounts) |
+| `counters` | object | Event counters |
+| `quota` | object | Mailbox quota, when the server reports one |
+| `webhooks` | string | Account-specific webhook URL |
+| `notifyFrom` | string or null | Only send webhooks for messages received after this date |
+| `subconnections`, `path` | array | Extra folders watched in real time, and the folders synced at all |
+
+Since 2.79.4 both re-authorization through the hosted form and `PUT /v1/account/{account}` with working credentials clear `authFailureDisabledAt` and reconnect the account.
 
 ## Error Handling
 
@@ -597,9 +627,12 @@ curl -X POST "https://emailengine.example.com/v1/authentication/form" \
 | `401` | Unauthorized | Verify API token |
 | `403` | Forbidden | Check token permissions |
 | `404` | Not Found | Verify account/message ID |
-| `429` | Rate Limited | Retry with backoff |
+| `413` | Payload Too Large | Reduce the message size |
+| `422` | Unprocessable Entity | The account's backend cannot do this (for example a label filter on a non-Gmail IMAP account). Do not retry |
+| `429` | Rate Limited | Retry after `ttl` seconds from the body |
 | `500` | Server Error | Retry after delay |
-| `503` | Unavailable | Service restarting, retry |
+| `503` | Unavailable | The account is not connected; the body carries `state` and a `code` |
+| `504` | Gateway Timeout | A worker thread did not answer within `EENGINE_TIMEOUT` |
 
 ### Error Response Format
 
@@ -618,13 +651,20 @@ curl -X POST "https://emailengine.example.com/v1/authentication/form" \
 
 | Code | Description |
 |------|-------------|
-| `AccountNotFound` | Account doesn't exist |
-| `MessageNotFound` | Message doesn't exist |
-| `InvalidRequest` | Request validation failed |
-| `InvalidToken` | Missing or invalid API access token |
-| `AccountAlreadyExists` | An account with the same ID (or OAuth2 user) already exists |
-| `RateLimitExceeded` | Too many requests |
-| `ConnectionError` | Can't connect to mail server |
+| `MessageNotFound` | 404, message does not exist |
+| `FolderNotFound` | 404, mailbox path does not exist |
+| `NotFound` | 404, template, webhook route, OAuth2 app or gateway does not exist |
+| `SMTPUnavailable` | 404, the account has no SMTP or OAuth2 configuration to send with |
+| `AccountAlreadyExists` | 400, the OAuth2 user is already bound to another account under the same OAuth2 application (re-registering an account ID is an update, not an error) |
+| `MissingServerExtension` | 422, the IMAP server lacks an extension the request needs |
+| `NotYetConnected` | 503, the account has not connected yet |
+| `AuthenticationFails` | 503, the account's credentials are rejected |
+| `ConnectionError` | 503, the mail server cannot be reached |
+| `NotSyncing` | 503, syncing is switched off for the account (state `unset`) |
+| `IMAPUnavailable` | 503, the account's IMAP connection is not up right now |
+| `Timeout` | 504, a worker thread did not answer in time |
+
+A missing account is a plain `404` with the message `Account record was not found for requested ID` and no `code`. Validation failures are a plain `400` with `message: "Invalid input"` and a `fields` array. `401` and `403` responses carry no `code`.
 
 ## Decision Trees
 
@@ -710,7 +750,7 @@ flowchart TD
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `disabled` | boolean | `false` | Disable IMAP (send-only mode) |
+| `disabled` | boolean | `false` | Disable IMAP (send-only mode). Also set automatically by the authentication-failure safety net; `authFailureDisabledAt` tells the two apart |
 | `resyncDelay` | number | `900` | Seconds between full mailbox resyncs |
 | `sentMailPath` | string | auto | Custom Sent folder path |
 | `draftsMailPath` | string | auto | Custom Drafts folder path |
@@ -723,7 +763,7 @@ flowchart TD
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `EENGINE_REDIS` | Yes | Redis URL (e.g., `redis://localhost:6379/8`) |
+| `EENGINE_REDIS` | No | Redis URL (default: `redis://127.0.0.1:6379/8`) |
 | `EENGINE_SECRET` | Prod | Encryption key for credentials (32+ hex chars) |
 | `EENGINE_PORT` | No | API port (default: 3000) |
 | `EENGINE_HOST` | No | Bind address (default: 127.0.0.1) |
@@ -750,7 +790,7 @@ The `POST /v1/account/{account}/submit` endpoint accepts these key parameters:
 | `text` | string | Plain text body |
 | `html` | string | HTML body |
 | `from` | object | Override sender `{address, name}` |
-| `replyTo` | object | Reply-to address |
+| `replyTo` | array | Reply-To addresses `[{address, name}]` |
 | `attachments` | array | Attachments `[{filename, content, contentType}]` |
 | `headers` | object | Custom headers |
 | `reference` | object | For replies/forwards `{message, action}` |
@@ -759,7 +799,7 @@ The `POST /v1/account/{account}/submit` endpoint accepts these key parameters:
 | `sendAt` | string | Schedule sending (ISO 8601) |
 | `trackOpens` | boolean | Enable open tracking |
 | `trackClicks` | boolean | Enable click tracking |
-| `copy` | boolean | Save to Sent folder (default: true) |
+| `copy` | boolean | Save to Sent folder; unset follows the account's `copy` setting. SMTP deliveries only |
 | `dryRun` | boolean | Preview without sending |
 | `gateway` | string | Use specific SMTP gateway |
 | `deliveryAttempts` | number | Max retry attempts |

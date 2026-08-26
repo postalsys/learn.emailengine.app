@@ -132,10 +132,9 @@ Using the special use flag `\Sent` allows EmailEngine to automatically determine
 
 ### Important Considerations
 
-- Sub-connections open additional IMAP sessions
-- Parallel IMAP connections per account are typically limited (3-5)
-- Only list folders you genuinely need for instant notifications
-- Don't include all folders "just in case"
+- Each sub-connection is an additional IMAP session to the same account
+- Providers cap the number of parallel IMAP sessions per account, and the cap differs by provider
+- List only the folders that need immediate notification; every other folder is still polled
 
 **Read more**: [Enable Sub-Connections](/docs/accounts/managing-accounts#enable-sub-connections)
 
@@ -145,18 +144,19 @@ Using the special use flag `\Sent` allows EmailEngine to automatically determine
 
 Set up your webhook endpoint in EmailEngine's configuration:
 
-1. Navigate to "Configuration" → "Webhooks" in EmailEngine
-2. Enter your CRM webhook endpoint URL
-3. Select event types (recommend "New email" only to reduce load)
+1. Navigate to **Configuration** > **Webhooks** in EmailEngine and check **Enable Webhooks**
+2. Enter your CRM endpoint as the **Webhook URL**
+3. Tick the events to deliver. The list is an allowlist with no default, so an instance where nothing is ticked delivers nothing
 
-**Event Types**:
-- **messageNew**: New email added to a folder (covers both incoming and sent)
-- **messageDeleted**: Email deleted
-- **messageBounce**: Email bounced
-- **accountAdded**: Account connected
-- And others...
+**Event Types** (the ones a CRM sync uses):
+- **messageNew** ("New Email"): a message appeared in a folder, incoming and sent alike
+- **messageDeleted**: a message was removed from a folder
+- **messageBounce**: a bounce report arrived for a sent message
+- **accountAdded** and **accountDeleted**: an account was registered or removed
 
-**Best Practice**: Select only "New email" (messageNew) to minimize webhook volume. This event covers both incoming and sent emails.
+The full list is on the [webhook events reference](/docs/reference/webhook-events).
+
+**Best Practice**: Tick only **New Email** (`messageNew`) to keep the volume down. It covers both incoming and sent mail, and it is the one event the registry below is built on.
 
 ### Create Webhook Handler
 
@@ -264,9 +264,9 @@ function classifyEmail(payload) {
 
 **Note**: Some users have email filters that move specific emails to custom folders. Consider treating non-special folders as incoming emails.
 
-### Gmail and Outlook Exception
+### Servers That Provide `emailId`
 
-Gmail and Outlook (when connected via their APIs) provide a unique `emailId` property that persists across folders:
+Some servers also provide `emailId`, an identifier that stays the same when a message moves between folders: Gmail over IMAP and over the Gmail API, Microsoft Graph accounts, and IMAP servers that implement the `OBJECTID` extension. It is absent when the server offers nothing of the kind:
 
 ```json
 {
@@ -277,7 +277,7 @@ Gmail and Outlook (when connected via their APIs) provide a unique `emailId` pro
 }
 ```
 
-Use `emailId` for Gmail/Outlook API accounts if available, fall back to `messageId` for other providers (including standard IMAP connections).
+Use `emailId` when the payload carries it and fall back to `messageId` otherwise.
 
 ## Building a Message Registry
 
@@ -435,14 +435,18 @@ Enable users to send emails directly from the CRM interface using EmailEngine's 
 ```php
 <?php
 
-function sendEmailFromCRM($userId, $toEmail, $subject, $body) {
-    $ee = new EmailEngine([
+use Postalsys\EmailEnginePhp\EmailEngine;
+use Postalsys\EmailEnginePhp\Exceptions\EmailEngineException;
+
+function sendEmailFromCRM(string $userId, string $toEmail, string $subject, string $body): array
+{
+    $ee = EmailEngine::fromOptions([
         'access_token' => getenv('EMAILENGINE_TOKEN'),
         'ee_base_url' => getenv('EMAILENGINE_URL'),
     ]);
 
     try {
-        $response = $ee->request('post', "/v1/account/$userId/submit", [
+        $response = $ee->messages->submit($userId, [
             'to' => [
                 ['address' => $toEmail],
             ],
@@ -453,8 +457,9 @@ function sendEmailFromCRM($userId, $toEmail, $subject, $body) {
         return [
             'success' => true,
             'messageId' => $response['messageId'],
+            'queueId' => $response['queueId'],
         ];
-    } catch (Exception $e) {
+    } catch (EmailEngineException $e) {
         return [
             'success' => false,
             'error' => $e->getMessage(),
@@ -463,10 +468,11 @@ function sendEmailFromCRM($userId, $toEmail, $subject, $body) {
 }
 ```
 
-### Submission vs Outbox
+The `from` address is omitted, so EmailEngine uses the identity stored with the account, which is what a CRM user expects: the message leaves from their own mailbox and lands in their own Sent folder.
 
-- **Submit API**: Immediate sending (use for one-off emails)
-- **Outbox API**: Queued sending (use for bulk or scheduled sends)
+### Submission and the Outbox
+
+`POST /v1/account/{account}/submit` never sends inline. It validates the message, queues it, and returns `messageId` and `queueId`; delivery happens from the queue and is reported by the `messageSent` or `messageDeliveryError` webhook. A `sendAt` timestamp in the same request schedules the message instead of sending it at once. The [outbox endpoints](/docs/advanced/queue-management) list and cancel what is queued.
 
 **Read more**: [Sending Emails](/docs/sending)
 
@@ -481,7 +487,7 @@ EmailEngine tries to automatically detect the Sent Mail folder, but it may not a
 ```php
 <?php
 
-$ee->request('put', "/v1/account/$userId", [
+$ee->request('PUT', "/v1/account/$userId", [
     'imap' => [
         'partial' => true, // Update only the listed fields, keep the rest of the IMAP config
         'sentMailPath' => 'Sent Messages', // User-selected folder
@@ -544,7 +550,7 @@ Review what data is stored and your compliance obligations:
 - For very large deployments, manually shard accounts across completely separate EmailEngine instances
 - Each instance requires its own Redis database
 - Your application must route requests to the correct instance
-- Example: Accounts 0-999 → Instance A (Redis A), 1000-1999 → Instance B (Redis B)
+- Example: accounts 0 to 999 on instance A (Redis A), 1000 to 1999 on instance B (Redis B)
 
 **Read more**: [Performance Tuning](/docs/advanced/performance-tuning)
 

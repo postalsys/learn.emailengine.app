@@ -1,7 +1,7 @@
 ---
 title: IMAP API - REST API Wrapper for IMAP Protocol
 sidebar_label: REST API Wrapper for IMAP Protocol
-description: Access any IMAP mailbox through a simple REST API. EmailEngine converts complex IMAP protocol operations into easy HTTP requests with real-time webhooks.
+description: Access any IMAP mailbox through a REST API. EmailEngine turns IMAP protocol operations into HTTP requests and pushes mailbox changes as webhooks.
 sidebar_position: 99
 slug: /imap-api
 keywords:
@@ -15,7 +15,7 @@ keywords:
 
 # IMAP API - REST Interface for IMAP Mailboxes
 
-EmailEngine provides a **REST API for IMAP mailboxes**, eliminating the need to implement complex IMAP protocol handling in your application.
+EmailEngine provides a **REST API for IMAP mailboxes**, so an application does not have to implement the IMAP protocol itself.
 
 ## Why Use an IMAP API?
 
@@ -28,7 +28,7 @@ Working with IMAP directly requires:
 - **Connection pooling** - Efficiently managing multiple mailbox connections
 - **Error recovery** - Handling disconnections and reconnections
 
-EmailEngine handles all of this complexity, exposing IMAP functionality through simple REST endpoints with real-time webhook notifications.
+EmailEngine takes all of this on and exposes the mailbox through REST endpoints and webhook notifications.
 
 ## IMAP API Operations
 
@@ -100,8 +100,8 @@ Response:
   "to": [{"address": "you@example.com"}],
   "date": "2025-01-15T10:30:00Z",
   "text": {
-    "plain": "Hi, let's meet tomorrow at 2pm...",
-    "html": "<p>Hi, let's meet tomorrow at 2pm...</p>"
+    "plain": "Hi, let's meet tomorrow at 2pm.",
+    "html": "<p>Hi, let's meet tomorrow at 2pm.</p>"
   },
   "attachments": [
     {
@@ -237,9 +237,9 @@ EmailEngine works with any IMAP server:
 | **Google Workspace** | OAuth2 | Domain-wide delegation available |
 | **Microsoft 365** | OAuth2 | Or use Microsoft Graph API |
 | **Outlook.com** | OAuth2 | Consumer accounts |
-| **Yahoo Mail** | OAuth2 | Including AOL, Verizon |
+| **Yahoo Mail** | App Password | Including AOL and Verizon; native threading via the OBJECTID extension |
 | **FastMail** | App Password | Full IMAP support |
-| **ProtonMail** | Via Bridge | Requires ProtonMail Bridge |
+| **Proton Mail** | Via Bridge | Requires the Proton Mail Bridge |
 | **Zoho Mail** | App Password | IMAP enabled accounts |
 | **Custom IMAP** | User/Password or OAuth2 | Any standard IMAP server |
 
@@ -251,7 +251,7 @@ EmailEngine works with any IMAP server:
 | **Real-time Updates** | Implement IDLE | Webhooks |
 | **Authentication** | Handle OAuth2 flows | Built-in |
 | **Error Recovery** | Build yourself | Automatic reconnection |
-| **Protocol Complexity** | Full IMAP knowledge | Simple REST calls |
+| **Protocol Complexity** | Full IMAP knowledge | REST calls |
 | **Scaling** | Connection pooling | Managed per-account |
 
 ## Performance Considerations
@@ -272,9 +272,8 @@ This means:
 ### Connection Handling
 
 - One IMAP connection per registered account, plus one for each configured [sub-connection](/docs/accounts/managing-accounts#enable-sub-connections)
-- Automatic IDLE for real-time updates
-- Reconnection on network issues
-- Connection pooling for SMTP
+- IDLE on the watched folder for real-time updates
+- Reconnection with backoff after a dropped connection
 
 ## Get Started with IMAP API
 
@@ -299,6 +298,7 @@ curl -X POST http://localhost:3000/v1/account \
   -H "Content-Type: application/json" \
   -d '{
     "account": "my-mailbox",
+    "name": "My Mailbox",
     "email": "user@example.com",
     "imap": {
       "host": "imap.example.com",
@@ -320,6 +320,8 @@ curl "http://localhost:3000/v1/account/my-mailbox/messages?path=INBOX" \
 ```
 
 ### 4. Configure Webhooks
+
+`webhookEvents` is an allowlist with no default: name the events you want, or `["*"]` for all of them.
 
 ```bash
 curl -X POST http://localhost:3000/v1/settings \

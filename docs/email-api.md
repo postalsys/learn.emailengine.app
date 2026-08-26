@@ -24,7 +24,7 @@ EmailEngine exposes a **REST API for email integration**. Add sending, receiving
 
 ### Send Emails via API
 
-Send emails through any provider with a single REST endpoint. EmailEngine handles SMTP connections, OAuth2 authentication, retries, and delivery tracking automatically.
+Send emails through any provider with one REST endpoint. EmailEngine handles the SMTP connection, OAuth2 authentication, retries, and delivery tracking.
 
 ```bash
 curl -X POST "https://emailengine.example.com/v1/account/user123/submit" \
@@ -35,14 +35,16 @@ curl -X POST "https://emailengine.example.com/v1/account/user123/submit" \
     "subject": "Hello from EmailEngine",
     "html": "<p>Your message content</p>",
     "attachments": [
-      { "filename": "report.pdf", "content": "base64-encoded-content" }
+      { "filename": "hello.txt", "contentType": "text/plain", "content": "SGVsbG8gZnJvbSBFbWFpbEVuZ2luZQo=" }
     ]
   }'
 ```
 
+`content` is base64 by default; the [Sending API](/docs/api-reference/sending-api#attachments) covers the other encodings and referencing an attachment from an existing message.
+
 ### Receive Emails in Real-Time
 
-Get instant webhook notifications when emails arrive. No polling required - EmailEngine maintains persistent connections to mailboxes and pushes events to your application.
+Webhooks fire when emails arrive. No polling is required: EmailEngine keeps a connection open to each mailbox and pushes events to your application.
 
 ```json
 {
@@ -64,7 +66,7 @@ See [messageNew](/docs/webhooks/messagenew) for every field the event carries.
 
 ### Manage Email Accounts
 
-Register and manage multiple email accounts through the API. Support for Gmail, Microsoft 365, and any IMAP/SMTP provider with automatic reconnection and error recovery.
+Register and manage multiple email accounts through the API. Gmail, Microsoft 365, and any IMAP/SMTP provider are supported, with reconnection handled by EmailEngine.
 
 ```bash
 curl -X POST "https://emailengine.example.com/v1/account" \
@@ -72,6 +74,7 @@ curl -X POST "https://emailengine.example.com/v1/account" \
   -H "Content-Type: application/json" \
   -d '{
     "account": "support-inbox",
+    "name": "Support Inbox",
     "email": "support@yourcompany.com",
     "imap": {
       "host": "imap.yourprovider.com",
@@ -90,7 +93,7 @@ curl -X POST "https://emailengine.example.com/v1/account" \
 
 ### Search and Organize
 
-Search messages, manage folders, update flags, and download attachments - all through simple REST API calls.
+Search messages, manage folders, update flags, and download attachments through the same REST API.
 
 ```bash
 # Search a folder. The terms go in the request body, not the query string
@@ -129,9 +132,9 @@ EmailEngine works with any email service:
 
 - **Gmail & Google Workspace** - OAuth2 or Gmail API
 - **Microsoft 365 & Outlook.com** - OAuth2 or Microsoft Graph API
-- **Yahoo Mail** - IMAP/SMTP with OAuth2
-- **FastMail** - IMAP/SMTP
-- **ProtonMail** - Via ProtonMail Bridge
+- **Yahoo Mail** - IMAP/SMTP with an app password
+- **FastMail** - IMAP/SMTP with an app password
+- **Proton Mail** - Via the Proton Mail Bridge
 - **Any IMAP/SMTP server** - Standard protocol support
 
 ## API Capabilities
@@ -141,12 +144,12 @@ EmailEngine works with any email service:
 - **Receive emails** - Real-time webhooks, message listing
 - **Search** - Full-text and header-based search
 - **Attachments** - Upload, download, inline images
-- **Threading** - Conversation tracking (Gmail, Microsoft 365, Yahoo)
+- **Threading** - Conversation tracking where the provider exposes it (Gmail, Microsoft Graph, Yahoo and AOL); see [provider support](/docs/sending/threading/provider-support)
 
 ### Account Management
 - **OAuth2 flows** - Built-in authorization for Gmail and Microsoft
-- **Connection handling** - Automatic reconnection and error recovery
-- **Multi-account** - Manage thousands of accounts per instance
+- **Connection handling** - Reconnection with backoff after a dropped connection
+- **Multi-account** - One instance serves many accounts; see [performance tuning](/docs/advanced/performance-tuning) for sizing
 
 ### Advanced Features
 - **Bounce detection** - Automatic bounce and complaint handling
@@ -182,15 +185,17 @@ curl -X POST http://localhost:3000/v1/account \
   -H "Content-Type: application/json" \
   -d '{
     "account": "my-account",
+    "name": "My Gmail Account",
     "email": "user@gmail.com",
     "oauth2": {
       "provider": "AAABlf_0iLgAAAAQ",
+      "refreshToken": "1//0gExampleRefreshTokenFromGoogle",
       "auth": { "user": "user@gmail.com" }
     }
   }'
 ```
 
-`provider` is the ID of an OAuth2 application you registered in EmailEngine, not the name of the provider. The [account setup guide](/docs/accounts/managing-accounts) covers where the ID and the refresh token come from, and [hosted authentication](/docs/accounts/hosted-authentication) covers letting EmailEngine collect them for you.
+`provider` is the ID of an OAuth2 application you registered in EmailEngine, not the name of the provider, and `refreshToken` is what that application's authorization flow handed back. The [account setup guide](/docs/accounts/managing-accounts) covers where both come from, and [hosted authentication](/docs/accounts/hosted-authentication) covers letting EmailEngine collect them for you.
 
 ### 3. Send Your First Email
 
@@ -209,7 +214,7 @@ curl -X POST http://localhost:3000/v1/account/my-account/submit \
 
 ### 4. Set Up Webhooks
 
-Configure webhooks to receive real-time notifications:
+Configure webhooks to receive real-time notifications. `webhookEvents` is an allowlist with no default, so name the events you want, or `["*"]` for all of them:
 
 ```bash
 curl -X POST http://localhost:3000/v1/settings \

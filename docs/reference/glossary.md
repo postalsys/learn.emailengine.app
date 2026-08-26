@@ -101,6 +101,18 @@ An email account registered with EmailEngine. Each account represents a connecti
 
 A unique identifier for an account in EmailEngine. Can be auto-generated or specified during account creation. Used in API endpoints like `/v1/account/{accountId}/...`.
 
+### Account State
+
+The `state` value an account reports: `init`, `unset`, `connecting`, `syncing`, `connected`, `disconnected`, `connectError`, `authenticationError` or `paused`. `connected` is the healthy steady state. `unset` means the account is not syncing, either because no IMAP or OAuth2 configuration is set or because syncing was switched off. See [Account states](/docs/reference/quick-reference#account-connection-states).
+
+### Authentication Failure Safety Net
+
+The mechanism that stops an account from retrying forever once its credentials have been rejected continuously for longer than `EENGINE_MAX_IMAP_AUTH_FAILURE_TIME` (3 days by default). It sets `imap.disabled`, records the time in the read-only `authFailureDisabledAt` field, closes the connection and sends an `authenticationError` webhook; the account then reports `unset`. Supplying working credentials (re-authorizing an OAuth2 account, or saving new IMAP settings) lifts it, as does the "Resume syncing" button on the account page in the admin interface. Since 2.79.3 it covers OAuth2 accounts as well as password accounts. See [Max IMAP auth failure time](/docs/configuration/environment-variables#max-imap-auth-failure-time).
+
+### Send-Only Account
+
+An account whose `imap.disabled` flag is set by the operator so that it sends mail but does not sync a mailbox. The account reports `sendOnly: true` and state `unset`, and `authFailureDisabledAt` stays `null`, which is what distinguishes it from an account the safety net switched off.
+
 ### Message ID
 
 EmailEngine's unique identifier for a message, formatted as a Base64url-encoded string. Different from the email's Message-ID header.
@@ -131,7 +143,7 @@ An authentication credential for accessing the EmailEngine API. Created in the w
 
 ### Token Scope
 
-Permissions assigned to an API token. Valid scopes: `*` (full access), `api` (API access), `metrics` (Prometheus metrics only), `smtp` (SMTP gateway access), `imap-proxy` (IMAP proxy access), `mcp` ([MCP endpoint](/docs/mcp) access for AI agents).
+Permissions assigned to an API token. Valid scopes: `*` (full access), `api` (API access), `metrics` (Prometheus metrics only), `smtp` (SMTP gateway access), `imap-proxy` (IMAP proxy access), `mcp` ([MCP endpoint](/docs/mcp) access for AI agents). `POST /v1/tokens` accepts `api`, `smtp`, `imap-proxy` and `mcp`; a `metrics`-only token is issued from the admin interface or with `emailengine tokens issue -s metrics`.
 
 ### MCP (Model Context Protocol)
 
@@ -161,7 +173,7 @@ The job queue system used by EmailEngine for background processing. Handles webh
 
 ### Queue
 
-A named list of jobs waiting to be processed. EmailEngine uses separate queues for different task types (notify, submit, documents).
+A named list of jobs waiting to be processed. EmailEngine uses separate queues for different task types: `notify` (webhooks), `submit` (outgoing mail) and `export` (mailbox exports).
 
 ### Job
 

@@ -130,9 +130,9 @@ Embed email functionality in business apps:
 
 ### Reliability
 
-- **Webhook Retry Logic**: Implement retry mechanisms for failed webhooks
-- **Queue Management**: Handle webhook processing asynchronously
-- **Error Handling**: Gracefully handle API errors and timeouts
+- **Webhook Retries**: EmailEngine retries a delivery that does not get a 2xx response, so make the receiver idempotent rather than assuming each event arrives once
+- **Queue Management**: Acknowledge a webhook immediately and process it asynchronously
+- **Error Handling**: Handle API errors and timeouts; the [error reference](/docs/reference/error-codes) lists what to expect
 - **Monitoring**: Track system health and performance metrics
 
 **Read more**: [Monitoring](/docs/advanced/monitoring)

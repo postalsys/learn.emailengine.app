@@ -16,7 +16,8 @@ Complete information about EmailEngine subscription-based licensing, free trial,
 - **Production:** Annual subscription with unlimited license keys
 - **Pricing:** Flat annual subscription<Price />, excluding VAT - [view current plans](https://postalsys.com/plans)
 - **License Keys:** Generate unlimited keys per subscription
-  :::
+
+:::
 
 ## Free Trial
 
@@ -54,10 +55,16 @@ emailengine
 
 **After trial expires:**
 
-- EmailEngine stops accepting connections
-- Existing accounts remain in database
-- No data loss
-- Activate with license key to continue
+- At the next license check (they run every 20 minutes, and at startup) EmailEngine stops the IMAP, sending, SMTP server, webhook and IMAP proxy workers
+- The API and the admin interface keep running, so a key can still be activated, and `GET /v1/license` reports `"suspended": true`
+- Accounts and their data stay in Redis
+- Activating a license key restarts the workers without a restart of the process
+
+**One trial per instance:**
+
+A trial key is tied to the Redis database it was activated in. Activating a second, different trial key on the same instance is refused with `Trial already activated`. The key is time-limited and verified offline, so a trial instance makes no validation calls.
+
+A trial also switches on error reporting to the Sentry instance run by the EmailEngine developers (the `sentryEnabled` setting) until you set that setting yourself or activate a full license. See [Logging and monitoring](/docs/configuration/environment-variables) under the environment variables for how to point it at your own Sentry or keep it off.
 
 **Best for:**
 
@@ -151,9 +158,11 @@ graph TB
 
 ### What a Licensed Instance Sends Home
 
-A subscription license is validated against `postalsys.com` once a day. That request carries the license key, a stable instance ID, and an anonymized feature beacon: which features are on, coarse magnitude tiers rather than exact counts, the mail providers in use, and runtime facts such as the Node.js version. It never carries email content, addresses, URLs, or credentials.
+A subscription license is validated against `postalsys.com` at startup after an upgrade and periodically after that: the validation response sets the next check, at most 30 days out, and checks are never closer together than 24 hours. That request carries the license key, the EmailEngine version, a stable instance ID, and an anonymized feature beacon: which features are on, coarse magnitude tiers rather than exact counts, the mail providers in use, and runtime facts such as the Node.js version. It never carries email content, addresses, URLs, or credentials.
 
-Set `EENGINE_BEACON_DISABLED=true` to drop the beacon from the request while keeping validation. A perpetual license is verified offline and makes no request at all.
+Set `EENGINE_BEACON_DISABLED=true` to drop the beacon from the request while keeping validation. A perpetual license, a trial key and any other time-limited key are verified offline and make no request at all.
+
+If the validation service reports the subscription as invalid, the instance keeps running on the stored key for 28 days and rechecks hourly. Only when that window passes without a successful validation is the key removed and the workers suspended, exactly as after a trial expires. A network failure during validation is logged and retried; it never suspends anything.
 
 See [Compliance and data handling](/docs/deployment/compliance) for the full outbound picture, including the optional features that reach other services.
 
@@ -217,8 +226,8 @@ _A fresh, unlicensed installation shows the "Start a 14-day trial" button at the
 
 **Option 1: Web Dashboard (Recommended)**
 
-1. Access web interface: `http://127.0.0.1:3000`
-2. Navigate to **License** page: `http://127.0.0.1:3000/admin/config/license`
+1. Access web interface: `http://localhost:3000`
+2. Navigate to **License** page: `http://localhost:3000/admin/config/license`
 3. Paste the license key into the text field (or use **Upload License File**)
 4. Click **Activate License**
 
@@ -231,72 +240,55 @@ This is the easiest method for manual activation.
 
 **Option 2: Environment Variable**
 
-For automated deployments and containerized environments:
+For automated deployments and containerized environments, put the key in `EENGINE_PREPARED_LICENSE` and EmailEngine imports it at startup:
 
 ```bash
 export EENGINE_PREPARED_LICENSE="-----BEGIN LICENSE-----
 Application: EmailEngine
 Licensed to: Your Company Name
 
-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9abcdefghijklmnopqrstuvwxyz...
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9abcdefghijklmnopqrstuvwxyz
 -----END LICENSE-----"
 
-# Start EmailEngine
 emailengine
 ```
 
-**For SystemD service:**
-
-Edit `/etc/systemd/system/emailengine.service` and add to the `[Service]` section:
-
-```ini
-[Service]
-Environment="EENGINE_PREPARED_LICENSE=-----BEGIN LICENSE-----\nApplication: EmailEngine\nLicensed to: Your Company Name\n\neyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9abcdefghijklmnopqrstuvwxyz...\n-----END LICENSE-----"
-```
-
-Then reload and restart the service:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl restart emailengine
-```
-
-**For Docker:**
-
-```bash
-docker run -d \
-  --env EENGINE_PREPARED_LICENSE="-----BEGIN LICENSE-----
-Application: EmailEngine
-Licensed to: Your Company Name
-
-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9abcdefghijklmnopqrstuvwxyz...
------END LICENSE-----" \
-  postalsys/emailengine:v2
-```
-
-**For Docker Compose:**
-
-```yaml
-services:
-  emailengine:
-    environment:
-      - EENGINE_PREPARED_LICENSE=${EENGINE_PREPARED_LICENSE}
-```
+The same value works as the `--preparedLicense` command-line argument and as `preparedLicense` in a config file, and the single-line form printed by `emailengine license export` is accepted too. [Prepared license](/docs/configuration/prepared-settings/license) has the SystemD, Docker and Docker Compose variants and the format details.
 
 ---
 
-**Option 3: Command Line**
+**Option 3: API**
 
-For quick testing or scripts:
+`POST /v1/license` registers a key on a running instance, which is what a provisioning script uses after the process is already up. The earlier steps address an instance you have just installed on your own machine, so they use `localhost`; this one addresses a deployment, so it uses the deployment's address:
 
 ```bash
-emailengine --preparedLicense="-----BEGIN LICENSE-----
-Application: EmailEngine
-Licensed to: Your Company Name
-
-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9abcdefghijklmnopqrstuvwxyz...
------END LICENSE-----"
+curl -X POST "https://emailengine.example.com/v1/license" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "license": "-----BEGIN LICENSE-----\nApplication: EmailEngine\nLicensed to: Your Company Name\n\neyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9abcdefghijklmnopqrstuvwxyz\n-----END LICENSE-----"
+  }'
 ```
+
+The response is the same object `GET /v1/license` returns:
+
+```json
+{
+  "active": true,
+  "type": "EmailEngine License",
+  "details": {
+    "application": "@postalsys/emailengine-app",
+    "key": "1edf01e35e75ed3425808eba",
+    "licensedTo": "Your Company Name",
+    "hostname": "emailengine.example.com",
+    "created": "2026-01-13T07:47:42.695Z",
+    "trial": false,
+    "lt": false
+  }
+}
+```
+
+`details` is `false` on an unlicensed instance, `details.expires` is present only for time-limited keys such as a trial, `lt` marks a lifetime license, and `suspended: true` appears while the workers are stopped for want of a license. `DELETE /v1/license` removes the key and the instance drops back to the unlicensed state described above. All three endpoints need a token that is not narrowed with a `permissions` record, because license management is in the never-grantable group. See the [License API](/docs/api/get-v-1-license).
 
 ## Managing Your Subscription
 
@@ -370,10 +362,9 @@ You can invite teammates to help manage license keys and billing:
 1. **Subscription canceled automatically**
 2. **All license keys revoked**
 3. **EmailEngine instances:**
-   - Stop accepting new connections
-   - Existing data preserved
-   - Cannot process emails
-   - All accounts remain in database
+   - Stop syncing, sending and delivering webhooks once the key fails validation and the [28-day window](#what-a-licensed-instance-sends-home) has passed
+   - The API and the admin interface keep answering
+   - All accounts and data remain in Redis
 
 **To restore service:**
 
@@ -397,8 +388,8 @@ You can invite teammates to help manage license keys and billing:
 
    - Subscription expires
    - All license keys revoked
-   - EmailEngine instances stop functioning
-   - All data preserved in database
+   - EmailEngine instances stop syncing and sending after the [28-day window](#what-a-licensed-instance-sends-home)
+   - All data preserved in Redis
 
 3. **To continue service:**
    - Resubscribe before expiration date
@@ -415,7 +406,7 @@ Nov 15, 2025: Cancel subscription voluntarily
               → License keys still valid
 Jan 1, 2026:  Subscription expires (original renewal date)
               → License keys revoked
-              → EmailEngine stops functioning
+              → EmailEngine instances stop syncing and sending after the 28-day window
 ```
 
 ## FAQ
@@ -428,7 +419,7 @@ A: 14 days from when you click the "Start a 14-day trial" button. Full functiona
 
 **Q: What happens when trial expires?**
 
-A: EmailEngine stops accepting connections. All data preserved. Activate with license key to continue.
+A: The IMAP, sending, SMTP server, webhook and IMAP proxy workers are stopped at the next license check; the API and the admin interface stay up and all data is preserved. Activate a license key to restart the workers.
 
 **Q: Can I extend the trial?**
 
@@ -489,3 +480,4 @@ A: EU customers are billed in euros, customers elsewhere in US dollars. See http
 - [Compliance and data handling](/docs/deployment/compliance) - Everything an instance sends out
 - [Prepared license](/docs/configuration/prepared-settings/license) - Activating a key without touching the interface
 - [CLI reference](/docs/configuration/cli#license-management) - Importing and exporting keys from the command line
+- [License API](/docs/api/get-v-1-license) - Reading, registering and removing a key over the API

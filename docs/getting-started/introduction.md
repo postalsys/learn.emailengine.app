@@ -25,7 +25,7 @@ One REST API covers every account type it supports:
 
 ## What EmailEngine is NOT
 
-Understanding what EmailEngine does not do is just as important as knowing what it does:
+Understanding what EmailEngine does not do is as important as knowing what it does:
 
 ### Not a Mail Server
 
@@ -101,7 +101,7 @@ Run EmailEngine on your own infrastructure for complete control over your email 
 
 ## Quick Start
 
-Get started with EmailEngine in just a few steps:
+Getting started takes five steps:
 
 1. **[Install EmailEngine](/docs/installation)** - Download and set up EmailEngine on your server
 2. **[Configure Redis](/docs/configuration/redis)** - Set up Redis for data storage
@@ -120,7 +120,7 @@ See [Installation](/docs/installation) for the per-platform figures and what dri
 
 ## License
 
-EmailEngine includes a **14-day free trial** with full functionality and no limitations. No credit card required - just click "Activate Trial" in the dashboard to begin.
+EmailEngine includes a **14-day free trial** with full functionality and no limitations. No credit card is required: the trial is activated from the **License** page in the admin interface, as described under [Free Trial](/docs/licensing#free-trial).
 
 For production use, [get a license key](https://postalsys.com/plans) from postalsys.com<Price />.
 

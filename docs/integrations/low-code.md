@@ -15,7 +15,7 @@ Anything that can receive a webhook and make an HTTP request can drive EmailEngi
 ### Integration Options
 
 1. **Webhook Routes**: Custom webhook transformations within EmailEngine
-2. **Zapier**: Popular automation platform with 5000+ app integrations
+2. **Zapier**: Hosted automation platform with a webhook trigger
 3. **Make.com** (Integromat): Visual automation builder
 4. **n8n**: Open-source workflow automation
 5. **Discord/Slack**: Team notifications
@@ -68,12 +68,17 @@ if (payload.event === "messageNew" &&
 return false;
 ```
 
-**Available Features**:
-- Top-level `async/await` support
-- [Fetch API](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API) for external HTTP requests
-- All JavaScript standard library functions
+**Available in the function**:
+- `payload`, the webhook payload as it would be delivered
+- Top-level `await`; the code runs as the body of an async function
+- `fetch()` for outbound HTTP requests, routed through EmailEngine's own HTTP agent (proxy settings and retries apply), plus `URL`
+- `env`, the parsed `scriptEnv` setting, for API keys and other values you do not want in the code
+- `logger`, which writes to EmailEngine's log
+- The JavaScript standard library. There is no `require()`
 
-**Development Note**: The demo function runner in EmailEngine's web interface runs in browser context, so `fetch()` is limited by CORS. Actual functions run on the server without this limitation.
+The function returns a value; a truthy one forwards the event to this route. Errors are logged, kept in the route's error log in the admin UI, and treated as "do not send".
+
+**Development Note**: **Set test payload** and **Send webhook preview** on the route's edit page evaluate the functions in a Web Worker inside your browser, so a `fetch()` in a test run is subject to CORS. On the server the same code runs without that restriction.
 
 ### 2. Mapping Function
 
@@ -88,8 +93,8 @@ return {
 ```
 
 **The function should return**:
-- Object or string for JSON POST body
-- `null` to skip sending the webhook
+- The value to deliver. An object or array is sent as the JSON body; a string is sent JSON-encoded as well
+- If the function returns nothing, `null`, or any other falsy value, or is not defined at all, the original EmailEngine payload is delivered unchanged. Returning a value never cancels a delivery; that decision belongs to the filter function. A mapping function that throws is the one exception: the error is logged and that delivery is dropped
 
 ### 3. Target URL
 
@@ -106,7 +111,7 @@ The webhook endpoint URL of your target service.
 ### Configure Discord Webhook
 
 1. Open Discord server settings
-2. Navigate to Integrations → Webhooks
+2. Navigate to Integrations > Webhooks
 3. Click "New Webhook"
 4. Set name (e.g., "EmailEngine") and channel
 5. Copy webhook URL
@@ -207,7 +212,7 @@ return {
                         type: 'plain_text',
                         text: 'View in EmailEngine'
                     },
-                    url: `${payload.serviceUrl}/admin/accounts/${payload.account}/messages/${payload.data.id}`
+                    url: `${payload.serviceUrl}/admin/accounts/${payload.account}`
                 }
             ]
         }
@@ -216,6 +221,8 @@ return {
 ```
 
 **Target URL**: Your Slack incoming webhook URL
+
+`payload.serviceUrl` is the instance's configured service URL, included at the top level of every webhook payload. The admin UI has no per-message address, so the button opens the account page, where the message browser is one click away.
 
 ## Example: Custom API Integration
 
@@ -255,8 +262,8 @@ return {
 ### Filter by Account
 
 ```javascript
-// Only process events for specific accounts
-const accountsToMonitor = ['sales@company.com', 'support@company.com'];
+// Only process events for specific account IDs
+const accountsToMonitor = ['sales-shared', 'support-shared'];
 
 if (accountsToMonitor.includes(payload.account)) {
     return true;
@@ -347,6 +354,8 @@ return {
 ```
 
 ### Conditional Formatting
+
+`payload.data.text` is present only when **Include email text and HTML** is enabled under Configuration > Webhooks; otherwise `preview` below is an empty string.
 
 ```javascript
 // Different formats based on email type
@@ -446,7 +455,7 @@ After receiving the trigger, you can:
 
 ### Example Make Scenario
 
-**EmailEngine → Make → Google Sheets + Slack**
+**EmailEngine to Make to Google Sheets and Slack**
 
 1. **Webhook**: Receive email event from EmailEngine
 2. **Filter**: Only process emails with attachments
@@ -468,11 +477,11 @@ n8n is an open-source workflow automation tool.
 
 ### Example n8n Workflow
 
-```
-Webhook → IF (check conditions) → Multiple outputs:
-  ├─→ Send Telegram notification
-  ├─→ Save to PostgreSQL
-  └─→ Call API endpoint
+```text
+Webhook > IF (check conditions) > multiple outputs:
+  - Send Telegram notification
+  - Save to PostgreSQL
+  - Call API endpoint
 ```
 
 n8n builds workflows visually and can branch on arbitrary expressions.
@@ -481,13 +490,15 @@ n8n builds workflows visually and can branch on arbitrary expressions.
 
 ### Using the Test Feature
 
-EmailEngine provides a test interface for webhook routes:
+The route editor evaluates both functions against a sample payload without waiting for a real event:
 
-1. Navigate to Webhook Routes in the sidebar
+1. Navigate to **Integrations** > **Webhook Routes** in the sidebar
 2. Create or edit a webhook route
-3. Use the "Test" button
-4. Provide sample payload
-5. View results (filtered, transformed, sent)
+3. Click **Set test payload** and pick one of the example payloads, or paste one of your own
+4. Read the filter result and the mapped output shown under the editors
+5. Click **Send webhook preview** to deliver the mapped output to the target URL from your browser
+
+The functions run in your browser here; on the server they run in EmailEngine's own JavaScript context.
 
 ### Testing with Real Events
 

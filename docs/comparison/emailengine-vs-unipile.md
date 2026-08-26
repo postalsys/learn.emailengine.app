@@ -15,14 +15,18 @@ import Price from '@site/src/components/Price';
 
 # EmailEngine vs Unipile: Email API Comparison
 
-Comparing **email-focused self-hosted API** (EmailEngine) vs **multi-channel managed service** (Unipile). This guide helps you choose the right solution for your project.
+This page compares an email-only, self-hosted API (EmailEngine) with a multi-channel managed service (Unipile), to help you choose the right one for your project.
 
-A shorter, decision-focused version of this comparison, covering channel scope, pricing arithmetic, and where each product wins, is on the main site: [EmailEngine vs Unipile](https://emailengine.app/unipile-alternative).
+A shorter, decision-focused version, covering channel scope, pricing arithmetic, and where each product wins, is on the main site: [EmailEngine vs Unipile](https://emailengine.app/unipile-alternative).
+
+:::info About the Unipile figures on this page
+Statements about Unipile describe its public [website](https://www.unipile.com/) and [pricing page](https://www.unipile.com/pricing-api/) as read on 26 August 2026. Unipile revises both, and this page is not updated when it does. "Not advertised" in a table means the feature is not listed on those pages, not that it is absent. Statements about EmailEngine describe version 2.79.4.
+:::
 
 :::info Summary
 
-- **Unipile:** Fully managed SaaS with multi-channel messaging (Email + LinkedIn + WhatsApp)
-- **EmailEngine:** Self-hosted email-focused solution with flat pricing and data sovereignty
+- **Unipile:** Fully managed SaaS with multi-channel messaging (email, LinkedIn, WhatsApp, Instagram, Telegram) and calendars
+- **EmailEngine:** Self-hosted, email only, flat annual license, mailbox data stays on your infrastructure
 
 Choose based on your priorities: multi-channel integration vs control and cost.
 :::
@@ -31,16 +35,15 @@ Choose based on your priorities: multi-channel integration vs control and cost.
 
 | Feature                  | EmailEngine                 | Unipile                                 |
 | ------------------------ | --------------------------- | --------------------------------------- |
-| **Hosting**              | Self-hosted                 | Fully managed SaaS                      |
-| **Data Storage**         | Metadata only (in Redis)    | Full message copies in Unipile cloud    |
-| **Pricing Model**        | Flat yearly license<Price /> | Per-account (3-5 EUR/month)             |
-| **Setup Time**           | 5-10 minutes                | Instant (signup)                        |
-| **Data Residency**       | Your infrastructure         | EU (France - Scaleway)                  |
-| **Multi-Channel**        | Email only                  | Email + LinkedIn + WhatsApp + more      |
-| **Calendar**             | No                          | Yes (Google/Outlook only)               |
-| **Webhook Latency**      | Near-instant                | Similar                                 |
-| **Compliance**           | Full control                | SOC 2, GDPR                             |
-| **Support**              | Community + Direct          | Enterprise support                      |
+| **Hosting**              | Self-hosted                 | Fully managed SaaS, cloud only          |
+| **Data Storage**         | Metadata only, in your Redis | Synced into Unipile infrastructure     |
+| **Pricing Model**        | Flat yearly license<Price /> | Per connected account per month, volume tiers |
+| **Getting started**      | Install and configure an instance | Sign up                           |
+| **Data Residency**       | Your infrastructure         | Unipile cloud                           |
+| **Multi-Channel**        | Email only                  | Email, LinkedIn, WhatsApp, Instagram, Telegram |
+| **Calendar**             | No                          | Google Calendar and Outlook Calendar    |
+| **Compliance**           | Your controls, your audits  | SOC 2 Type II and GDPR listed           |
+| **Support**              | Direct from the developers  | Vendor support                          |
 
 ## Key Architectural Differences
 
@@ -50,8 +53,7 @@ Choose based on your priorities: multi-channel integration vs control and cost.
 
 - Cloud-hosted service (SaaS only)
 - No infrastructure management
-- Automatic scaling
-- EU-based data centers (Scaleway, France)
+- Scaling handled by the vendor
 - **Trade-off:** Vendor dependency, no self-hosted option
 
 **EmailEngine:**
@@ -63,7 +65,7 @@ Choose based on your priorities: multi-channel integration vs control and cost.
 
 **Best for:**
 
-- **Unipile:** Teams without DevOps capacity, need multi-channel messaging
+- **Unipile:** Teams without DevOps capacity that need multi-channel messaging
 - **EmailEngine:** Teams with existing infrastructure or strict data requirements
 
 ---
@@ -76,7 +78,7 @@ Choose based on your priorities: multi-channel integration vs control and cost.
 graph LR
     Mailbox[User Mailbox]
     Sync[Sync<br/>copies messages]
-    Database[Unipile Database<br/>EU/France]
+    Database[Unipile Database]
     API[API Response]
 
     Mailbox --> Sync
@@ -89,9 +91,8 @@ graph LR
     style API fill:#e8f5e9
 ```
 
-- **Stores:** Message copies, metadata, attachments
-- **Location:** EU-based servers (Scaleway, France)
-- **Advantages:** Fast reads, unified multi-channel inbox
+- **Stores:** Synced messages and metadata across the connected channels
+- **Advantages:** Fast reads, one inbox model across channels
 - **Disadvantages:** Data stored on third-party servers
 
 **EmailEngine:**
@@ -113,11 +114,11 @@ graph LR
 
 - **Stores:** Message UIDs, flags, folder structure only
 - **Advantages:** Minimal data exposure, no third-party storage
-- **Disadvantages:** Slightly slower first-time reads
+- **Disadvantages:** Every read goes to the mail server, so it is bounded by the server's speed and limits
 
 **Best for:**
 
-- **Unipile:** Multi-channel communication apps, EU data residency requirements
+- **Unipile:** Multi-channel communication apps
 - **EmailEngine:** Maximum privacy, full data control on your own infrastructure
 
 ---
@@ -127,22 +128,20 @@ graph LR
 **Unipile:**
 
 - Email (Gmail, Outlook, IMAP)
-- LinkedIn messaging (including Recruiter & Sales Navigator)
-- WhatsApp (Classic and Business)
-- Instagram Direct
-- Facebook Messenger
+- LinkedIn messaging
+- WhatsApp
+- Instagram
+- Telegram
 - Calendar (Google, Outlook)
-- X (Twitter) messaging
 
 **EmailEngine:**
 
-- Email only (Gmail, Outlook, IMAP/SMTP)
-- Deep email protocol integration
-- Advanced email features (bounce detection, delivery tracking)
+- Email only (Gmail, Microsoft 365, IMAP/SMTP)
+- Protocol-level email features: bounce detection, delivery tracking, mail merge, stored templates, an SMTP interface, an IMAP proxy
 
 **Best for:**
 
-- **Unipile:** Sales outreach, recruiting, CRM integrations needing multiple channels
+- **Unipile:** Sales outreach, recruiting, CRM integrations that need several channels
 - **EmailEngine:** Email-focused applications requiring maximum control
 
 ## Feature Comparison
@@ -152,40 +151,40 @@ graph LR
 | Feature          | EmailEngine                    | Unipile            |
 | ---------------- | ------------------------------ | ------------------ |
 | IMAP/SMTP        | Yes                            | Yes                |
-| Gmail API        | Yes                            | Yes (OAuth2)       |
-| Outlook/Exchange | Yes                            | Yes (OAuth2)       |
-| OAuth2           | Yes                            | Yes                |
+| Gmail            | Yes (Gmail API or IMAP)        | Yes                |
+| Outlook          | Yes (Microsoft Graph or IMAP)  | Yes                |
+| OAuth2           | Yes, your own OAuth2 apps      | Yes, hosted authentication |
 | Webhooks         | Yes                            | Yes                |
 | Send emails      | Yes                            | Yes                |
 | Attachments      | Yes                            | Yes                |
-| Search           | Yes (IMAP search)              | Yes                |
-| Labels/Tags      | Yes                            | Yes                |
-| Threading        | Partial (Gmail/MS Graph/Yahoo) | Yes                |
-| Bounce Detection | Yes                            | No                 |
-| Mail Merge       | Yes                            | No                 |
-| Templates        | Yes (server-side)              | No                 |
+| Search           | Yes (IMAP search, or the provider API's search) | Not advertised |
+| Labels/Tags      | Yes                            | Not advertised     |
+| Threading        | Partial (Gmail, Microsoft Graph, Yahoo) | Not advertised |
+| Bounce Detection | Yes                            | Not advertised     |
+| Mail Merge       | Yes                            | Not advertised     |
+| Templates        | Yes (server-side)              | Not advertised     |
 
 ### Beyond Email
 
 | Feature            | EmailEngine | Unipile                  |
 | ------------------ | ----------- | ------------------------ |
-| LinkedIn Messaging | No          | Yes (full integration)   |
+| LinkedIn Messaging | No          | Yes                      |
 | WhatsApp           | No          | Yes                      |
 | Instagram DM       | No          | Yes                      |
-| Facebook Messenger | No          | Yes                      |
-| Calendar Sync      | No          | Yes (Google/Outlook)     |
-| Meeting Scheduling | No          | Yes                      |
+| Telegram           | No          | Yes                      |
+| Calendar Sync      | No          | Yes (Google, Outlook)    |
 
 ### Integration Features
 
 | Feature          | EmailEngine                    | Unipile                       |
 | ---------------- | ------------------------------ | ----------------------------- |
-| REST API         | Yes                            | Yes (500+ endpoints)          |
+| REST API         | Yes, with an OpenAPI spec      | Yes                           |
 | Webhooks         | Yes                            | Yes                           |
-| Webhook retry    | Yes                            | Yes                           |
-| Batch operations | Yes (mail merge, bulk updates) | Limited                       |
-| Rate limiting    | Configure yourself             | No Unipile limits (provider limits apply) |
-| SDKs             | Community                      | Official (Node.js, PHP)         |
+| Webhook retry    | Yes                            | Not advertised                |
+| Batch operations | Yes (mail merge, multi-message actions) | Not advertised       |
+| Rate limiting    | Per-token limits you set, plus whatever the mail server enforces | Unlimited API calls advertised; provider limits apply |
+| SDKs             | Official PHP SDK; other languages use the REST API | SDK and n8n integration advertised |
+| AI agents        | MCP endpoint (beta)            | MCP advertised                |
 
 ## Pricing Deep Dive
 
@@ -212,38 +211,14 @@ graph LR
 
 ### Unipile Pricing
 
-:::warning These figures were current on 9 December 2025
-Vendors revise pricing, and this page is not updated when they do. Treat the numbers below as the shape of the pricing model rather than a quote, and read the current rates at [unipile.com/pricing-api](https://www.unipile.com/pricing-api/).
-:::
+Unipile publishes its rates at [unipile.com/pricing-api](https://www.unipile.com/pricing-api/). The figures change, so this page describes the shape of the model as read on 26 August 2026 rather than quoting them:
 
-**Structure:** Per connected account per month with volume discounts.
-
-**Pricing Tiers:**
-
-| Connected Accounts | EUR per account per month |
-| ------------------ | ------------------------- |
-| Up to 10           | 49 EUR flat total         |
-| 11-50              | 5.00 EUR                  |
-| 51-200             | 4.50 EUR                  |
-| 201-1,000          | 4.00 EUR                  |
-| 1,001-5,000        | 3.50 EUR                  |
-| 5,001+             | 3.00 EUR                  |
-
-Unipile quotes in euros. Any dollar figure depends on the rate on the day, so convert at the time rather than working from a number here.
-
-**What's Included (All Tiers):**
-
-- All features (Email, LinkedIn, WhatsApp, Calendar, etc.)
-- Unlimited API calls
-- Real-time webhooks
-- Official SDKs
-- No commitment required
-
-**Free Trial:**
-
-- 7 days
-- All features included
-- No credit card required
+- **Per connected account per month.** Each linked identity (a LinkedIn profile, a WhatsApp number, an email address) is one account; a Gmail or Outlook account with its calendar counts once
+- **Volume tiers.** A flat monthly minimum covers the smallest tier, then the per-account rate steps down as the account count grows, with custom pricing above the largest tier
+- **Quoted in euros**, with a dollar column alongside; prices exclude VAT
+- **Billed post-paid** at 30-day intervals on the peak number of linked accounts in the period
+- **All features on every tier:** every channel, unlimited API calls, webhooks, hosted authentication
+- **Free trial:** 7 days, no credit card required
 
 **Cost scales with connected account count.**
 
@@ -251,16 +226,15 @@ Unipile quotes in euros. Any dollar figure depends on the rate on the day, so co
 
 **Choose Unipile if:**
 
-- You need multi-channel messaging (LinkedIn, WhatsApp, etc.)
-- You want EU-hosted data (GDPR compliance)
-- You don't need to self-host
+- You need multi-channel messaging (LinkedIn, WhatsApp, Instagram, Telegram)
+- You do not want to self-host
 - You're building a CRM, ATS, or sales outreach tool
 
 **Choose EmailEngine if:**
 
 - You only need email integration
 - You want to self-host for maximum control
-- You have many mailboxes and want predictable flat pricing
+- You have enough mailboxes that a per-account price outgrows a flat one. Work the break-even out from the current Unipile rates and your hosting costs
 - Data must stay on your own infrastructure
 
 ## Operational Considerations
@@ -269,30 +243,22 @@ Unipile quotes in euros. Any dollar figure depends on the rate on the day, so co
 
 | Aspect                 | EmailEngine                                        | Unipile                              |
 | ---------------------- | -------------------------------------------------- | ------------------------------------ |
-| **Vertical Scaling**   | Increase server resources (CPU, RAM)               | Automatic, transparent               |
-| **Horizontal Scaling** | NOT SUPPORTED (no built-in coordination)           | Automatic, transparent               |
-| **Bottleneck**         | Usually Redis or network to IMAP servers           | Provider API limits                  |
-| **Max Scale**          | Several thousand mailboxes per instance            | Unlimited (provider limits apply)    |
-| **Scaling Effort**     | Manual configuration required                      | Zero configuration                   |
+| **Vertical Scaling**   | Increase server resources (CPU, RAM)               | Managed by the vendor                |
+| **Horizontal Scaling** | Not supported: instances do not coordinate, so two instances on one Redis both sync every account | Managed by the vendor |
+| **Bottleneck**         | Usually Redis or the network path to the mail servers | Provider limits                   |
+| **Max Scale**          | Up to several thousand mailboxes per instance, see [Performance Tuning](/docs/advanced/performance-tuning) | Managed by the vendor |
+| **Scaling Effort**     | Manual configuration required                      | None on your side                    |
 
 **Best for:**
 
-- **EmailEngine:** Small to medium scale (under 5,000 mailboxes per instance)
-- **Unipile:** Any scale, especially when multi-channel is needed
+- **EmailEngine:** Small to medium scale (under a few thousand mailboxes per instance)
+- **Unipile:** Any scale where you do not want to run the infrastructure, especially when multi-channel is needed
 
 ---
 
-### Provider Rate Limits
+### Provider Limits
 
-Unipile does not impose its own rate limits, but underlying providers do:
-
-| Provider  | Limit                                              |
-| --------- | -------------------------------------------------- |
-| Gmail     | 500 emails/day (personal), 2,000/day (Workspace)   |
-| LinkedIn  | ~100 connection requests/day, ~150 messages/day    |
-| WhatsApp  | ~50 messages/day recommended                       |
-
-EmailEngine exposes you directly to IMAP server limits, which you must manage yourself.
+Neither product removes the limits of the underlying providers. Gmail and Microsoft 365 cap how much mail an account may send per day, and LinkedIn and WhatsApp cap messaging activity per account. Unipile advertises no API rate limits of its own; EmailEngine enforces only the [per-token limits](/docs/api-reference/access-tokens) you configure. In both cases the mail server's own limits are what you hit first.
 
 ---
 
@@ -300,17 +266,17 @@ EmailEngine exposes you directly to IMAP server limits, which you must manage yo
 
 | Aspect                        | EmailEngine             | Unipile               |
 | ----------------------------- | ----------------------- | --------------------- |
-| **Data Location**             | Your infrastructure     | EU (France/Scaleway)  |
+| **Data Location**             | Your infrastructure     | Unipile cloud         |
 | **Encryption Key Control**    | You control             | Unipile controls      |
 | **Data Retention Control**    | You control             | Unipile manages       |
-| **GDPR Compliance**           | Easier (no third-party) | Yes (EU-hosted)       |
-| **SOC 2 Type II**             | You must implement      | Certified             |
-| **Compliance Implementation** | Your responsibility     | Professional support  |
+| **GDPR**                      | No third-party processor for mailbox data | Listed as compliant |
+| **SOC 2 Type II**             | You must implement      | Listed as certified   |
+| **Compliance Implementation** | Your responsibility     | Vendor-provided documentation |
 
 **Best for:**
 
 - **EmailEngine:** Maximum data control, no third-party data storage
-- **Unipile:** EU data residency requirements with managed compliance
+- **Unipile:** Managed compliance documentation without running the infrastructure
 
 ## Use Case Recommendations
 
@@ -330,7 +296,7 @@ EmailEngine exposes you directly to IMAP server limits, which you must manage yo
 
 **- Cost is a major factor**
 
-- High mailbox count (500+)
+- High mailbox count
 - Predictable flat pricing needed
 - No per-account fees
 
@@ -361,10 +327,10 @@ EmailEngine exposes you directly to IMAP server limits, which you must manage yo
 - Small team focused on product
 - Want fully managed solution
 
-**- EU data residency is sufficient**
+**- Vendor compliance documentation is sufficient**
 
 - GDPR compliance needed
-- EU-based data hosting acceptable
+- Third-party hosting acceptable
 - SOC 2 Type II certification required
 
 ## Bottom Line
@@ -378,9 +344,9 @@ EmailEngine exposes you directly to IMAP server limits, which you must manage yo
 
 **Unipile is best for:**
 
-- Multi-channel communication (Email + LinkedIn + WhatsApp)
-- CRM/ATS/outreach tool development
-- EU data residency with managed compliance
+- Multi-channel communication (email, LinkedIn, WhatsApp, Instagram, Telegram)
+- CRM, ATS, and outreach tool development
+- Managed compliance documentation
 - Zero-ops preference
 
 **Key difference:** EmailEngine is email-focused and self-hosted; Unipile is multi-channel and cloud-only. If you only need email and want full control, choose EmailEngine. If you need LinkedIn, WhatsApp, and other channels with managed hosting, choose Unipile.
@@ -391,3 +357,4 @@ EmailEngine exposes you directly to IMAP server limits, which you must manage yo
 - [Introduction](/docs/getting-started/introduction) - What EmailEngine is and is not
 - [Account types](/docs/accounts) - The providers EmailEngine connects to
 - [Licensing and privacy](/docs/licensing) - What the license covers and what leaves your server
+- [Performance tuning](/docs/advanced/performance-tuning) - What one instance can carry

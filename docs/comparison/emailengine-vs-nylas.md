@@ -15,14 +15,18 @@ import Price from '@site/src/components/Price';
 
 # EmailEngine vs Nylas: Which Email API is Right for You?
 
-Looking for a **Nylas alternative**? This developer-focused comparison covers features, pricing, and deployment options to help you choose the right email API for your project.
+This comparison covers features, pricing models, and deployment options for two ways of putting an email API in front of your users' mailboxes: EmailEngine, which you host, and Nylas, which is hosted for you.
 
-A shorter, decision-focused version of this comparison, covering architecture, pricing arithmetic, and where each product wins, is on the main site: [EmailEngine vs Nylas](https://emailengine.app/nylas-alternative).
+A shorter, decision-focused version, covering architecture, pricing arithmetic, and where each product wins, is on the main site: [EmailEngine vs Nylas](https://emailengine.app/nylas-alternative).
+
+:::info About the Nylas figures on this page
+Statements about Nylas describe its public [product page](https://www.nylas.com/products/email-api/) and [pricing page](https://www.nylas.com/pricing/) as read on 26 August 2026. Nylas revises both, and this page is not updated when it does. Statements about EmailEngine describe version 2.79.4.
+:::
 
 :::info Summary
 
-- **Nylas:** Fully managed SaaS with advanced features and higher cost
-- **EmailEngine:** Self-hosted solution with flat pricing and data sovereignty
+- **Nylas:** Fully managed SaaS with a wider feature set and a per-account price
+- **EmailEngine:** Self-hosted, flat annual license, mailbox data stays on your infrastructure
 
 Choose based on your priorities: operational overhead vs control and cost.
 :::
@@ -32,16 +36,15 @@ Choose based on your priorities: operational overhead vs control and cost.
 | Feature                  | EmailEngine                 | Nylas                              |
 | ------------------------ | --------------------------- | ---------------------------------- |
 | **Hosting**              | Self-hosted                 | Fully managed SaaS                 |
-| **Data Storage**         | Metadata only (in Redis)    | Full message copies in Nylas cloud |
-| **Pricing Model**        | Flat yearly license<Price /> | Per-account (from $1.50/month)     |
-| **Setup Time**           | 5-10 minutes                | Instant (signup)                   |
+| **Data Storage**         | Metadata only, in your Redis | Mailbox data synced into Nylas infrastructure |
+| **Pricing Model**        | Flat yearly license<Price /> | Monthly base fee per plan, plus a charge per connected account above the included ones |
+| **Getting started**      | Install and configure an instance | Sign up                     |
 | **Data Residency**       | Your infrastructure         | Nylas cloud                        |
-| **Webhook Latency**      | Near-instant                | Similar                            |
-| **Read Performance**     | Slightly slower (on-demand) | Very fast (cached)                 |
-| **Parallelism**          | Queued per mailbox          | Full parallelism                   |
-| **Advanced AI Features** | None                        | Sentiment, categorization, etc.    |
-| **Compliance**           | Full control                | SOC 2, ISO 27001                   |
-| **Support**              | Community + Direct          | Enterprise support                 |
+| **Read Performance**     | On demand from the mail server | Served from the synced copy     |
+| **Parallelism**          | One IMAP connection per mailbox, requests queued | Parallel at the API layer |
+| **AI features**          | MCP endpoint for AI agents (beta); no built-in classification | AI message cleaning, threading, bounce detection |
+| **Compliance**           | Your controls, your audits  | SOC 2 Type II, ISO 27001, HIPAA, GDPR and CCPA listed |
+| **Support**              | Direct from the developers  | Tiered, enterprise plans with SLAs |
 
 ## Key Architectural Differences
 
@@ -51,9 +54,8 @@ Choose based on your priorities: operational overhead vs control and cost.
 
 - Cloud-hosted service
 - No infrastructure management
-- Automatic scaling
-- Geographic availability built-in
-- **Trade-off:** Vendor dependency, data leaves your network
+- Scaling handled by the vendor
+- **Trade-off:** Vendor dependency, mailbox data leaves your network
 
 **EmailEngine:**
 
@@ -76,7 +78,7 @@ Choose based on your priorities: operational overhead vs control and cost.
 ```mermaid
 graph LR
     Mailbox[User Mailbox]
-    Sync[Sync<br/>copies all messages]
+    Sync[Sync<br/>copies messages]
     Database[Nylas Database]
     API[API Response]
 
@@ -90,9 +92,8 @@ graph LR
     style API fill:#e8f5e9
 ```
 
-- **Stores:** Complete message copies, attachments, metadata
-- **Retention:** 90-day rolling window for IMAP accounts
-- **Advantages:** Fast reads, full-text search, offline access
+- **Stores:** A synced copy of mailbox data ("bi-directional sync for email and calendar")
+- **Advantages:** Fast reads, search over the synced copy
 - **Disadvantages:** Data stored on third-party servers
 
 **EmailEngine:**
@@ -114,7 +115,7 @@ graph LR
 
 - **Stores:** Message UIDs, flags, folder structure only
 - **Advantages:** Minimal data exposure, no third-party storage
-- **Disadvantages:** Slightly slower first-time reads
+- **Disadvantages:** Every read goes to the mail server, so it is bounded by the server's speed and limits
 
 **Best for:**
 
@@ -125,15 +126,14 @@ graph LR
 
 **Nylas:**
 
-- Fully parallel on Nylas API layer - no queueing
-- Multiple threads can read same mailbox simultaneously
-- Underlying provider limits still apply (e.g., Microsoft Graph: 4 concurrent connections)
+- Requests are served from the Nylas API layer in parallel
+- Underlying provider limits still apply (Microsoft, for example, limits concurrent requests per mailbox)
 
 **EmailEngine:**
 
-- One request at a time per mailbox
-- Subsequent requests wait in queue
-- Direct exposure to IMAP server limits
+- One primary IMAP connection per mailbox, so requests for the same mailbox are serialized and queue behind each other; during the initial sync some read operations are moved to a secondary connection
+- Direct exposure to the mail server's limits
+- Gmail API and Microsoft Graph accounts use HTTP calls rather than a single connection, and are bounded by those APIs' quotas instead
 
 ## Feature Comparison
 
@@ -148,33 +148,35 @@ graph LR
 | Webhooks         | Yes                            | Yes             |
 | Send emails      | Yes                            | Yes             |
 | Attachments      | Yes                            | Yes             |
-| Search           | Yes (IMAP search)              | Yes (Advanced)  |
+| Search           | Yes (IMAP search, or the provider API's search) | Yes  |
 | Labels/Tags      | Yes                            | Yes             |
-| Threading        | Partial (Gmail/MS Graph/Yahoo) | Yes (Universal) |
+| Bounce detection | Yes                            | Yes             |
+| Threading        | Partial (Gmail, Microsoft Graph, Yahoo) | Yes    |
 
 :::info EmailEngine Threading Support
-EmailEngine only provides native threading support for specific providers:
+EmailEngine provides native threading only where the provider does:
 
-- **Gmail** (IMAP + OAuth2 or Gmail API): Full native threading with `threadId`
-- **Microsoft 365** (Graph API only): Full native threading - IMAP backend does NOT support threading
-- **Yahoo/AOL/Verizon** (IMAP): Native threading via OBJECTID extension (RFC 8474)
-- **Other IMAP providers**: No native threading - must build threads manually from Message-ID headers
+- **Gmail** (IMAP + OAuth2 or Gmail API): thread IDs from Gmail
+- **Microsoft 365** (Graph API only): conversation IDs from Graph. The IMAP backend does not support threading
+- **Yahoo/AOL/Verizon** (IMAP): thread IDs through the OBJECTID extension (RFC 8474)
+- **Other IMAP providers**: no native threading; build threads from the `Message-ID`, `In-Reply-To`, and `References` headers
 
-Nylas provides universal threading across all email providers by managing thread relationships server-side.
+Nylas advertises threading across providers, managed on its side.
 
-See [Threading Documentation](/docs/sending/threading/provider-support) for details.
+See [Provider-Specific Threading Support](/docs/sending/threading/provider-support) for details.
 :::
 
 ### Integration Features
 
 | Feature          | EmailEngine                    | Nylas                         |
 | ---------------- | ------------------------------ | ----------------------------- |
-| REST API         | Yes                            | Yes                           |
+| REST API         | Yes, with an OpenAPI spec      | Yes                           |
 | Webhooks         | Yes                            | Yes                           |
 | Webhook retry    | Yes                            | Yes                           |
-| Batch operations | Yes (mail merge, bulk updates) | Yes                           |
-| Rate limiting    | Configure yourself             | Built-in                      |
-| SDKs             | Community                      | Official (multiple languages) |
+| Batch operations | Yes (mail merge, multi-message actions) | Yes                  |
+| Rate limiting    | Per-token limits you set, plus whatever the mail server enforces | Built-in |
+| SDKs             | Official PHP SDK; other languages use the REST API | Official SDKs |
+| AI agents        | MCP endpoint (beta)            | Agent accounts (see pricing)  |
 
 ## Pricing Deep Dive
 
@@ -201,53 +203,29 @@ See [Threading Documentation](/docs/sending/threading/provider-support) for deta
 
 ### Nylas Pricing
 
-:::warning These figures were current on 9 December 2025
-Vendors revise pricing, and this page is not updated when they do. Treat the numbers below as the shape of the pricing model rather than a quote, and read the current rates at [nylas.com/pricing](https://www.nylas.com/pricing/).
-:::
+Nylas publishes its rates at [nylas.com/pricing](https://www.nylas.com/pricing/). The figures change, so this page describes the shape of the model as read on 26 August 2026 rather than quoting them:
 
-**Pricing Tiers:**
+1. **Sandbox**: free, a small number of connected accounts, for development and testing
+2. **Calendar**: a monthly base fee that includes a few connected accounts, then a per-account monthly charge above that
+3. **Full Platform**: the same structure with a higher base fee and per-account charge, covering email, calendar, and the rest of the platform, plus a separate allowance and per-unit charge for agent accounts
+4. **Enterprise**: contact sales; volume discounts, dedicated support, uptime guarantees, and a BAA for HIPAA
 
-1. **Sandbox (Free)**
-
-   - Cost: $0
-   - Accounts: 5 connected accounts
-   - Purpose: Testing and development
-
-2. **Calendar Only**
-
-   - Base: $10/month (includes 5 connected accounts)
-   - Additional accounts: $1/account/month
-   - Features: Calendar sync, scheduling, recurring events
-
-3. **Full Platform**
-
-   - Base: $15/month (includes 5 connected accounts)
-   - Additional accounts: $1.50/account/month
-   - Features: Email, Calendar, and full communication stack
-
-4. **Custom/Enterprise**
-   - Contact sales for volume discounts
-   - Features: Full communication suite, dedicated support, uptime guarantees
-   - BAA available for HIPAA compliance (contract plans only)
+A separate Notetaker plan for meeting recording is priced by usage and has no email component, so it is outside this comparison.
 
 **Cost scales with connected account count.**
-
-:::info Volume Pricing
-Enterprise customers can negotiate volume discounts with annual contracts.
-:::
 
 ---
 
 **Choose Nylas if:**
 
-- You have very few mailboxes (under 30)
-- You value zero DevOps time at extremely high premium
-- You need advanced AI features (sentiment, categorization)
+- You have few mailboxes, so the per-account charge stays below a flat license plus hosting
+- You value zero DevOps time at a high premium
+- You want the AI message cleaning and cross-provider threading Nylas does on its side
 - You prefer fully managed SaaS
 
 **Choose EmailEngine if:**
 
-- You have 50+ mailboxes
+- You have enough mailboxes that a per-account price outgrows a flat one. Work the break-even out from the current Nylas rates and your hosting costs
 - You have DevOps capacity or existing infrastructure
 - Data sovereignty and privacy are priorities
 - You want predictable, flat-rate pricing
@@ -258,17 +236,17 @@ Enterprise customers can negotiate volume discounts with annual contracts.
 
 | Aspect                 | EmailEngine                                        | Nylas                              |
 | ---------------------- | -------------------------------------------------- | ---------------------------------- |
-| **Vertical Scaling**   | Increase server resources (CPU, RAM)               | Automatic, transparent             |
-| **Horizontal Scaling** | NOT SUPPORTED (no built-in coordination)           | Automatic, transparent             |
-| **Manual Sharding**    | Possible but complex (separate Redis per instance) | Not needed                         |
-| **Bottleneck**         | Usually Redis or network to IMAP servers           | API rate limits (generous)         |
-| **Max Scale**          | Several thousand mailboxes per instance            | Hundreds of thousands of mailboxes |
-| **Scaling Effort**     | Manual configuration required                      | Zero configuration                 |
+| **Vertical Scaling**   | Increase server resources (CPU, RAM)               | Managed by the vendor              |
+| **Horizontal Scaling** | Not supported: instances do not coordinate, so two instances on one Redis both sync every account | Managed by the vendor |
+| **Manual Sharding**    | Possible: one Redis database per instance, accounts split between them | Not needed  |
+| **Bottleneck**         | Usually Redis or the network path to the mail servers | Provider API quotas             |
+| **Max Scale**          | Up to several thousand mailboxes per instance, see [Performance Tuning](/docs/advanced/performance-tuning) | Managed by the vendor |
+| **Scaling Effort**     | Manual configuration required                      | None on your side                  |
 
 **Best for:**
 
-- **EmailEngine:** Small to medium scale (under 5,000 mailboxes per instance)
-- **Nylas:** Any scale, especially large enterprises
+- **EmailEngine:** Small to medium scale (under a few thousand mailboxes per instance)
+- **Nylas:** Any scale where you do not want to run the infrastructure
 
 ---
 
@@ -279,12 +257,11 @@ Enterprise customers can negotiate volume discounts with annual contracts.
 | **Data Location**             | Your infrastructure     | Nylas cloud          |
 | **Encryption Key Control**    | You control             | Nylas controls       |
 | **Data Retention Control**    | You control             | Nylas manages        |
-| **GDPR Compliance**           | Easier (no third-party) | Yes (with DPA)       |
-| **HIPAA Suitable**            | Yes (with proper setup) | Yes (BAA available)  |
-| **SOC 2 Type II**             | You must implement      | Certified            |
-| **ISO 27001**                 | You must implement      | Certified            |
-| **Compliance Implementation** | Your responsibility     | Professional support |
-| **Audit Support**             | Self-managed            | Provided             |
+| **GDPR**                      | No third-party processor for mailbox data | Listed as compliant, with a DPA |
+| **HIPAA**                     | Your own controls       | Listed as compliant, BAA on enterprise plans |
+| **SOC 2 Type II**             | You must implement      | Listed as certified  |
+| **ISO 27001**                 | You must implement      | Listed as certified  |
+| **Compliance Implementation** | Your responsibility     | Vendor-provided documentation |
 
 **Best for:**
 
@@ -298,7 +275,7 @@ Enterprise customers can negotiate volume discounts with annual contracts.
 **- You have DevOps capacity**
 
 - In-house infrastructure team
-- Comfortable with Docker/Kubernetes
+- Comfortable with Docker or a VM
 - Can monitor and maintain services
 
 **- Data sovereignty is critical**
@@ -309,7 +286,7 @@ Enterprise customers can negotiate volume discounts with annual contracts.
 
 **- Cost is a major factor**
 
-- High mailbox count (500+)
+- High mailbox count
 - Predictable flat pricing needed
 - Limited budget
 
@@ -323,8 +300,8 @@ Enterprise customers can negotiate volume discounts with annual contracts.
 
 - Want to audit and inspect code
 - Source code available for review
-- Licensed under commercial license (not open source)
-- Requires paid subscription to use
+- Licensed under a commercial license, not open source
+- Requires a paid license to use
 
 ---
 
@@ -336,12 +313,11 @@ Enterprise customers can negotiate volume discounts with annual contracts.
 - No infrastructure expertise
 - Want fully managed solution
 
-**- You need advanced AI features**
+**- You want the vendor-side processing**
 
-- Sentiment analysis (native)
-- Smart categorization (native)
-- Signature extraction (extracts contact data from email signatures)
-- Event detection
+- AI message cleaning
+- Threading across every provider
+- Scheduler and calendar products
 
 **- You need parallel performance**
 
@@ -366,7 +342,7 @@ Enterprise customers can negotiate volume discounts with annual contracts.
 
 **EmailEngine is best for:**
 
-- Cost-sensitive deployments
+- Cost-sensitive deployments with many mailboxes
 - Data sovereignty requirements
 - Real-time webhook needs
 - Teams with DevOps capability
@@ -374,11 +350,11 @@ Enterprise customers can negotiate volume discounts with annual contracts.
 **Nylas is best for:**
 
 - Zero-ops preference
-- Advanced AI/ML features
+- Vendor-side AI processing and threading
 - Calendar-heavy applications
 - Enterprise compliance needs
 
-**Both are excellent products** - choose based on your specific constraints and priorities, not generic "best" claims.
+Choose based on your specific constraints and priorities, not on generic "best" claims.
 
 ## See Also
 
@@ -386,3 +362,4 @@ Enterprise customers can negotiate volume discounts with annual contracts.
 - [Introduction](/docs/getting-started/introduction) - What EmailEngine is and is not
 - [Licensing and privacy](/docs/licensing) - What the license covers and what leaves your server
 - [Installation](/docs/installation) - The self-hosting work a managed service saves you
+- [Performance tuning](/docs/advanced/performance-tuning) - What one instance can carry

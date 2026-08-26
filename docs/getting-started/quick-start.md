@@ -57,9 +57,10 @@ See [Credential Security](/docs/support/security-faq) for details on how EmailEn
 
 ## Step 2: Access the Web Interface
 
-1. Open your browser and navigate to **http://localhost:3000**
-2. On first startup, you'll be prompted to create an admin account
-3. Set a secure password for the web admin UI
+1. Open **http://localhost:3000** in a browser. A fresh instance has no admin password, so the dashboard opens without a login and shows an "Authentication not enabled" card
+2. Click **Enable authentication** on that card and set a password. From then on the admin interface asks for it
+
+Until a password is set, the admin interface refuses to issue access tokens, which is what the next step needs.
 
 ![EmailEngine Web Interface](/img/screenshots/01-dashboard-main.png)
 _EmailEngine dashboard showing system statistics and account overview_
@@ -83,21 +84,16 @@ Save your token as an environment variable:
 export EMAILENGINE_TOKEN="8bf639ec7c051c3963498c6757b6813bd331afeb677886d4473190fae66c9fab"
 ```
 
-**Benefits of CLI tokens:**
-
-- Full system access (all scopes)
-- Can access system-wide endpoints (settings, metrics, etc.)
-- Not bound to specific email accounts
-- Recommended for development and production API access
+The CLI writes the token straight into Redis, so `--dbs.redis` must name the same database EmailEngine runs on. A `*` token reaches every account and every endpoint, including settings, which is what the rest of this guide needs.
 
 ### Via Web Interface:
 
-1. Navigate to **Access Tokens** in the sidebar menu
-2. Click **Create new**
-3. Provide a name (e.g., "Development")
-4. Select scopes (use `*` for full access)
+1. Open **Integrations** > **Access Tokens** in the sidebar
+2. Click **Create access token**
+3. Provide a description (for example, "Development")
+4. Select the scope (`*` for full access)
 5. Click **Generate a token**
-6. Copy the token immediately - it's shown only once
+6. Copy the token immediately: it is shown only once
 
 :::info What the API can mint
 The [Create Access Token API](/docs/api/post-v-1-tokens) needs either an `account`, which binds the token to that one mailbox, or a `permissions` record naming what the token may do. It will not mint an unrestricted token, so the CLI and the admin interface remain the way to get one. See [Access Tokens](/docs/api-reference/access-tokens).
@@ -147,11 +143,11 @@ The easiest way to add accounts is using EmailEngine's built-in hosted authentic
 5. EmailEngine handles token management and maintains the connection automatically
 
 :::info OAuth2 Setup Required
-OAuth2 provider buttons (Gmail, Outlook) only appear if OAuth2 apps are configured in EmailEngine. Set these up via **Integrations → OAuth2 Apps** in the web interface, or use the [OAuth2 Apps API](/docs/api/post-v-1-oauth-2). See [Gmail OAuth2 Setup](/docs/accounts/gmail/gmail-imap) and [Outlook OAuth2 Setup](/docs/accounts/microsoft-365/outlook-365) for detailed configuration guides.
+OAuth2 provider buttons (Gmail, Outlook) only appear if OAuth2 apps are configured in EmailEngine. Set these up via **Integrations > OAuth2 Apps** in the web interface, or use the [OAuth2 Apps API](/docs/api/post-v-1-oauth-2). See [Gmail OAuth2 Setup](/docs/accounts/gmail/gmail-imap) and [Outlook OAuth2 Setup](/docs/accounts/microsoft-365/outlook-365) for detailed configuration guides.
 :::
 
 :::tip Admin Testing
-For testing during development, admins can use the web interface: navigate to **Accounts** → **Add an account**. This is a convenience wrapper for the same authentication form.
+For testing during development, admins can use the web interface: navigate to **Accounts > Add an account**. This is a convenience wrapper for the same authentication form.
 :::
 
 ![Accounts List](/img/screenshots/02-accounts-list.png)
@@ -195,7 +191,7 @@ curl -XPOST "http://localhost:3000/v1/account" \
     "email": "you@gmail.com",
     "oauth2": {
       "provider": "AAABlf_0iLgAAAAQ",
-      "refreshToken": "1//0...",
+      "refreshToken": "1//0gExampleRefreshTokenFromGoogle",
       "auth": {
         "user": "you@gmail.com"
       }
@@ -204,7 +200,7 @@ curl -XPOST "http://localhost:3000/v1/account" \
 ```
 
 :::info Provider ID
-The `provider` value should be your OAuth2 application ID from EmailEngine, which is a base64url encoded string like `AAABlf_0iLgAAAAQ`. Find this in **Integrations → OAuth2 Apps**.
+The `provider` value should be your OAuth2 application ID from EmailEngine, which is a base64url encoded string like `AAABlf_0iLgAAAAQ`. Find this in **Integrations > OAuth2 Apps**.
 :::
 
 **Outlook Example:**
@@ -221,7 +217,7 @@ curl -XPOST "http://localhost:3000/v1/account" \
     "email": "you@outlook.com",
     "oauth2": {
       "provider": "AAABlf_0iLgAAAAQ",
-      "refreshToken": "M.C546_...",
+      "refreshToken": "M.C546_ExampleRefreshTokenFromMicrosoft",
       "auth": {
         "user": "you@outlook.com"
       }
@@ -284,30 +280,24 @@ curl -XPOST "http://localhost:3000/v1/account" \
 
 #### Gmail
 
-- **Account passwords disabled:** Gmail has completely disabled account password authentication
-- **App passwords required:** Must enable 2FA and generate an app-specific password
-- **OAuth2 recommended:** OAuth2 provides the best experience (automatic token refresh)
-- **OAuth2 verification:** Public OAuth2 apps require verification if sending to many users
+- **Account passwords do not work:** Google no longer accepts the account password over IMAP. Either enable 2-step verification and generate an app password, or use OAuth2
+- **OAuth2 refreshes itself:** EmailEngine renews the access token from the refresh token, so nothing expires on your side
+- **OAuth2 verification:** A Google Cloud OAuth2 app used by accounts outside your own organization has to pass Google's verification
 - [Complete Gmail setup →](/docs/accounts/gmail/gmail-imap)
 
 #### Outlook/Microsoft 365
 
-- **OAuth2 required:** Password authentication is deprecated for personal accounts
-- **Azure AD setup:** Requires app registration in Azure portal
-- **Permissions:** Need both IMAP and SMTP permissions or use Graph API
+- **OAuth2:** Microsoft has retired basic authentication for Exchange Online, so an app registration in Microsoft Entra is needed
+- **Permissions:** The registration needs the IMAP and SMTP permissions, or the Graph API permissions when using the Graph backend
 - [Complete Outlook setup →](/docs/accounts/microsoft-365/outlook-365)
 
 #### Yahoo Mail
 
-- **App password required:** Generate at account.yahoo.com
-- **IMAP/SMTP settings:** Same as table above
-- **Rate limits:** Yahoo has aggressive rate limiting
+- **App password required:** Generate one in the Yahoo account security settings, then use it with the IMAP/SMTP settings in the table above
 
 #### ProtonMail
 
-- **Bridge required:** ProtonMail requires the ProtonMail Bridge app
-- **Local server:** Bridge runs on localhost with custom ports
-- **Security:** Bridge handles encryption/decryption
+- **Bridge required:** Proton Mail exposes IMAP and SMTP only through the Proton Mail Bridge application, which listens on localhost with its own ports and credentials. EmailEngine connects to the Bridge, not to Proton's servers
 
 ## Step 5: Wait for Initial Sync
 
@@ -359,8 +349,9 @@ curl "http://localhost:3000/v1/account/my-account" \
 
 Key fields to check:
 
-- `state`: Should be `"connected"` (other values: `"init"`, `"syncing"`, `"connecting"`, `"authenticationError"`, `"connectError"`, `"unset"`, `"disconnected"`)
-- `lastError`: Should be `null` if no errors occurred
+- `state`: `"connected"` is the healthy steady state. `"init"`, `"connecting"` and `"syncing"` mean it is still on its way there; `"authenticationError"` and `"connectError"` mean it is not going to get there without your help. [Account States](/docs/accounts/managing-accounts#account-states) describes all nine
+- `lastError`: `null` when the last connection attempt succeeded
+- `authFailureDisabledAt` (since v2.79.4): normally absent. When set, EmailEngine switched syncing off after repeated authentication failures, and the state reads `"unset"` until working credentials are supplied
 
 ### Initial Sync Duration
 
@@ -368,7 +359,7 @@ Sync time depends on:
 
 - **Number of mailbox folders** - More folders take longer to scan
 - **Number of messages** - Each message needs to be indexed
-- **Indexer type** - Fast indexer (detects only new messages) or Full indexer (detects new, changed, and deleted messages; default)
+- **Indexer type** - `imapIndexer` on the account, or the global setting, chooses between `full` (detects new, changed and deleted messages) and `fast` (detects new messages only)
 
 ## Step 6: Send Your First Email
 
@@ -414,9 +405,9 @@ Webhooks notify your application about email events in real-time.
 
 #### Via Web Interface:
 
-1. Go to **Settings → Webhooks**
-2. Enter your webhook URL (e.g., `https://your-app.com/webhooks`)
-3. Select events you want to receive
+1. Go to **Configuration** > **Webhooks**
+2. Enable webhooks and enter your webhook URL (for example, `https://your-app.com/webhooks`)
+3. Select the events you want to receive
 4. Save settings
 
 ![Webhooks Configuration](/img/screenshots/05-webhooks-config.png)
@@ -424,15 +415,25 @@ _Webhooks configuration page in EmailEngine settings_
 
 #### Via API:
 
-Use the [update settings API](/docs/api/post-v-1-settings):
+Use the [update settings API](/docs/api/post-v-1-settings). Three settings are involved: the URL, the enable switch, and `webhookEvents`, which is an allowlist with no default. Leaving it unset delivers nothing; `["*"]` delivers every event:
 
 ```bash
 curl -XPOST "http://localhost:3000/v1/settings" \
   -H "Authorization: Bearer ${EMAILENGINE_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{
-    "webhooks": "https://your-app.com/webhooks"
+    "webhooks": "https://your-app.com/webhooks",
+    "webhooksEnabled": true,
+    "webhookEvents": ["*"]
   }'
+```
+
+The response lists the keys that changed:
+
+```json
+{
+  "updated": ["webhooks", "webhooksEnabled", "webhookEvents"]
+}
 ```
 
 ### Test Webhooks with Webhook.site
@@ -445,59 +446,29 @@ For testing, use [webhook.site](https://webhook.site) to see webhook payloads:
 4. Send a test email (Step 6)
 5. Check webhook.site to see the delivery notifications
 
-### Example Webhook Events
+### What Arrives
 
-**New Email Received:**
-
-```json
-{
-  "account": "my-account",
-  "event": "messageNew",
-  "data": {
-    "id": "AAAAAQAACnA",
-    "uid": 1234,
-    "subject": "Meeting tomorrow",
-    "from": {
-      "name": "John Doe",
-      "address": "john@example.com"
-    },
-    "date": "2025-01-15T10:30:00.000Z"
-  }
-}
-```
-
-**Email Sent Successfully:**
+After the test email from Step 6, a [messageSent](/docs/webhooks/messagesent) event reaches the endpoint once the SMTP server accepts the message, and a [messageNew](/docs/webhooks/messagenew) arrives for each message that lands in a watched folder from then on. Every payload has the same envelope, with the event-specific fields under `data`:
 
 ```json
 {
+  "serviceUrl": "https://emailengine.example.com",
   "account": "my-account",
+  "date": "2025-01-15T10:25:31.000Z",
   "event": "messageSent",
   "data": {
     "messageId": "<unique-id@example.com>",
     "queueId": "abc123def456",
-    "response": "250 2.0.0 OK: queued as A1B2C3"
-  }
-}
-```
-
-**Email Delivery Failed:**
-
-```json
-{
-  "account": "my-account",
-  "event": "messageDeliveryError",
-  "data": {
-    "queueId": "abc123def456",
-    "messageId": "<unique-id@example.com>",
-    "error": "Connection timeout",
-    "job": {
-      "attemptsMade": 1,
-      "attempts": 10,
-      "nextAttempt": "2025-01-15T10:35:00.000Z"
+    "response": "250 2.0.0 OK: queued as A1B2C3",
+    "envelope": {
+      "from": "you@example.com",
+      "to": ["recipient@example.com"]
     }
   }
 }
 ```
+
+A delivery that fails produces [messageDeliveryError](/docs/webhooks/messagedeliveryerror) for each attempt, and [messageFailed](/docs/webhooks/messagefailed) once the retries are exhausted. [Webhook events](/docs/reference/webhook-events) lists every event with its payload.
 
 ## Step 8: List Incoming Messages
 
@@ -567,7 +538,7 @@ curl -XPOST "http://localhost:3000/v1/account/my-account/search?path=INBOX" \
 
 ### Production Deployment
 
-- **[Docker Deployment](/docs/deployment)** - Production Docker setup
+- **[Docker Installation](/docs/installation/docker)** - Production Docker setup
 - **[Environment Variables](/docs/configuration/environment-variables)** - Configuration Reference
 - **[Performance Tuning](/docs/advanced/performance-tuning)** - Optimize for high volume
 - **[Security Best Practices](/docs/deployment/security)** - Secure your deployment
