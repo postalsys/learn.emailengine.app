@@ -12,28 +12,12 @@ This guide explains OAuth2 authentication concepts and how to set up OAuth2 appl
 
 OAuth2 is an authorization framework that allows applications to access user data without requiring passwords. Instead of storing passwords, your application receives temporary access tokens that can be refreshed automatically.
 
-### Benefits of OAuth2
+### What OAuth2 changes
 
-**Better Security:**
-
-- No password storage required
-- Tokens can be revoked without changing passwords
-- Scoped permissions (request only what you need)
-- Works with accounts that have two-factor authentication enabled
-
-**Better User Experience:**
-
-- Users authenticate directly with their provider (Google, Microsoft)
-- Familiar consent screens
-- Users can review and revoke access anytime
-- No need to share passwords with third parties
-
-**Better Compliance:**
-
-- Meets modern security standards
-- Supports enterprise security policies
-- Audit trail of access grants
-- Automatic token expiration
+- EmailEngine stores tokens rather than the mailbox password, and the user can revoke them at the provider without changing that password
+- The application requests only the scopes it needs
+- Accounts with two-factor authentication work without app passwords
+- Users authenticate on the provider's own consent screen, and can review the grant there at any time
 
 ## OAuth2 Flow Overview
 
@@ -50,11 +34,12 @@ flowchart TD
     F --- H[Ongoing: auto-refreshes tokens before expiry]
 ```
 
-EmailEngine handles the token exchange and refresh automatically. You just need to:
+EmailEngine handles the token exchange and refresh. Your application:
 
-- Set up the OAuth2 application with the provider (one-time)
-- Direct users to the EmailEngine authentication URL
-- EmailEngine handles token exchange, storage, and refresh
+- Registers the OAuth2 application with the provider once
+- Directs users to the EmailEngine authentication URL
+
+EmailEngine does the rest: token exchange, storage, and refresh.
 
 ## Supported Providers in EmailEngine
 
@@ -65,17 +50,17 @@ EmailEngine supports OAuth2 for:
 **Protocol Options:**
 
 - **IMAP/SMTP with OAuth2** - Standard protocols with OAuth2 authentication
-- **Gmail API** - Native Gmail REST API (faster, more features)
+- **Gmail API** - The Gmail REST API instead of IMAP and SMTP
 
 **Account Types:**
 
 - **Internal Apps** - Google Workspace organization only
 - **Service Accounts** - Google Workspace with domain-wide delegation
-- **Public Apps** - Any Gmail user (requires security audit)
+- **Public Apps** - Any Gmail user (requires Google's app verification)
 
-[Gmail IMAP OAuth2 Setup →](./gmail/gmail-imap)
-[Gmail API Setup →](./gmail/gmail-api)
-[Google Service Accounts →](./gmail/google-service-accounts)
+[Gmail IMAP OAuth2 Setup](./gmail/gmail-imap)
+[Gmail API Setup](./gmail/gmail-api)
+[Google Service Accounts](./gmail/google-service-accounts)
 
 ### Outlook / Microsoft 365
 
@@ -98,8 +83,8 @@ EmailEngine supports OAuth2 for:
 - Requires Azure AD admin consent and a specific tenant ID
 - Best for automated systems accessing mailboxes without user interaction
 
-[Outlook OAuth2 Setup →](./microsoft-365/outlook-365)
-[Outlook Application Access →](./microsoft-365/outlook-client-credentials)
+[Outlook OAuth2 Setup](./microsoft-365/outlook-365)
+[Outlook Application Access](./microsoft-365/outlook-client-credentials)
 
 ### Mail.ru
 
@@ -112,7 +97,7 @@ EmailEngine supports OAuth2 for:
 - `userinfo` - Basic user profile
 - `mail.imap` - IMAP access
 
-[Mail.ru OAuth2 Setup →](./mail-ru)
+[Mail.ru OAuth2 Setup](./mail-ru)
 
 ## Setting Up OAuth2 in EmailEngine
 
@@ -121,25 +106,22 @@ EmailEngine supports OAuth2 for:
 1. **Create OAuth2 app** with the provider (Google Cloud Console or Azure AD)
 2. **Configure consent screen** and permissions
 3. **Get credentials** (Client ID and Client Secret)
-4. **Add to EmailEngine** via Integrations → OAuth2 Apps
+4. **Add to EmailEngine** under **Integrations** > **OAuth2 Apps**
 5. **Test** by adding an account
 
 ### OAuth2 Application Types
 
-EmailEngine supports different OAuth2 application types:
+The **Create OAuth2 app** menu offers one entry per provider type. The `provider` value is what the [OAuth2 applications API](/docs/api/post-v-1-oauth-2) calls the same thing:
 
-**Gmail:**
+| Menu entry | `provider` | Flow |
+| --- | --- | --- |
+| Gmail | `gmail` | User consent; IMAP/SMTP or the Gmail API, chosen under **Base scopes** |
+| Gmail Service Accounts | `gmailService` | Domain-wide delegation, no per-user consent |
+| Outlook (delegated) | `outlook` | User consent; IMAP/SMTP or MS Graph API, chosen under **Base scopes** |
+| Outlook (application) | `outlookService` | Client credentials, MS Graph API only, no user login |
+| Mail.ru | `mailRu` | User consent; IMAP/SMTP |
 
-- Gmail (IMAP/SMTP)
-- Gmail API
-- Gmail Service Accounts
-
-**Outlook:**
-
-- Outlook (delegated) - IMAP/SMTP or MS Graph API with user login
-- Outlook (application) - MS Graph API with client credentials (no user login)
-
-Each type has its own configuration page in EmailEngine.
+Whether a Gmail or Outlook app uses IMAP/SMTP or the provider API is not a separate application type: it is the **Base scopes** choice on the app's form (`baseScopes` in the API: `imap` or `api`). A Gmail app can also have Cloud Pub/Sub as its base scope (`pubsub`); such an app carries the push-notification subscription for Gmail API accounts rather than mailbox access, see [Gmail Pub/Sub](/docs/accounts/gmail/gmail-pubsub).
 
 ### Required Information
 
@@ -153,9 +135,9 @@ When configuring OAuth2 in EmailEngine, you'll need:
 
 **For EmailEngine:**
 
-- **Application Name** - Internal identifier
-- **Base Scope** - Protocol to use (IMAP/SMTP or API)
-- **Enabled** - Whether app shows in authentication forms
+- **Application name** - The name shown in the app list and on the hosted authentication form
+- **Base scopes** - Protocol to use (IMAP/SMTP or the provider API)
+- **Enable this app** - Whether the app is offered on authentication forms
 
 ### Configuration in EmailEngine
 
@@ -165,21 +147,22 @@ Navigate to **Integrations** > **OAuth2 Apps** in EmailEngine dashboard.
 
 **Add New Application:**
 
-1. Click the **Add application** dropdown and select the provider type (Gmail or Outlook)
+1. Click **Create OAuth2 app** and select the provider type (see the table above)
 
-![Add application dropdown menu](/img/oauth2-setup/02-oauth2-add-app-menu.png)
+![Create OAuth2 app dropdown menu](/img/oauth2-setup/02-oauth2-add-app-menu.png)
 
 2. Fill in the application details:
 
 ![Outlook OAuth2 form](/img/oauth2-setup/03-oauth2-outlook-form-empty.png)
 
-- **Name**: Internal identifier (e.g., "Production Outlook")
-- **Enabled**: Check to make available to users
-- **Client ID**: From provider console (Azure AD Application ID or Google Client ID)
-- **Client Secret**: From provider console
-- **Redirect URL**: Your EmailEngine URL + `/oauth`
-- **Base Scope**: Choose protocol (IMAP/SMTP or MS Graph API)
-- **Authority** (Outlook): Tenant configuration (`common`, `organizations`, `consumers`, or specific tenant ID)
+- **Application name**: For example "Production Outlook"
+- **Enable this app**: Check to offer the app on authentication forms
+- **Client Id** (Gmail) or **Azure Application Id** (Outlook): From the provider console
+- **Client Secret**: From the provider console
+- **Redirect URL**: Your Service URL + `/oauth`. The form pre-fills this from the `serviceUrl` setting
+- **Base scopes**: IMAP/SMTP, or the provider API (MS Graph API or Gmail API)
+- **Supported account types** (Outlook): `common`, `organizations`, `consumers`, or a specific **Directory (tenant) ID**. Stored as `authority` in the API
+- **Azure cloud environment** (Outlook): the worldwide cloud unless the tenant lives in a US Government or China cloud. Stored as `cloud`
 
 ![Filled OAuth2 form](/img/oauth2-setup/04-oauth2-outlook-form-filled.png)
 
@@ -193,7 +176,7 @@ The application now appears in your OAuth2 configuration list:
 
 ### Credentials File Upload
 
-Both Google and Microsoft allow downloading credentials as JSON files:
+Google lets you download the client credentials as a JSON file; Microsoft credentials are copied from the portal by hand.
 
 **Google credentials file** (starts with `client_secret_`):
 
@@ -202,7 +185,7 @@ Both Google and Microsoft allow downloading credentials as JSON files:
   "web": {
     "client_id": "123456789.apps.googleusercontent.com",
     "client_secret": "abcdef123456",
-    "redirect_uris": ["http://localhost:3000/oauth"]
+    "redirect_uris": ["https://emailengine.example.com/oauth"]
   }
 }
 ```
@@ -212,18 +195,18 @@ Both Google and Microsoft allow downloading credentials as JSON files:
 - Application (client) ID
 - Client secret value
 
-EmailEngine can auto-fill fields from Google's JSON file.
+The **Load configuration from the JSON file** button on the Gmail app form fills in the client ID, the client secret and the Google Cloud project ID from this file. It reads the `web` key only, so the file has to come from a **Web application** client rather than a desktop one, and it warns when the redirect URL on the form is not among the file's `redirect_uris`.
 
 ### Verifying the App Setup
 
-After configuring an OAuth2 app, use the **Verify setup** button on the app's page in the EmailEngine dashboard (or the [`POST /v1/oauth2/{app}/verify`](/docs/api/post-v-1-oauth-2-app-verify) API endpoint) to test the configuration before connecting accounts.
+After configuring an OAuth2 app, use the **Verify setup** button on the app's page in the EmailEngine dashboard (or the [`POST /v1/oauth2/{app}/verify`](/docs/api/post-v-1-oauth-2-app-verify) API endpoint, available since v2.68.0) to test the configuration before connecting accounts.
 
-The verifier runs the real provider authentication chain step by step and reports each step as passed, failed, or skipped, with an actionable hint for failures:
+The verifier runs the provider authentication chain step by step. The response carries `ok`, which is `true` when no step failed, and a `steps` array where each entry has an `id`, a `label`, a `status` of `ok`, `fail` or `skip`, a `message`, and for failures a `hint` on how to fix it:
 
-- **Service-account apps (Gmail/Outlook)** - checks the credentials, token exchange, and domain-wide delegation. Provide a test mailbox address to also perform a live IMAP login or Gmail/MS Graph API probe.
-- **Regular (3-legged) apps** - performs a configuration-only check, since user consent is required for a full token exchange.
+- **Service-account apps (`gmailService`, `outlookService`)** - checks the credentials, the token exchange, and domain-wide delegation. Pass a mailbox address as `account` to also perform a live IMAP login or a Gmail/MS Graph API probe against that mailbox; set `testConnection` to `false` to skip that live step.
+- **User-consent apps (`gmail`, `outlook`, `mailRu`)** - checks the stored configuration only. The end-user authorization step is reported as skipped, because a token exchange needs a user's consent.
 
-The verifier is read-only: it does not modify any mailbox and does not send mail. This makes misconfigurations visible immediately instead of surfacing only when the first account fails to connect.
+The verifier is read-only: it does not modify any mailbox and does not send mail.
 
 ## OAuth2 Scopes
 
@@ -237,6 +220,8 @@ Scopes define what your application can access.
 | -------------------------- | ------------------------------------ |
 | `https://mail.google.com/` | Full IMAP and SMTP access (required) |
 
+EmailEngine adds `openid`, `email` and `profile` to every user-consent Gmail request, whichever base scope the app has. They identify the signed-in user and are not requested for service-account apps.
+
 **For Gmail API:**
 
 | Scope          | Purpose                                                              |
@@ -245,14 +230,14 @@ Scopes define what your application can access.
 
 **Narrower Scopes (if required by Google):**
 
-| Scope            | Access                       | Notes                                              |
-| ---------------- | ---------------------------- | -------------------------------------------------- |
-| `gmail.readonly` | Read-only access             | Must be combined with `gmail.labels` (see below)    |
-| `gmail.send`     | Send emails only             | Cannot read emails                                  |
-| `gmail.labels`   | List and manage labels       | Required with `gmail.readonly` for EmailEngine      |
+| Scope            | Access                 | Notes                                                                          |
+| ---------------- | ---------------------- | ------------------------------------------------------------------------------ |
+| `gmail.readonly` | Read-only access       | Listing labels works with this scope alone; creating and renaming them does not |
+| `gmail.send`     | Send emails only       | Cannot read messages, and an account with only this scope runs send-only        |
+| `gmail.labels`   | List and manage labels | Paired with `gmail.readonly` in the read-only presets so label management works |
 
-:::warning gmail.readonly requires gmail.labels
-The `gmail.labels` scope is required for EmailEngine to list labels (mailboxes) properly. Always combine `gmail.readonly` with `gmail.labels` for read-only access to work.
+:::warning gmail.labels turns a send-only app into a read app
+EmailEngine treats an account as having read access when the granted scopes include any of `gmail.modify`, `gmail.readonly`, `gmail.labels` or `https://mail.google.com/`. Adding `gmail.labels` to an application meant for sending only therefore makes EmailEngine list messages, which Google then refuses.
 :::
 
 See the [Gmail API Scopes Reference](/docs/accounts/gmail/gmail-api-scopes) for detailed setup instructions and EmailEngine feature availability for each scope combination.
@@ -266,23 +251,25 @@ See the [Gmail API Scopes Reference](/docs/accounts/gmail/gmail-api-scopes) for 
 | `IMAP.AccessAsUser.All` | Read and manage emails via IMAP           |
 | `SMTP.Send`             | Send emails via SMTP (enabled by default) |
 | `offline_access`        | Allow token refresh (required)            |
+| `openid`, `profile`     | Read the signed-in user's identity        |
 
 If your application doesn't need sending capabilities, you can disable `SMTP.Send` via the **Disabled scopes** field in EmailEngine's OAuth2 app settings.
 
 **For MS Graph API:**
 
-| Scope            | Purpose                        |
-| ---------------- | ------------------------------ |
-| `Mail.ReadWrite` | Read and manage emails         |
-| `Mail.Send`      | Send emails                    |
-| `offline_access` | Allow token refresh (required) |
+| Scope            | Purpose                                |
+| ---------------- | -------------------------------------- |
+| `Mail.ReadWrite` | Read and manage emails                 |
+| `Mail.Send`      | Send emails                            |
+| `offline_access` | Allow token refresh (required)         |
+| `User.Read`      | Read the signed-in user's profile      |
 
 :::info offline_access Scope
 The `offline_access` scope allows EmailEngine to refresh access tokens in the background without user interaction.
 
-- **Gmail**: Enabled by default, no configuration needed
-- **Outlook**: Must be explicitly requested (EmailEngine handles this automatically)
-  :::
+- **Gmail**: Google has no such scope. EmailEngine requests `access_type=offline` and `prompt=consent` on every authorization, which is what makes Google issue a refresh token
+- **Outlook**: EmailEngine adds `offline_access` to every scope set it requests
+:::
 
 ### Additional Scopes
 
@@ -294,19 +281,19 @@ You can add extra scopes if you want to use OAuth2 tokens for other APIs:
 https://www.googleapis.com/auth/calendar
 ```
 
-Configure this in **Additional scopes** field in EmailEngine.
+Enter them under **Additional scopes** on the app's form, one scope per line. The API field is `extraScopes`.
 
 :::warning Microsoft Additional Scopes
-For Microsoft accounts, additional scopes only work when using **MS Graph API** as the base scope. If you're using **IMAP/SMTP**, additional scopes won't be usable because IMAP/SMTP uses the Outlook API, not MS Graph API. You can still add the scopes, but you won't be able to make API requests to those endpoints.
+A Microsoft access token is issued for one resource, so an app cannot mix the two resource endpoints. With **IMAP/SMTP** as the base scope, every additional scope must come from `https://outlook.office.com/`; with **MS Graph API** as the base scope, every additional scope must come from `https://graph.microsoft.com/`. The form states this rule but does not validate the list; a mixed list is rejected by Microsoft when the user is sent to authorize. So a token that is meant to reach other Graph APIs (calendars, files) needs an app with the MS Graph API base scope.
 :::
 
-[Learn more about using tokens for other APIs →](./oauth2-token-management)
+[Learn more about using tokens for other APIs](./oauth2-token-management)
 
 ### Disabled Scopes
 
 If Google/Microsoft requires narrower scopes, you can disable the default wide scope:
 
-**Disabled scopes** field:
+**Disabled scopes** section, one scope per line (the API field is `skipScopes`):
 
 ```
 https://mail.google.com/
@@ -324,16 +311,16 @@ This removes the wide scope from consent requests.
 - No security audit required
 - Limited to organization's domain
 
-**External Apps (Development):**
+**External Apps (Testing):**
 
-- Limited to 100 manually whitelisted users
-- Grants expire after 7 days
+- Limited to 100 test users added by hand
+- Refresh tokens expire after 7 days
 - Not suitable for production
 
 **External Apps (Production):**
 
 - Available to any Gmail user
-- Requires thorough security audit (expensive, time-consuming)
+- Requires Google's app verification, which for a restricted scope includes a security assessment
 - Google may reject broad scopes like `https://mail.google.com/`
 
 ### Outlook Account Types
@@ -366,37 +353,33 @@ The redirect URL is where users return after granting consent.
 
 **Examples:**
 
-- `http://localhost:3000/oauth` (development)
-- `https://ee.company.com/oauth` (production)
-- `https://your-domain.com/oauth` (custom domain)
+- `https://emailengine.example.com/oauth` for a deployed instance
+- `http://localhost:3000/oauth` for an instance started locally for development; both Google and Microsoft accept plain HTTP for `localhost` only
 
 ### Requirements
 
-- Must be HTTPS in production (HTTP allowed for localhost)
-- Must match exactly between provider and EmailEngine
-- Case-sensitive
-- No trailing slashes
-- Must be publicly accessible (for user redirects)
+- Must be HTTPS, except for `localhost`
+- Must match exactly between provider and EmailEngine, including case, port and any trailing slash
+- Must be reachable from the user's browser, since the provider redirects the user there
 
 ## Advanced OAuth2 Features
 
 ### Authentication Server
 
-Delegate OAuth2 management to an external server:
+An application that already runs its own OAuth2 flow can keep the tokens and hand EmailEngine a fresh one whenever it connects. Point the `authServer` setting at your endpoint:
 
-```json
-{
-  "authServer": "https://your-auth-server.com/authenticate"
-}
+```bash
+curl -X POST https://emailengine.example.com/v1/settings \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "authServer": "https://api.example.com/email/auth"
+  }'
 ```
 
-Use this when:
+Then register accounts with `useAuthServer` set on the `oauth2` object, or on `imap` and `smtp` for password accounts, and no credentials of their own. EmailEngine asks the endpoint for a credential each time it opens a connection, rather than storing and refreshing a token itself.
 
-- You already manage OAuth2 in your app
-- Want centralized token management
-- Need custom authentication flows
-
-[Learn more about authentication servers →](./authentication-server)
+[Learn more about authentication servers](./authentication-server)
 
 ### Pre-filled Email
 
@@ -429,7 +412,7 @@ curl -X POST https://emailengine.example.com/v1/authentication/form \
   }'
 ```
 
-[Learn more about shared mailboxes →](./microsoft-365/outlook-365#shared-mailboxes)
+[Learn more about shared mailboxes](./microsoft-365/outlook-365#shared-mailboxes)
 
 ### Service Accounts (Google Workspace)
 
@@ -450,7 +433,7 @@ Access any user's mailbox without individual consent:
 
 Requires domain-wide delegation setup.
 
-[Learn more about service accounts →](./gmail/google-service-accounts)
+[Learn more about service accounts](./gmail/google-service-accounts)
 
 ## See Also
 

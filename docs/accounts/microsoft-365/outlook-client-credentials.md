@@ -7,7 +7,7 @@ description: Setting up Microsoft 365 application-level access using client cred
 
 # Outlook Application Access (Client Credentials)
 
-This guide shows you how to set up application-level access to Microsoft 365 mailboxes using the OAuth2 client credentials flow. This allows EmailEngine to access any mailbox in your organization without interactive user logins.
+This guide shows you how to set up application-level access to Microsoft 365 mailboxes using the OAuth2 client credentials flow. This allows EmailEngine to access any mailbox in your organization without interactive user logins. The `outlookService` provider that implements it is available since EmailEngine v2.65.0.
 
 ## Overview
 
@@ -94,7 +94,7 @@ For delegated access setup, see [Setting Up Outlook and Microsoft 365](./outlook
 
 **Client Secret Expiration:**
 
-- Client secrets have a maximum lifetime of 2 years
+- The Azure portal issues client secrets with a lifetime of up to 24 months
 - Must be rotated before expiration to avoid service disruption
 
 ## Step 1: Create Azure AD Application
@@ -163,14 +163,10 @@ Click **New client secret**.
 
 **Description:** Give it a meaningful name (e.g., "EmailEngine Secret")
 
-**Expires:** Choose an expiration period:
-
-- 6 months
-- 12 months
-- 24 months (maximum)
+**Expires:** Choose an expiration period. The Azure portal offers up to 24 months.
 
 :::danger Copy Secret Immediately
-The secret value is only shown once. Copy it immediately after creation -you cannot retrieve it later. If you lose it, you must generate a new secret.
+The secret value is only shown once. Copy it immediately after creation - you cannot retrieve it later. If you lose it, you must generate a new secret.
 :::
 
 Copy the value from the **Value** column (not the "Secret ID").
@@ -198,9 +194,9 @@ Now configure EmailEngine to use the Azure application for mailbox access.
 
 **Client Secret:** Paste the secret value you copied earlier
 
-**Cloud:** Select your Microsoft cloud environment (default: **Azure Global**)
+**Azure cloud environment:** Select your Microsoft cloud environment (default: **Azure Global**)
 
-**Directory (tenant) ID:** Paste the Directory (tenant) ID from Azure. This must be the specific tenant UUID.
+**Directory (tenant) ID:** Paste the Directory (tenant) ID from Azure. This must be the specific tenant UUID; the API field is `authority`.
 
 :::info No Redirect URL
 Unlike delegated access, application access does not require a redirect URL. The client credentials flow authenticates directly with Azure without browser redirects.
@@ -221,7 +217,7 @@ curl https://emailengine.example.com/v1/oauth2 \
 
 ### Verify the Setup
 
-Before adding accounts, use the **Verify setup** button on the OAuth2 app's page (or [`POST /v1/oauth2/{app}/verify`](/docs/api/post-v-1-oauth-2-app-verify)) to test the configuration. The verifier obtains a client-credentials token and - if you provide a test mailbox address - performs a live Microsoft Graph probe against that mailbox. Each step is reported as passed, failed, or skipped with a hint for fixing failures.
+Before adding accounts, use the **Verify setup** button on the OAuth2 app's page (or [`POST /v1/oauth2/{app}/verify`](/docs/api/post-v-1-oauth-2-app-verify), both since v2.68.0) to test the configuration. The verifier obtains a client-credentials token and - if you provide a test mailbox address - reads that user's `id`, `mail`, and `userPrincipalName` from Microsoft Graph, which is what `User.Read.All` is granted for. Each step is reported as passed, failed, or skipped with a hint for fixing failures.
 
 ## Step 6: Add Email Accounts
 
@@ -229,7 +225,7 @@ The hosted authentication form is not available for application access because t
 
 ### Add Account via the Admin UI
 
-The OAuth2 app's detail page in the EmailEngine dashboard provides an **Add account** button that opens a dialog asking for the account name and email address and registers the account directly - no API call needed.
+The OAuth2 app's detail page in the EmailEngine dashboard provides an **Add account** button (since v2.68.0) that opens a dialog asking for the full name, the email address, and an optional account identifier, and registers the account directly - no API call needed. Leave the identifier blank to have one generated.
 
 ### Add Account via API
 
@@ -332,11 +328,11 @@ curl -X POST https://emailengine.example.com/v1/account \
   }'
 ```
 
-No additional delegation configuration is needed -the application permissions grant direct access to all mailboxes.
+No additional delegation configuration is needed - the application permissions grant direct access to all mailboxes.
 
 ## Cloud Environments
 
-EmailEngine supports multiple Microsoft cloud environments. Select the appropriate cloud when creating the OAuth2 application to use the correct authentication and API endpoints.
+EmailEngine supports multiple Microsoft cloud environments. Select the appropriate cloud in the **Azure cloud environment** field when creating the OAuth2 application to use the correct authentication and API endpoints. Client credentials request the single scope `{graph-endpoint}/.default`, so the cloud decides which Graph endpoint that is.
 
 | Cloud | Value | Use Case |
 |---|---|---|
@@ -345,31 +341,7 @@ EmailEngine supports multiple Microsoft cloud environments. Select the appropria
 | **DoD** | `dod` | US Department of Defense L5 |
 | **Azure China** | `china` | China (operated by 21Vianet) |
 
-### Cloud Environment Details
-
-**Azure Global (default)**
-
-- **Entra ID Endpoint**: `https://login.microsoftonline.com`
-- **MS Graph API**: `https://graph.microsoft.com`
-- **Azure Portal**: [portal.azure.com](https://portal.azure.com)
-
-**GCC High (US Government L4)**
-
-- **Entra ID Endpoint**: `https://login.microsoftonline.us`
-- **MS Graph API**: `https://graph.microsoft.us`
-- **Azure Portal**: [portal.azure.us](https://portal.azure.us)
-
-**DoD (US Department of Defense L5)**
-
-- **Entra ID Endpoint**: `https://login.microsoftonline.us`
-- **MS Graph API**: `https://dod-graph.microsoft.us`
-- **Azure Portal**: [portal.azure.us](https://portal.azure.us)
-
-**Azure China (21Vianet)**
-
-- **Entra ID Endpoint**: `https://login.chinacloudapi.cn`
-- **MS Graph API**: `https://microsoftgraph.chinacloudapi.cn`
-- **Azure Portal**: [portal.azure.cn](https://portal.azure.cn)
+The Entra ID and Microsoft Graph endpoints behind each value are listed under [Microsoft cloud environments](./outlook-365#microsoft-cloud-environments) on the delegated access page.
 
 ### Configuring Cloud Environment via API
 
@@ -382,12 +354,15 @@ curl -X POST "https://emailengine.example.com/v1/oauth2" \
   -d '{
     "name": "Outlook Application Access (GCC High)",
     "provider": "outlookService",
+    "enabled": true,
     "cloud": "gcc-high",
     "clientId": "YOUR_CLIENT_ID",
     "clientSecret": "YOUR_CLIENT_SECRET",
     "authority": "YOUR_TENANT_ID"
   }'
 ```
+
+`redirectUrl` is not needed, and `baseScopes`, `extraScopes`, and `skipScopes` are ignored for this provider.
 
 :::warning Government Cloud Registration
 For government clouds (GCC High, DoD) and sovereign clouds (China), you must:
@@ -483,11 +458,11 @@ EmailEngine automatically creates these subscriptions and renews them on a timer
 
 Microsoft Graph may occasionally fail to deliver change notifications - for example, due to transient network issues or service disruptions. When this happens, Microsoft sends a `missed` lifecycle event to inform EmailEngine that notifications were lost.
 
-EmailEngine handles this automatically:
+EmailEngine handles this automatically (since v2.67.0):
 
-1. When a `missed` lifecycle event is received, EmailEngine queries the Microsoft Graph API for recent messages
+1. When a `missed` lifecycle event is received, EmailEngine lists messages received since two minutes before the last notification it processed, or over the last 30 minutes if it has not processed any
 2. Any messages not already processed through normal notifications are synced
-3. A cooldown period prevents repeated recovery runs for the same event
+3. A five-minute cooldown per account prevents repeated recovery runs for the same event. **Run sync** on the account page runs the same recovery regardless of the cooldown
 
 No configuration is required - this recovery mechanism is built in and runs automatically for all MS Graph accounts with webhook subscriptions enabled.
 

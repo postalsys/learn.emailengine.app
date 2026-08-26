@@ -37,7 +37,7 @@ Service accounts with domain-wide delegation can access any mailbox in your Goog
 - Service account impersonates users to access their mailboxes
 
 :::info IMAP/SMTP Only
-When using service accounts for email access, EmailEngine connects via IMAP and SMTP protocols. The Gmail API cannot be used as a backend for service account-based email access in EmailEngine.
+When using service accounts for email access, EmailEngine connects via IMAP and SMTP with `XOAUTH2`. A Gmail Service Accounts application offers only the **IMAP and SMTP** and **Cloud Pub/Sub** base scopes; the Gmail REST API backend is not available to accounts that authenticate through a service account.
 :::
 
 **2. Push Notifications for Standard Gmail Accounts (Cloud Pub/Sub)**
@@ -48,7 +48,7 @@ Service accounts can also be used to manage Gmail Push Notification subscription
 - Requires `Pub/Sub Admin` role in Google Cloud (not domain-wide delegation)
 - Individual users authenticate with standard OAuth2 (not service accounts)
 - A single service account manages Pub/Sub topic subscriptions for all accounts
-- Email updates are delivered via push notifications instead of polling
+- Email changes are delivered as push notifications instead of the 10-minute fallback poll
 - The service account only handles the notification infrastructure, not email access
 
 For push notification setup, see [Setting Up Gmail API](/docs/accounts/gmail/gmail-api).
@@ -154,7 +154,7 @@ The OAuth consent screen and domain-wide delegation are **separate configuration
 Service accounts authenticate using JWT tokens, not the OAuth consent flow, so users never see the consent screen.
 :::
 
-Navigate to **APIs & Services** → **OAuth consent screen**.
+Navigate to **APIs & Services** > **OAuth consent screen**.
 
 ### Select User Type
 
@@ -200,7 +200,7 @@ Click **Save and continue** to finish consent screen setup.
 
 ## Step 3: Create Service Account
 
-Navigate to **APIs & Services** → **Credentials** and click the **Manage service accounts** link (bottom right corner).
+Navigate to **APIs & Services** > **Credentials** and click the **Manage service accounts** link (bottom right corner).
 
 Click **Create service account**.
 
@@ -276,7 +276,7 @@ Return to the Google Cloud Console service accounts page.
 
 Open the context menu for your service account (three dots) and click **Manage keys**.
 
-Click **Add Key** → **Create new key**.
+Click **Add Key** > **Create new key**.
 
 Select **JSON** as the key type and click **Create**.
 
@@ -317,11 +317,11 @@ The important fields for EmailEngine are:
 - `private_key`: Maps to "Secret service key" in EmailEngine
 - `project_id`: Maps to "Google Cloud Project ID" in EmailEngine (used for Gmail Push Notifications)
 
-## Step 6: Enable Gmail API
+## Step 6: Enable Gmail API (Optional)
 
-Enabling the Gmail API is not needed for the IMAP and SMTP base scope - EmailEngine authenticates service account users via JWT and IMAP XOAUTH2 using the email address you provide. The Gmail API must be enabled if the application uses the Gmail API base scope.
+Enabling the Gmail API is not needed for the IMAP and SMTP base scope: EmailEngine obtains a token for the impersonated user with a signed JWT and logs in to `imap.gmail.com` and `smtp.gmail.com` with IMAP and SMTP `XOAUTH2`. Enable it if you want the Gmail scopes listed on the consent screen or use the same project for a [Gmail API OAuth2 application](/docs/accounts/gmail/gmail-api).
 
-Navigate to **APIs & Services** → **Dashboard** and click **Enable APIs and Services**.
+Navigate to **APIs & Services** > **Dashboard** and click **Enable APIs and Services**.
 
 Search for "mail" to find Gmail API.
 
@@ -340,9 +340,9 @@ Now configure EmailEngine to use the service account.
 
 ### Upload Credentials File
 
-**Credentials file**: Use the file input to select the service account key JSON file
+Click **Load configuration from the service key file** and select the service account key JSON file.
 
-EmailEngine will automatically extract and populate:
+EmailEngine extracts and fills in:
 
 - Service client (from `client_id`)
 - Client Email (from `client_email`)
@@ -356,19 +356,13 @@ The **Base scopes** selection determines how EmailEngine uses this service accou
 | Option | Purpose | Required Scope/Role |
 |--------|---------|---------------------|
 | **IMAP and SMTP** | Direct email access via IMAP/SMTP protocols | `https://mail.google.com/` (domain-wide delegation) |
-| **Cloud Pub/Sub** (beta) | Webhook management for Gmail API accounts | `Pub/Sub Admin` role in Google Cloud |
+| **Cloud Pub/Sub** (labeled beta) | Webhook management for Gmail API accounts | `Pub/Sub Admin` role in Google Cloud |
 
 **For direct email access** (the primary use case in this guide), select **IMAP and SMTP**. This allows the service account to access any mailbox in your Google Workspace organization via IMAP and SMTP protocols.
 
 **For push notification management**, select **Cloud Pub/Sub**. This is used when you have regular Gmail OAuth2 accounts (where users authenticate individually) but want a single service account to manage Pub/Sub topic subscriptions for receiving email change notifications. See [Setting Up Gmail API](/docs/accounts/gmail/gmail-api) for this use case.
 
-**Enable this app**: Check if you want it available immediately
-
-Click **Register app** to save.
-
-:::tip Automatic Field Population
-When you upload the JSON key file, EmailEngine automatically fills in all required fields. You don't need to copy and paste individual values.
-:::
+Click **Register app** to save. Service account applications never appear in the hosted authentication form, so the **Enable this app** checkbox has no effect on that; the app is listed as always enabled.
 
 :::info JSON Key File After Setup
 Once EmailEngine has been configured with the service account credentials, the JSON key file is no longer needed. EmailEngine stores the credentials in its database. You can delete the JSON file from your local system to reduce security risk.
@@ -377,7 +371,7 @@ If you need to configure the same service account in another EmailEngine instanc
 :::
 
 :::warning Enable Field Encryption
-By default, EmailEngine stores credentials in cleartext in Redis. To protect sensitive data like service account private keys, you should enable field encryption. See [Setting Up Encryption](/docs/advanced/encryption) for configuration instructions.
+Unless `EENGINE_SECRET` is set, EmailEngine stores credentials in cleartext in Redis. To protect sensitive data like service account private keys, enable field encryption. See [Setting Up Encryption](/docs/advanced/encryption) for configuration instructions.
 :::
 
 ### Find Your App ID
@@ -393,7 +387,7 @@ curl https://emailengine.example.com/v1/oauth2 \
 
 ### Verify the Setup
 
-Before adding accounts, use the **Verify setup** button on the OAuth2 app's page (or [`POST /v1/oauth2/{app}/verify`](/docs/api/post-v-1-oauth-2-app-verify)) to test the whole authentication chain. The verifier checks the service account configuration, performs the token exchange, and - if you provide a test mailbox address - validates domain-wide delegation with a live IMAP login or Gmail API probe. Each step is reported as passed, failed, or skipped with a hint for fixing failures, so problems like a missing delegation scope surface immediately instead of when the first account fails to connect.
+Before adding accounts, use the **Verify setup** button on the OAuth2 app's page (or [`POST /v1/oauth2/{app}/verify`](/docs/api/post-v-1-oauth-2-app-verify)) to test the whole authentication chain. The verifier checks the service account configuration, signs and exchanges the JWT assertion, and - if you provide a test mailbox address in `account` - obtains a domain-wide delegation token for that user and performs a read-only IMAP login (pass `"testConnection": false` to skip the login). Each step is reported as `ok`, `fail`, or `skip` with a hint for fixing failures, so problems like a missing delegation scope surface immediately instead of when the first account fails to connect.
 
 ## Alternative: Workload Identity Federation (Keyless)
 
@@ -575,10 +569,10 @@ In the EmailEngine OAuth2 app form:
 4. Paste the contents of `external-account.json` into the **External account configuration** textarea, or use the file upload button.
 5. Click **Register app**.
 
-EmailEngine validates the JSON shape on save and rejects unsupported credential sources or malformed configurations up front.
+EmailEngine validates the configuration on save: it must be JSON with `"type": "external_account"`, carry `audience`, `subject_token_type`, `token_url` and `service_account_impersonation_url`, and `token_url` must point at Google's STS endpoint. A credential source it cannot read is reported when the token is first requested, as `ESubjectTokenRead`.
 
 :::important Client Email must match the impersonated service account
-In federation mode EmailEngine issues the JWT bearer assertion as the service account named in the configuration's `service_account_impersonation_url`. The **Client Email** field must be that same service account address. If they differ, EmailEngine rejects the configuration with `EServiceAccountMismatch` rather than failing later with an opaque `invalid_grant`.
+In federation mode EmailEngine issues the JWT bearer assertion as the service account named in the configuration's `service_account_impersonation_url`. The **Client Email** field must be that same service account address. If they differ, EmailEngine reports `EServiceAccountMismatch` the first time it uses the application (the **Verify setup** check, or the first token request), rather than failing at Google with an opaque `invalid_grant`.
 :::
 
 The authentication method (service account key vs Workload Identity Federation) is fixed once the application is created. To switch methods, create a new application.
@@ -632,7 +626,7 @@ With the service account configured, you can now add email accounts without any 
 
 Since service-account apps authenticate without an interactive consent screen, the OAuth2 app's detail page in the EmailEngine dashboard provides an **Add account** button. It opens a dialog asking for the account name and email address and registers the account directly - no API call needed.
 
-The button is available for email-scoped service apps (IMAP/SMTP or Gmail API base scopes). Pub/Sub-scoped service apps grant no mailbox access, so they do not offer it.
+The button is available for service apps with the **IMAP and SMTP** base scope. Pub/Sub-scoped service apps grant no mailbox access, so they do not offer it.
 
 ### Add Account via API
 
@@ -680,7 +674,7 @@ The account will be created and should transition to "connected" state within mo
 You can add any user in your organization using the same App ID:
 
 ```bash
-# Add sales team accounts (replace APP_ID with your actual App ID)
+# Add sales team accounts (replace AAABkTn2CRQAAAAB with your App ID)
 curl -X POST https://emailengine.example.com/v1/account \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
@@ -710,7 +704,7 @@ curl -X POST https://emailengine.example.com/v1/account \
 
 Check the accounts list in EmailEngine:
 
-Service account-based accounts appear as "OAuth2 (Gmail Service Accounts)" accounts in the list.
+Accounts registered through a service account show **Gmail Service Accounts** as their provider in the list.
 
 ## Account Management
 
@@ -736,6 +730,12 @@ curl -X PUT https://emailengine.example.com/v1/account/user123 \
     "subconnections": ["\\Sent"]
   }'
 ```
+
+### Recovering a Switched-Off Account
+
+If domain-wide delegation is revoked or the key is rotated, every account using the application fails authentication. After the failures have run for longer than [`EENGINE_MAX_IMAP_AUTH_FAILURE_TIME`](/docs/configuration/environment-variables#max-imap-auth-failure-time) (three days by default), EmailEngine switches the account off: it reports the `unset` state with a non-null `authFailureDisabledAt`, and a reconnect request returns `{"reconnect": false}`.
+
+Once the delegation or key is fixed, bring the account back with **Resume syncing** on its page in the admin interface, or by registering it again with `POST /v1/account` under the same account ID, which lifts the switch and reconnects (since v2.79.4). See [Accounts switched off after authentication failures](/docs/accounts/managing-accounts#accounts-switched-off-after-authentication-failures).
 
 ### Deleting Service Account Accounts
 

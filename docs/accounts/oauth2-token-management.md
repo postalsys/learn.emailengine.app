@@ -17,16 +17,16 @@ EmailEngine automatically manages OAuth2 tokens for registered accounts, refresh
 When you register OAuth2 accounts in EmailEngine:
 
 - EmailEngine stores OAuth2 tokens in Redis
-- Access tokens are automatically refreshed when expired during API requests
-- EmailEngine makes regular API requests (at least daily) even for idle accounts, keeping refresh tokens active
+- An access token that has expired, or expires within the next 30 seconds, is refreshed before it is used: when a connection is opened, when a Gmail API or MS Graph request is made, and when you request the token through the API
+- Because access tokens are short-lived, a connected account exercises its refresh token regularly, which keeps the provider's inactivity timers from running out
 - You never need to handle token refresh logic
 - Tokens can be retrieved for use with other APIs via the [OAuth2 Token API](/docs/api/get-v-1-account-account-oauthtoken)
 
 :::warning Token Encryption
-OAuth2 tokens (including sensitive refresh tokens and client secrets) are stored **encrypted in Redis** only if you configure the `EENGINE_SECRET` environment variable. Without encryption enabled, credentials are stored in **cleartext**. For production deployments, always enable encryption by setting a strong encryption secret. [See encryption documentation →](/docs/advanced/encryption)
+OAuth2 tokens (including sensitive refresh tokens and client secrets) are stored **encrypted in Redis** only if you configure the `EENGINE_SECRET` environment variable. Without encryption enabled, credentials are stored in **cleartext**. For production deployments, always enable encryption by setting a strong encryption secret. [See encryption documentation](/docs/advanced/encryption)
 :::
 
-This makes EmailEngine a convenient OAuth2 token manager for your entire application, not just for email access.
+EmailEngine can therefore serve as the OAuth2 token store for the rest of your application, not only for email access.
 
 ## Use Cases
 
@@ -113,7 +113,7 @@ When setting up the OAuth2 application in EmailEngine, add extra scopes to the *
 
 **Google Example:**
 
-Navigate to **Integrations** > **OAuth2 Apps** → Edit your Gmail app.
+Navigate to **Integrations** > **OAuth2 Apps**, open your Gmail app and click **Edit app**.
 
 **Additional scopes** field:
 
@@ -124,7 +124,14 @@ https://www.googleapis.com/auth/postmaster.readonly
 
 **Microsoft Example:**
 
-Additional Microsoft Graph scopes are automatically included if you add them as delegated permissions in Azure AD. Just ensure they're configured in the Azure app.
+The same field, with scopes from `https://graph.microsoft.com/`:
+
+```
+https://graph.microsoft.com/Calendars.ReadWrite
+https://graph.microsoft.com/Files.Read
+```
+
+Adding a delegated permission in Azure AD is not enough on its own: EmailEngine only requests the scopes it is configured with, so a permission the user is never asked to consent to does not end up in the token. The app must use the **MS Graph API** base scope; a Microsoft token is issued for one resource, so `graph.microsoft.com` scopes cannot be combined with the IMAP/SMTP base scope (see [Additional scopes](/docs/accounts/oauth2-setup#additional-scopes)).
 
 ### Step 3: Enable OAuth2 Token API Endpoint
 
@@ -138,7 +145,7 @@ For security, the OAuth2 token API endpoint is **disabled by default**.
 
 **To enable via environment variable:**
 
-Set `EENGINE_ENABLE_OAUTH_TOKENS_API=true` when starting EmailEngine.
+Set `EENGINE_ENABLE_OAUTH_TOKENS_API=true` when starting EmailEngine. The variable seeds the setting on an instance where it has never been saved; once the checkbox has been saved either way, the stored value wins.
 
 :::warning Security Consideration
 The OAuth2 token endpoint returns access tokens that can access user data. Only enable this if you need it, and ensure your EmailEngine API is properly secured with strong access tokens and appropriate access controls.
@@ -152,7 +159,7 @@ Make sure the APIs you want to use are enabled in the provider console.
 
 **Google Cloud Console:**
 
-Navigate to **APIs & Services** → **Enabled APIs and services**.
+Navigate to **APIs & Services** > **Enabled APIs and services**.
 
 Search for and enable required APIs (e.g., "Google Calendar API", "Gmail Postmaster API").
 
@@ -187,8 +194,10 @@ curl https://emailengine.example.com/v1/account/example/oauth-token \
   "user": "user@example.com",
   "accessToken": "ya29.a0AVA9y1sXQ....CP1A",
   "provider": "gmail",
+  "app": "AAABhaBPHscAAAAI",
   "registeredScopes": ["https://www.googleapis.com/auth/postmaster.readonly", "https://mail.google.com/"],
-  "expires": "2022-07-08T14:25:27.780Z"
+  "expires": "2022-07-08T14:25:27.780Z",
+  "cached": true
 }
 ```
 
@@ -196,13 +205,15 @@ curl https://emailengine.example.com/v1/account/example/oauth-token \
 
 - `account` - Account ID in EmailEngine
 - `user` - Email address of the account
-- `accessToken` - Currently valid OAuth2 access token
+- `accessToken` - Currently valid OAuth2 access token. Absent when an [authentication server](/docs/accounts/authentication-server) supplied password credentials instead of a token
 - `provider` - OAuth2 provider type (`gmail`, `gmailService`, `outlook`, `outlookService`, `mailRu`)
+- `app` - ID of the OAuth2 application the account was registered through. Omitted for the legacy applications whose ID equals the provider name
 - `registeredScopes` - List of scopes this token has access to
 - `expires` - When the access token expires (ISO 8601)
+- `cached` - `false` when this request refreshed the token, `true` when the stored token was still valid
 
 :::tip Token Validity
-EmailEngine ensures the returned access token is valid and not expired. If the token is about to expire, EmailEngine automatically refreshes it before returning.
+A stored token that has expired, or expires within the next 30 seconds, is refreshed before the response is sent. If the refresh fails, the endpoint answers 403 with the error code `OauthRenewError` and the provider's rejection under `tokenRequest`.
 :::
 
 ### Token Lifetime
@@ -226,7 +237,7 @@ EmailEngine ensures the returned access token is valid and not expired. If the t
 | **User revokes your app**             | Immediate invalidation when user removes permissions via Google account settings                        |
 | **Not used for 6 months**             | Auto-expired due to inactivity                                                                          |
 | **Gmail password changed**            | Token invalidated when Gmail scopes are present                                                         |
-| **Too many refresh tokens issued**    | Google enforces limits (~50 per user/client); oldest tokens invalidated first when limit exceeded       |
+| **Too many refresh tokens issued**    | Google keeps at most 100 refresh tokens per account per client ID; the oldest is invalidated when a new one is issued past that limit |
 | **Consent was time-bounded**          | If user granted time-based access, it expires accordingly                                               |
 | **OAuth consent screen in "Testing"** | For external apps in Testing mode, refresh tokens expire after 7 days. Move to Production to avoid this |
 
@@ -243,7 +254,7 @@ If your Google OAuth app is in "Testing" status, refresh tokens expire after **7
 
 **Refresh tokens:**
 
-- Rolling lifetime up to 1 year
+- Each refresh returns a new refresh token, which EmailEngine stores in place of the old one, so a token in regular use has no fixed lifetime
 - EmailEngine keeps them active by regular use
 
 **Conditions that invalidate Microsoft refresh tokens:**
@@ -255,7 +266,6 @@ If your Google OAuth app is in "Testing" status, refresh tokens expire after **7
 | **Password change / account disabled**      | Changing password or disabling account invalidates existing refresh tokens                 |
 | **Conditional access or MFA policy change** | New tenant policies (MFA, location requirements) invalidate old refresh tokens             |
 | **Refresh token inactive for 90 days**      | If not used to get new access tokens for 90 days, it expires                               |
-| **Maximum rolling lifetime (~1 year)**      | Hard limit around 12 months even if used regularly (may vary by tenant config)             |
 | **Application permission changes**          | Changing requested scopes or app registration requires re-consent, invalidating old tokens |
 | **User signs out of all sessions**          | "Sign out everywhere" action kills all refresh tokens                                      |
 
@@ -264,7 +274,7 @@ EmailEngine automatically uses refresh tokens to obtain new access tokens, which
 :::
 
 :::danger Microsoft Client Secret Expiration
-Microsoft Graph API OAuth2 **client secrets expire** and must be renewed regularly. Secret expiration times are configured in Azure AD and can range from **90 days to 2 years maximum**. When a client secret expires, EmailEngine can no longer refresh access tokens, causing **all accounts using that OAuth2 app to fail** immediately.
+Microsoft OAuth2 **client secrets expire** and must be renewed regularly. The expiry is chosen when the secret is created in Azure AD, and the portal allows at most **24 months**. When a client secret expires, EmailEngine can no longer refresh access tokens, causing **all accounts using that OAuth2 app to fail** immediately.
 
 **To prevent service disruption:**
 1. Monitor client secret expiration in Azure AD: **Certificates & secrets** section
@@ -275,16 +285,16 @@ Microsoft Graph API OAuth2 **client secrets expire** and must be renewed regular
 **If the secret expires:**
 - Every account bound to that OAuth2 app fails authentication and stops syncing
 - Replacing the secret is enough to recover them. Refresh tokens are bound to the application registration rather than to the secret, so the users do not have to authorize again
-- An outage that runs longer than [`EENGINE_MAX_IMAP_AUTH_FAILURE_TIME`](/docs/reference/configuration-options#max-imap-auth-failure-time), three days by default, is the exception: those accounts are parked and have to be re-enabled once the secret is fixed
+- An outage that runs longer than [`EENGINE_MAX_IMAP_AUTH_FAILURE_TIME`](/docs/configuration/environment-variables#max-imap-auth-failure-time), three days by default, is the exception: those accounts are [switched off](/docs/accounts/managing-accounts#accounts-switched-off-after-authentication-failures) and stay off after the secret is fixed. Use **Resume syncing** on each account page, or re-enable them through the API
 - No stored data is lost either way
 :::
 
 #### Token Lifetime Summary
 
-| Provider      | Access Token | Refresh Token (Active)         | Refresh Token (Inactive) |
-| ------------- | ------------ | ------------------------------ | ------------------------ |
-| **Google**    | 1 hour       | Long-lived (up to token limit) | Expires after 6 months   |
-| **Microsoft** | 1 hour       | Up to 1 year (rolling)         | Expires after 90 days    |
+| Provider      | Access Token | Refresh Token (Active)                                        | Refresh Token (Inactive) |
+| ------------- | ------------ | ------------------------------------------------------------- | ------------------------ |
+| **Google**    | 1 hour       | No fixed lifetime; invalidated by the conditions listed above | Expires after 6 months   |
+| **Microsoft** | 1 hour       | Replaced on every refresh; invalidated by the conditions above | Expires after 90 days    |
 
 ## Using Tokens with Provider APIs
 
@@ -390,26 +400,24 @@ EmailEngine handles token refresh automatically:
 
 **When EmailEngine Refreshes Tokens:**
 
-- When an API operation encounters an expired access token
-- During account reconnection
-- When you request a token via the API endpoint (if expired)
-- As part of regular daily operations (keeping refresh tokens active)
+- Before opening an IMAP or SMTP connection, when the stored token has expired or expires within 30 seconds
+- Before a Gmail API or MS Graph request, on the same condition
+- When you request a token via the API endpoint, on the same condition
 
 **What EmailEngine Does:**
 
-1. Detects expired access token during an API request
-2. Uses the refresh token to obtain a new access token
-3. Updates stored credentials in Redis
-4. Retries the original operation with the new token
+1. Uses the refresh token to obtain a new access token
+2. Stores the new token and its expiry time in Redis, encrypted when `EENGINE_SECRET` is set
+3. Proceeds with the connection or request using the new token
+
+A refresh that the provider rejects is reported as an [`authenticationError`](/docs/webhooks/authenticationerror) webhook; a transient network failure is retried rather than treated as a rejection.
 
 **Your Responsibility:**
 
-- Nothing! EmailEngine handles everything automatically
-- Just retrieve tokens when you need them via the API endpoint
-- They'll always be valid and up-to-date
+- Retrieve tokens when you need them via the API endpoint; the token returned is valid at the time of the response
 
 :::tip Caching Tokens
-While you can cache tokens in your application for a short time (e.g., 5-10 minutes), it's usually simpler to just request them from EmailEngine on-demand. EmailEngine's token retrieval is fast and guarantees validity.
+You can cache a token in your application until its `expires` time. Requesting it from EmailEngine on demand is also fine: when the stored token is still valid the response comes from Redis, with `cached` set to `true`.
 :::
 
 ## See Also

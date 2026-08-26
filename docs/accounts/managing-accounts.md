@@ -18,13 +18,15 @@ Every account in EmailEngine has a state that indicates its current status:
 |-------|-------------|------------------|---------|
 | `init` | The account was just registered and has not connected yet | No | Wait |
 | `connecting` | Connecting to the mail server or authorizing with the provider | Limited | Wait for connection |
-| `syncing` | Performing the initial or a periodic mailbox sync | Yes | Operations allowed |
-| `connected` | Connected and watching for changes | Yes | All operations available |
+| `syncing` | Connected and performing the initial or a periodic mailbox sync | Yes | Operations allowed |
+| `connected` | Connected and watching for changes. This is the healthy steady state | Yes | All operations available |
 | `disconnected` | The connection dropped and EmailEngine is retrying with backoff | No | Wait for the retry |
-| `authenticationError` | The credentials were rejected | No | Update credentials or re-authorize |
-| `connectError` | The server could not be reached or the TLS handshake failed | No | Check network, server status |
-| `paused` | Syncing was paused through the API | No | Resume syncing |
-| `unset` | No usable IMAP or OAuth2 configuration, or syncing is [disabled](#disabling-and-enabling-accounts) for the account | No | Finish the setup, or re-enable the account |
+| `authenticationError` | The credentials were rejected. Requires re-authentication before syncing resumes | No | Update credentials or re-authorize |
+| `connectError` | The server could not be reached or the TLS handshake failed. Retried with backoff | No | Check network, server status |
+| `paused` | Syncing was paused through the API. No connection is maintained | No | Resume syncing |
+| `unset` | The account is not syncing: either no IMAP or OAuth2 configuration is set, or syncing was switched off, by the operator or automatically after repeated authentication failures | No | Finish the setup, or [re-enable the account](#disabling-and-enabling-accounts) |
+
+Two different things put an account in `unset`, and the account object tells them apart. `imap.disabled` is `true` in both cases; `authFailureDisabledAt` (since v2.79.4) is a timestamp when EmailEngine [switched the account off itself](#accounts-switched-off-after-authentication-failures) and `null` when the operator did.
 
 ### State Transitions
 
@@ -47,7 +49,7 @@ stateDiagram-v2
 
     connected --> paused: paused through the API
     paused --> connecting: resumed
-    unset --> connecting: re-enabled
+    unset --> connecting: re-enabled, re-authorized, or resumed
 ```
 
 ## Adding Accounts
@@ -107,8 +109,8 @@ curl -X POST https://emailengine.example.com/v1/account \
     "email": "john@gmail.com",
     "oauth2": {
       "provider": "AAABhaBPHscAAAAH",
-      "accessToken": "ya29.a0AWY7Ckl...",
-      "refreshToken": "1//0gDj5...",
+      "accessToken": "ACCESS_TOKEN_FROM_GOOGLE",
+      "refreshToken": "REFRESH_TOKEN_FROM_GOOGLE",
       "auth": {
         "user": "john@gmail.com"
       }
@@ -188,7 +190,7 @@ curl -X POST https://emailengine.example.com/v1/authentication/form \
 **Response:**
 ```json
 {
-  "url": "https://emailengine.example.com/accounts/new?data=eyJhY2NvdW50..."
+  "url": "https://emailengine.example.com/accounts/new?data=eyJhY2NvdW50IjoidXNlcjEyMyJ9.k3Qb"
 }
 ```
 
@@ -199,11 +201,8 @@ Direct user to this URL. After completing setup, they'll be redirected to your `
 ### Via Web Dashboard
 
 1. Navigate to **Accounts** in the EmailEngine dashboard
-2. Click **Add Account** button
-3. Choose authentication method:
-   - Manual IMAP/SMTP configuration
-   - Sign in with Google
-   - Sign in with Microsoft
+2. Click **Add an account**, enter a display name and, optionally, an account identifier, then click **Continue**
+3. On the hosted authentication form, choose **Standard IMAP** or one of the enabled OAuth2 apps (for example, a "Sign in with Microsoft" button)
 4. Complete setup
 5. Account appears in accounts list
 
@@ -225,6 +224,7 @@ curl https://emailengine.example.com/v1/account/user123 \
   "state": "connected",
   "syncTime": "2024-01-15T10:30:00.000Z",
   "type": "gmail",
+  "authFailureDisabledAt": null,
   "oauth2": {
     "provider": "AAABhaBPHscAAAAH",
     "auth": { "user": "john@gmail.com" },
@@ -267,13 +267,16 @@ curl https://emailengine.example.com/v1/accounts \
       "account": "user123",
       "name": "John Doe",
       "email": "john@gmail.com",
+      "type": "gmail",
       "state": "connected"
     },
     {
       "account": "user456",
       "name": "Jane Smith",
       "email": "jane@outlook.com",
-      "state": "authenticationError"
+      "type": "outlook",
+      "state": "unset",
+      "authFailureDisabledAt": "2026-08-20T09:12:44.000Z"
     }
   ],
   "total": 2,
@@ -281,6 +284,8 @@ curl https://emailengine.example.com/v1/accounts \
   "pages": 1
 }
 ```
+
+List entries carry `authFailureDisabledAt` only for accounts that EmailEngine [switched off after repeated authentication failures](#accounts-switched-off-after-authentication-failures); it is omitted otherwise.
 
 ### Filter Accounts
 
@@ -472,19 +477,27 @@ curl -X PUT https://emailengine.example.com/v1/account/user123/reconnect \
 - After network issues resolved
 
 **What It Does:**
-- Closes existing connections
-- Clears error states
-- Attempts fresh connection
-- Updates account state
+- Closes the existing connections
+- Assigns a fresh client and connects again
+- The state moves to `connecting` and then follows the result
 
 ### Reconnect Response
 
-**Success:**
+**Reconnect requested:**
 ```json
 {
   "reconnect": true
 }
 ```
+
+**Account switched off by EmailEngine:**
+```json
+{
+  "reconnect": false
+}
+```
+
+Since v2.79.4, an account that EmailEngine [switched off after repeated authentication failures](#accounts-switched-off-after-authentication-failures) is not reconnected, because the connection setup checks the disable flag before dialing out and the request would report success while changing nothing. Supply working credentials, or use **Resume syncing** in the admin interface. The same response is returned when the body is missing or `reconnect` is `false`.
 
 **Account Not Found:**
 ```json
@@ -551,9 +564,34 @@ curl -X PUT https://emailengine.example.com/v1/account/user123 \
 
 The account keeps its credentials and folder state throughout, so resuming does not re-download the mailbox. Request a [reconnect](#reconnecting-accounts) if it does not pick up on its own.
 
-:::info EmailEngine sets this flag too
-An account that fails authentication for [three days running](/docs/reference/configuration-options#max-imap-auth-failure-time) is parked with the same flag, so a disabled account is not always one somebody disabled. Working credentials have to be in place before re-enabling it, or the account is parked again once the window passes.
-:::
+### Accounts switched off after authentication failures
+
+EmailEngine sets the same `imap.disabled` flag itself when an account keeps failing authentication. Once the first failure in the current run is older than [`EENGINE_MAX_IMAP_AUTH_FAILURE_TIME`](/docs/configuration/environment-variables#max-imap-auth-failure-time) (three days by default), the account is switched off rather than retried forever, which spares the mail server a login loop and the provider's token endpoint a refresh loop for a revoked grant. When that happens:
+
+- `imap.disabled` is set to `true`, the connection is closed, and the account reports the state `unset`
+- `authFailureDisabledAt` in the [account object](/docs/api/get-v-1-account-account) carries the time of the disable; it is `null` for an account the operator disabled, so it is what tells the two apart
+- `lastError` records the disable as the account's last error, with the provider's rejection in `lastError.response`
+- An [`authenticationError`](/docs/webhooks/authenticationerror) webhook is sent for the disable, even though the underlying error has already been reported once
+- `PUT /v1/account/{account}/reconnect` answers `{"reconnect": false}` and does nothing, because the connection setup checks the flag before dialing out
+- In the admin interface the account page shows a "Syncing was switched off" alert with the time, and the accounts list badges it "Syncing switched off"
+
+Any of the following turns syncing back on:
+
+- **Supply working credentials.** Re-authorizing an OAuth2 account through the [hosted authentication form](/docs/accounts/hosted-authentication) or the account page's **Re-authenticate** button, or registering the account again with `POST /v1/account`, lifts the flag and reconnects the account. `PUT /v1/account/{account}` lifts it when the body carries new OAuth2 tokens, sets `imap.disabled` to `false`, replaces the whole `imap` object, or, in releases after v2.79.4, changes `imap.auth` in a partial update. In v2.79.4 itself a partial update that only changes the password keeps the flag, so add `"disabled": false` next to the new password there
+- **Resume syncing** on the account page in the admin interface retries with the stored credentials. This is the only admin path for a Gmail API or Microsoft Graph account, whose edit page has no IMAP settings and therefore no "Disable IMAP" checkbox
+- **Saving the edit form** of an IMAP account with new credentials. In releases after v2.79.4 the "Disable IMAP" checkbox is left unchecked for an account the safety net switched off, so the save writes `disabled: false` along with the credentials. In v2.79.4 the box is pre-checked and has to be cleared by hand
+- `{"imap": {"partial": true, "disabled": false}}` through the API, as [above](#enable-account)
+
+If the credentials are still bad, the failures start counting again from the resume, and the account is switched off once more after the window passes.
+
+Version notes:
+
+- Before v2.79.3 the safety net only applied to password IMAP accounts; Gmail and Microsoft OAuth2 accounts with a revoked refresh token were retried indefinitely. v2.79.3 extended it to OAuth2 accounts, so an upgraded instance switches every account already past the threshold off on its next failed refresh
+- v2.79.4 added `authFailureDisabledAt`, the recovery through re-authorization and `PUT /v1/account/{account}`, the `{"reconnect": false}` answer, and the admin alert and **Resume syncing** button. In v2.79.3 re-authorization left the flag in place; clearing `imap.disabled` through the API, or the "Disable IMAP" checkbox on an IMAP account's edit page, was the only way back
+- An account switched off by v2.79.3 has no timestamp of its own. On the first start of a later version, EmailEngine backfills the marker for every OAuth2 account that carries `imap.disabled` together with the stored disable reason, using the time of that start rather than the unknown time of the disable, so those accounts become recoverable by the paths above. This runs once per Redis database. The accounts list recognizes the same signature and badges those accounts "Syncing switched off" even before the backfill has run
+- Releases after v2.79.4 also stop parking [delegated accounts](/docs/accounts/microsoft-365/shared-mailboxes): a shared mailbox has no credential of its own, so only the account it borrows the token from is switched off, and re-authorizing that account brings the shared mailboxes back with it. The same releases include OAuth2 accounts registered with `imap: false` in the safety net, which v2.79.3 and v2.79.4 had skipped
+
+In v2.79.4 an IMAP account in this state is reported with the type `sending` and `sendOnly: true` everywhere, because the two are told apart only by `authFailureDisabledAt`. In releases after v2.79.4 the accounts listing and the admin interface keep the account's own type and show the IMAP settings card with the stored error, since send-only is a configuration and a switch-off is a fault. `GET /v1/account/{account}` still answers `sending` with `sendOnly: true` for such an account, so read the type from the listing, or read `authFailureDisabledAt`, which is unambiguous on both. An OAuth2 account keeps its `gmail` or `outlook` type in every version.
 
 ## Deleting Accounts
 
@@ -715,6 +753,14 @@ fi
 
 `authenticationError` is the state worth paging on: it persists until someone updates the credentials or the user re-authorizes. `connectError` and `disconnected` are retried automatically, so alert on those only when an account stays there across several consecutive checks.
 
+An account that has been failing for three days leaves `authenticationError` for `unset` when EmailEngine [switches it off](#accounts-switched-off-after-authentication-failures), so a check that only asks for `authenticationError` loses sight of exactly the accounts that have needed attention the longest. List `?state=unset` as well and keep the entries that carry `authFailureDisabledAt`:
+
+```bash
+curl -s "https://emailengine.example.com/v1/accounts?state=unset&pageSize=1000" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  | jq -r '.accounts[] | select(.authFailureDisabledAt) | "- \(.account) switched off at \(.authFailureDisabledAt)"'
+```
+
 For an event-driven alternative to polling, subscribe to the [`authenticationError`](/docs/webhooks/authenticationerror) webhook, or follow the [account state stream](/docs/api-reference/accounts-api#streaming-account-state-changes).
 
 ## Bulk Operations
@@ -781,7 +827,7 @@ accounts=$(curl -s "https://emailengine.example.com/v1/accounts?query=test" \
   | jq -r '.accounts[].account')
 
 for account in $accounts; do
-  echo "Deleting $account..."
+  echo "Deleting $account"
   curl -X DELETE "https://emailengine.example.com/v1/account/$account" \
     -H "Authorization: Bearer YOUR_TOKEN"
   sleep 0.5
@@ -805,7 +851,7 @@ curl -X PUT "https://emailengine.example.com/v1/account/user123/reconnect" \
 `{"reconnect": true}` must be present. The flag defaults to `false`, so a `PUT` with an empty body is accepted and does nothing.
 :::
 
-An account in `authenticationError` will not recover from a reconnect on its own, because the credentials are still the rejected ones. Fix the credentials first, which triggers a reconnect by itself.
+An account in `authenticationError` will not recover from a reconnect on its own, because the credentials are still the rejected ones. Fix the credentials first, which triggers a reconnect by itself. An account that EmailEngine has already [switched off](#accounts-switched-off-after-authentication-failures) refuses the reconnect outright and answers `{"reconnect": false}`.
 
 ### Credential Rotation
 
@@ -821,7 +867,7 @@ curl -X PUT "https://emailengine.example.com/v1/account/user123" \
   }'
 ```
 
-The merge is recursive, so the stored `auth.user` is kept and only the password changes. Updating credentials on an account in an error state triggers a reconnect on its own, so no separate reconnect call is needed.
+The merge is recursive, so the stored `auth.user` is kept and only the password changes. A changed `imap` object triggers a reconnect on its own, so no separate reconnect call is needed. If EmailEngine had already [switched the account off](#accounts-switched-off-after-authentication-failures), the partial update keeps `imap.disabled` in place; add `"disabled": false` to the `imap` object to resume syncing with the new password.
 
 ## See Also
 

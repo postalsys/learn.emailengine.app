@@ -27,8 +27,8 @@ Hosted authentication is EmailEngine's built-in web interface for account setup.
 - Returns user to your application
 
 **No OAuth2 code required:**
-- EmailEngine handles all OAuth2 complexity
-- Your app just generates a form URL
+- EmailEngine handles the OAuth2 exchange
+- Your app only generates a form URL
 - User completes authentication
 - EmailEngine redirects back with results
 
@@ -107,17 +107,17 @@ curl -X POST https://emailengine.example.com/v1/authentication/form \
 }
 ```
 
-Direct the user to this URL to begin authentication.
+Direct the user to this URL to begin authentication. The URL is single-use and expires 24 hours after it was generated; a second visit, or a visit after expiry, gets an "Invalid or expired account setup URL" error page. Generate a new URL for every attempt.
 
 ### Request Parameters
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `account` | No | Account ID. If not provided or `null`, a unique ID is generated automatically. If an existing account ID is provided, that account's settings will be updated |
+| `account` | No | Account ID. If not provided or `null`, a unique ID is generated automatically. If an existing account ID is provided, that account is re-authorized and its settings updated, see [Re-authorizing an existing account](#re-authorizing-an-existing-account) |
 | `email` | No | Pre-fill email address on form |
 | `expectedEmail` | No | Restrict the form to a single address - setup is rejected if the user authenticates as someone else |
 | `name` | No | Pre-fill display name on form |
-| `type` | No | Pre-select account type (skips selection screen) |
+| `type` | No | Pre-select the account type: `"imap"` or an OAuth2 application ID (skips the selection screen) |
 | `delegated` | No | Register the account as a shared mailbox. Microsoft 365 OAuth2 only |
 | `notifyFrom` | No | Only emit webhooks for messages received after this date. Defaults to the moment the account is created. IMAP only |
 | `subconnections` | No | Folders to watch on their own connection, for immediate notifications |
@@ -379,7 +379,15 @@ if ($state === 'new') {
 
 ### Retry Flow
 
-If authentication fails, users see an error page on EmailEngine and can retry. Consider providing a "Connect Email" button on your settings page that generates a new authentication form URL, allowing users to attempt connection again.
+If authentication fails, users see an error page on EmailEngine. Where the user can fix the problem (a permission left unchecked on Google's consent screen, or signing in as the wrong account), that page carries a **Try Again** button that restarts the provider flow with a fresh single-use setup. For other failures, provide a "Connect Email" button on your settings page that generates a new authentication form URL, since the original URL cannot be reused.
+
+### Re-authorizing an existing account
+
+Generating a form with the `account` ID of an existing account re-authorizes it: the new tokens or IMAP credentials replace the stored ones, everything else on the account is kept, and the redirect carries `state=existing`. Use this when a user's grant was revoked, when the account reports `authenticationError`, or when the OAuth2 application's scopes changed.
+
+If the account was not operational at the time (an error state, or switched off by the safety net after repeated authentication failures), completing the form also requests a full reconnect, so syncing resumes without a separate reconnect call. Since v2.79.4 this includes an account that EmailEngine switched off itself: the one that reports `unset` with a non-null `authFailureDisabledAt`. See [Accounts switched off after authentication failures](/docs/accounts/managing-accounts#accounts-switched-off-after-authentication-failures).
+
+The admin interface offers the same flow as the **Re-authenticate** button on an OAuth2 account's page.
 
 ## Pre-filling Information
 
@@ -486,7 +494,7 @@ curl -X POST https://emailengine.example.com/v1/authentication/form \
 
 User will authenticate with their personal account but access the shared mailbox.
 
-[Learn more about shared mailboxes →](/docs/accounts/microsoft-365/outlook-365#shared-mailboxes)
+[Learn more about shared mailboxes >](/docs/accounts/microsoft-365/outlook-365#shared-mailboxes)
 
 ## User Experience
 
@@ -524,11 +532,11 @@ https://emailengine.example.com/accounts/new?data=eyJ...&locale=fr&theme=dark
 
 Displays the form in a specific language instead of relying on browser negotiation. Supported values: `en`, `de`, `fr`, `nl`, `et`, `pl`, `ja`. The choice is stored in a cookie, so it persists through the multi-step setup flow. Without the argument, EmailEngine negotiates the language from the browser's `Accept-Language` header, falling back to the server-wide default locale.
 
-[Learn more about translations and language selection →](/docs/advanced/translations)
+[Learn more about translations and language selection >](/docs/advanced/translations)
 
 **Theme (`theme`):**
 
-Forces the light or dark color scheme so the page matches the application the user is coming from. Supported values: `light` and `dark`. The choice is remembered for the rest of the browser session, so it survives the setup steps that follow. Without the argument, the pages follow the visitor's system preference (`prefers-color-scheme`).
+Forces the light or dark color scheme so the page matches the application the user is coming from. Supported values: `light` and `dark`. The choice is remembered for the rest of the browser session, so it survives the setup steps that follow. Without the argument, the pages follow the theme the visitor chose in the EmailEngine admin interface in that browser, if any, and otherwise the system preference (`prefers-color-scheme`).
 
 :::note Version Availability
 The `theme` argument requires EmailEngine v2.73.0 or later. The `locale` argument works on all recent versions.
@@ -544,7 +552,7 @@ The `theme` argument requires EmailEngine v2.73.0 or later. The `locale` argumen
 | `templateHtmlHead` | Custom `<head>` content | CSS style overrides, custom fonts |
 
 These can be configured via:
-- **Configuration** → **General** page in the EmailEngine dashboard
+- **Configuration** > **Branding** page in the EmailEngine dashboard
 - Settings API (`POST /v1/settings`)
 
 **Example - Add custom header with logo:**

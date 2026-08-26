@@ -69,9 +69,8 @@ Instead of long-lived passwords:
 
 ### Standard IMAP Protocol
 
-Full IMAP compatibility:
+The proxy relays the session to the provider's IMAP server, so the client sees the provider's own capabilities and command set:
 
-- All IMAP commands supported
 - Works with any IMAP client
 - Use with Thunderbird, Outlook, scripts, etc.
 - No special client configuration needed (except server/port)
@@ -87,19 +86,19 @@ Manage all accounts in EmailEngine:
 
 ## Important Limitation
 
-:::warning IMAP Authentication Only
-The IMAP proxy **only works for accounts using IMAP authentication**.
+:::warning IMAP-backed accounts only
+The IMAP proxy works for any account that EmailEngine itself reaches over IMAP: password accounts as well as OAuth2 accounts whose app uses the IMAP/SMTP base scope.
 
-Accounts configured to use Gmail API or Microsoft Graph API cannot be proxied because they don't use IMAP connections internally.
+Accounts registered through a Gmail API or Microsoft Graph API app cannot be proxied because there is no IMAP session to relay. A login for such an account is refused with `NO [ACCOUNTDISABLED] IMAP is not supported for API-based accounts`.
 
-If you need to proxy Gmail API or MS Graph accounts, you must reconfigure them to use IMAP/SMTP with OAuth2 instead.
+If you need to proxy such an account, register it again through an OAuth2 app with the IMAP/SMTP base scope.
 :::
 
 ## Setup Guide
 
 ### Step 1: Enable IMAP Proxy in EmailEngine
 
-Navigate to **Configuration** → **IMAP Proxy** in EmailEngine dashboard.
+Navigate to **Configuration** > **IMAP Proxy** in the EmailEngine dashboard.
 
 ![IMAP Proxy configuration page](/img/screenshots/imap-proxy-config.png)
 _Enable the proxy and set the listen address, port and TLS options_
@@ -109,16 +108,18 @@ _Enable the proxy and set the listen address, port and TLS options_
 | Field | Setting | Purpose |
 |-------|---------|---------|
 | Enable IMAP Proxy | `imapProxyServerEnabled` | Starts the proxy server |
-| Host | `imapProxyServerHost` | `0.0.0.0` to accept external connections, `127.0.0.1` for localhost only |
 | Port | `imapProxyServerPort` | The listening port, for example `2993` |
-| Password | `imapProxyServerPassword` | An optional shared password accepted instead of an access token |
-| Proxy | `imapProxyServerProxy` | Route the proxy's own outbound connections through a SOCKS or HTTP proxy |
+| Listen Address | `imapProxyServerHost` | `0.0.0.0` or empty to accept external connections, `127.0.0.1` for localhost only |
+| Enable PROXY Protocol | `imapProxyServerProxy` | Expect the HAProxy PROXY protocol header on incoming connections. Needed behind HAProxy with `send-proxy`, so the proxy sees the client's address rather than the load balancer's |
+| Global Password | `imapProxyServerPassword` | An optional shared password accepted for every account instead of an access token |
 | Enable TLS Encryption | `imapProxyServerTLSEnabled` | Serve implicit TLS rather than plaintext |
 
-After saving, EmailEngine starts the proxy on the given host and port.
+After saving, EmailEngine starts the proxy on the given host and port. The plaintext listener does not offer STARTTLS; TLS is either on for the whole listener or off.
+
+This page configures the listener your clients connect to. Routing EmailEngine's own outbound IMAP and SMTP connections through a SOCKS or HTTP proxy is a different setting, `proxyUrl`, described under [Proxy Configuration](/docs/accounts/imap-smtp#proxy-configuration).
 
 :::note TLS needs a Service URL with a real domain
-There is no certificate upload here. When TLS is enabled, EmailEngine serves the certificate it manages for the hostname in your **Service URL**, so the checkbox stays disabled until that URL points at a real domain rather than an IP address or `localhost`. To supply your own certificate instead, set the `EENGINE_IMAPPROXY_TLS_KEY` and `EENGINE_IMAPPROXY_TLS_CERT` [environment variables](/docs/configuration/environment-variables#certificates-for-emailengines-own-listeners).
+There is no certificate upload here. When TLS is enabled, EmailEngine serves the certificate it manages for the hostname in your **Service URL**, so the checkbox stays disabled until that URL points at a real domain rather than an IP address or `localhost` (once TLS is on, it can still be switched off). The `EENGINE_IMAPPROXY_TLS_KEY` and `EENGINE_IMAPPROXY_TLS_CERT` [environment variables](/docs/configuration/environment-variables#certificates-for-emailengines-own-listeners) supply a certificate of your own; a valid managed certificate for the Service URL hostname takes precedence over them.
 :::
 
 ### Step 2: Verify Proxy is Running
@@ -129,11 +130,10 @@ There is no certificate upload here. When TLS is enabled, EmailEngine serves the
 openssl s_client -crlf -connect localhost:2993
 ```
 
-**Expected Response:**
+**Expected Response:** the certificate details, then the greeting, which ends with the connection ID:
 
 ```
-...certificate details...
-* OK EmailEngine IMAP Proxy ready for requests from 127.0.0.1
+* OK EmailEngine IMAP Proxy ready for requests from 127.0.0.1 hkdq2ls1a8y9zk3x
 ```
 
 #### Without TLS (Development Only)
@@ -151,7 +151,7 @@ telnet localhost 2143
 **Expected Response:**
 
 ```
-* OK EmailEngine IMAP Proxy ready for requests from 127.0.0.1
+* OK EmailEngine IMAP Proxy ready for requests from 127.0.0.1 hkdq2ls1a8y9zk3x
 ```
 
 :::tip Port Selection
@@ -166,10 +166,10 @@ telnet localhost 2143
 First, ensure you have an OAuth2 account configured in EmailEngine.
 
 **For Gmail:**
-[Follow Gmail OAuth2 setup guide →](./gmail/gmail-imap)
+[Follow Gmail OAuth2 setup guide](./gmail/gmail-imap)
 
 **For Outlook:**
-[Follow Outlook OAuth2 setup guide →](./microsoft-365/outlook-365)
+[Follow Outlook OAuth2 setup guide](./microsoft-365/outlook-365)
 
 :::important Must Use IMAP Backend
 The account must be configured to use **IMAP/SMTP**, not Gmail API or MS Graph API. The proxy only works with IMAP-based accounts.
@@ -204,11 +204,12 @@ curl -X POST https://emailengine.example.com/v1/tokens \
 
 ```json
 {
-  "token": "6cad01dae08f...458576a026c1ec"
+  "token": "6cad01dae08f0d5e51fe0a4e0eda06e1be5b8d6cc2c66b95dc0fbe458576a026",
+  "id": "1bc12baf7f0d5e51fe0a4e0eda06e1be5b8d6cc2c66b95dc0fbe4d2e9f5d5e1a"
 }
 ```
 
-Save this token - you'll use it as the IMAP password.
+Save the `token` value - you'll use it as the IMAP password, and it is never shown again. The `id` is what the token listing reports for it.
 
 :::tip Token Scopes
 If you also want to use the same token for SMTP proxy, include both scopes:
@@ -234,16 +235,16 @@ openssl s_client -crlf -connect localhost:2993
 **Authenticate:**
 
 ```
-A LOGIN user123 6cad01dae08f...458576a026c1ec
+A LOGIN user123 6cad01dae08f0d5e51fe0a4e0eda06e1be5b8d6cc2c66b95dc0fbe458576a026
 ```
 
 - Username: EmailEngine account ID
 - Password: The generated access token
 
-**Response:**
+**Response:** the provider's own CAPABILITY line, relayed from the upstream session, followed by the login confirmation:
 
 ```
-* CAPABILITY IMAP4rev1 LITERAL+ SASL-IR LOGIN-REFERRALS ID ENABLE IDLE SORT SORT=DISPLAY
+* CAPABILITY IMAP4rev1 UNSELECT IDLE NAMESPACE QUOTA ID XLIST CHILDREN X-GM-EXT-1 UIDPLUS COMPRESS=DEFLATE ENABLE MOVE CONDSTORE ESEARCH UTF8=ACCEPT LIST-EXTENDED LIST-STATUS LITERAL- SPECIAL-USE APPENDLIMIT=35651584
 A OK user123 authenticated
 ```
 
@@ -259,7 +260,7 @@ Configure your email client with these settings:
 
 **IMAP Settings:**
 
-- **Server**: `localhost` (or EmailEngine server IP)
+- **Server**: `localhost` (or the EmailEngine server's hostname)
 - **Port**: `2993` (your configured proxy port)
 - **Security**: SSL/TLS (if you enabled TLS)
 - **Username**: EmailEngine account ID (e.g., `user123`)
@@ -282,7 +283,7 @@ import imaplib
 mail = imaplib.IMAP4_SSL('localhost', 2993)
 
 # Authenticate with account ID and token
-mail.login('user123', '6cad01dae08f...458576a026c1ec')
+mail.login('user123', '6cad01dae08f0d5e51fe0a4e0eda06e1be5b8d6cc2c66b95dc0fbe458576a026')
 
 # List mailboxes
 status, mailboxes = mail.list()
@@ -380,12 +381,12 @@ curl "https://emailengine.example.com/v1/tokens?account=user123" \
   "tokens": [
     {
       "account": "user123",
-      "id": "6cad01dae08f...458576a026c1ec",
-      "description": "Daily backup script",
+      "id": "1bc12baf7f0d5e51fe0a4e0eda06e1be5b8d6cc2c66b95dc0fbe4d2e9f5d5e1a",
+      "description": "IMAP proxy token for backup script",
       "scopes": ["imap-proxy"],
-      "created": "2024-01-15T10:00:00Z",
+      "created": "2024-01-15T10:00:00.000Z",
       "restrictions": {
-        "addresses": ["10.0.0.0/8"]
+        "addresses": ["127.0.0.0/8"]
       }
     }
   ]
@@ -393,7 +394,7 @@ curl "https://emailengine.example.com/v1/tokens?account=user123" \
 ```
 
 :::info Token IDs
-The `id` value is the SHA-256 hash that identifies the token - the raw token value is shown only once at creation and cannot be retrieved later. The `DELETE /v1/tokens/{token}` endpoint accepts either the raw token or this id.
+The `id` value is the SHA-256 hash that identifies the token; the raw token value is shown only once at creation and cannot be retrieved later. The `DELETE /v1/tokens/{token}` endpoint accepts either the raw token or this id.
 :::
 
 ### Revoking Tokens
@@ -401,7 +402,7 @@ The `id` value is the SHA-256 hash that identifies the token - the raw token val
 Immediately invalidate a token:
 
 ```bash
-curl -X DELETE https://emailengine.example.com/v1/tokens/6cad01dae08f...458576a026c1ec \
+curl -X DELETE https://emailengine.example.com/v1/tokens/1bc12baf7f0d5e51fe0a4e0eda06e1be5b8d6cc2c66b95dc0fbe4d2e9f5d5e1a \
   -H "Authorization: Bearer YOUR_TOKEN"
 ```
 
@@ -434,13 +435,7 @@ NEW_TOKEN=$(curl -X POST https://emailengine.example.com/v1/tokens \
     "description": "Backup script 2024-Q1"
   }' | jq -r '.token')
 
-# Update your script with new token
-echo "New token: $NEW_TOKEN"
-
-# Test new token works
-# ... deploy updated script ...
-
-# Delete old token
+# Deploy the new token to the script, confirm it logs in, then delete the old one
 curl -X DELETE https://emailengine.example.com/v1/tokens/OLD_TOKEN \
   -H "Authorization: Bearer YOUR_TOKEN"
 ```
@@ -458,6 +453,7 @@ curl -X POST https://emailengine.example.com/v1/tokens \
   -d '{
     "account": "user123",
     "scopes": ["imap-proxy"],
+    "description": "Office workstation",
     "restrictions": {
       "addresses": ["203.0.113.42"]
     }
@@ -469,10 +465,11 @@ curl -X POST https://emailengine.example.com/v1/tokens \
 ```bash
 curl -X POST https://emailengine.example.com/v1/tokens \
   -H "Authorization: Bearer YOUR_TOKEN" \
-  -H "Content-Type": application/json" \
+  -H "Content-Type: application/json" \
   -d '{
     "account": "user123",
     "scopes": ["imap-proxy"],
+    "description": "Internal networks",
     "restrictions": {
       "addresses": ["10.0.0.0/8", "192.168.1.0/24"]
     }
@@ -491,7 +488,7 @@ curl -X POST https://emailengine.example.com/v1/tokens \
 If you try to connect from an unauthorized IP:
 
 ```
-A LOGIN user123 6cad01dae08f...458576a026c1ec
+A LOGIN user123 6cad01dae08f0d5e51fe0a4e0eda06e1be5b8d6cc2c66b95dc0fbe458576a026
 A NO [AUTHENTICATIONFAILED] Access denied, traffic not accepted from this IP
 ```
 
@@ -502,15 +499,7 @@ A NO [AUTHENTICATIONFAILED] Access denied, traffic not accepted from this IP
 Integrate email into applications that only support basic authentication:
 
 ```bash
-# Cron job for email backup
-#!/bin/bash
-
-IMAP_HOST="emailengine.company.com"
-IMAP_PORT="2993"
-ACCOUNT="backup"
-TOKEN="6cad01dae08...026c1ec"
-
-# Use offlineimap or similar
+# Cron job for email backup, using offlineimap with the configuration below
 offlineimap -c ~/.offlineimaprc-via-proxy
 ```
 
@@ -534,7 +523,7 @@ remotehost = emailengine.company.com
 remoteport = 2993
 ssl = yes
 remoteuser = backup
-remotepass = 6cad01dae08...026c1ec
+remotepass = 6cad01dae08f0d5e51fe0a4e0eda06e1be5b8d6cc2c66b95dc0fbe458576a026
 ```
 
 ### Email Client Access
@@ -559,16 +548,16 @@ Test email integration without complex OAuth2 setup:
 A connection attempt is enough to confirm the proxy, the account ID, and the token all line up:
 
 ```bash
-python3 -c "
-import imaplib
-m = imaplib.IMAP4('localhost', 2993)
-m.login('test-account', 'test-token-12345')
+EE_TOKEN=6cad01dae08f0d5e51fe0a4e0eda06e1be5b8d6cc2c66b95dc0fbe458576a026 python3 -c "
+import imaplib, os
+m = imaplib.IMAP4('localhost', 2143)
+m.login('test-account', os.environ['EE_TOKEN'])
 print(m.select('INBOX'))
 m.logout()
 "
 ```
 
-Plain `IMAP4` without TLS is fine against localhost while you are developing. Anything reachable off the host should use the TLS listener, since the token travels as the IMAP password.
+Plain `IMAP4` against a plaintext listener on localhost is fine while you are developing; there is no STARTTLS to upgrade it. Anything reachable off the host should use a TLS listener, since the token travels as the IMAP password.
 
 ### Monitoring and Alerting
 
@@ -576,11 +565,12 @@ Monitor email accounts for specific messages:
 
 ```python
 import imaplib
+import os
 import time
 
 def check_for_alerts():
     mail = imaplib.IMAP4_SSL('emailengine.company.com', 2993)
-    mail.login('monitoring', 'monitoring-token')
+    mail.login('monitoring', os.environ['EE_TOKEN'])
     mail.select('INBOX')
 
     # Search for unread messages with specific subject
@@ -604,13 +594,13 @@ EmailEngine also provides an SMTP proxy. With both enabled, email clients get fu
 
 ### Enable SMTP Proxy
 
-In EmailEngine: **Configuration** → **SMTP Server**
+In EmailEngine: **Configuration** > **SMTP Server**
 
 **Settings:**
 
-- **Host**: `0.0.0.0`
+- **Listen Address**: `0.0.0.0`
 - **Port**: `2587` (or your choice)
-- **TLS**: Enabled (recommended)
+- **Enable TLS Encryption**: checked (recommended). Like the IMAP proxy, this is implicit TLS on the whole listener; the plaintext listener has STARTTLS disabled
 
 ### Generate Token with Both Scopes
 
@@ -633,15 +623,15 @@ curl -X POST https://emailengine.example.com/v1/tokens \
 - Port: `2993`
 - Security: SSL/TLS
 - Username: `user123`
-- Password: `6cad01dae08...`
+- Password: `6cad01dae08f0d5e51fe0a4e0eda06e1be5b8d6cc2c66b95dc0fbe458576a026`
 
 **Outgoing (SMTP):**
 
 - Server: `emailengine.company.com`
 - Port: `2587`
-- Security: STARTTLS
+- Security: SSL/TLS
 - Username: `user123`
-- Password: `6cad01dae08...` (same token)
+- Password: `6cad01dae08f0d5e51fe0a4e0eda06e1be5b8d6cc2c66b95dc0fbe458576a026` (same token)
 
 Now the email client can both send and receive through EmailEngine's proxies.
 
@@ -653,7 +643,7 @@ The proxy does not pool. Each client session opens its own upstream IMAP connect
 
 The arithmetic follows from that:
 
-- Every proxy session counts against the provider's per-account connection limit, typically 10 to 15
+- Every proxy session counts against the provider's per-account connection limit (15 simultaneous IMAP connections for Gmail)
 - The account's own sync connection counts too, and so does each configured sub-connection
 - A client that reconnects aggressively will hit the limit faster than one that keeps a session open
 

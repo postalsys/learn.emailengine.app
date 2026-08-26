@@ -1,26 +1,16 @@
 ---
 title: PHP Integration
 sidebar_position: 7
-description: Complete guide to integrating EmailEngine with PHP applications using Composer
+description: Using the official EmailEngine PHP SDK from Composer to register accounts, send and read mail, and verify webhooks
 ---
 
 # PHP Integration Guide
 
-Learn how to integrate EmailEngine with PHP applications using the official EmailEngine PHP SDK available through Composer.
+How to call EmailEngine from PHP with the official SDK, [postalsys/emailengine-php](https://packagist.org/packages/postalsys/emailengine-php). The SDK is a thin client over the REST API: every call maps to one endpoint documented in the [API reference](/docs/api-reference), and the request and response bodies are the ones the [OpenAPI specification](/docs/api-reference/openapi-spec) describes.
 
-## Overview
-
-The EmailEngine PHP library provides a simple interface for:
-- Registering and managing email accounts
-- Sending emails through connected accounts
-- Making API requests to EmailEngine
-- Handling responses and errors
+This page matches SDK version 1.3.0 (checked 2026-08-26). It requires PHP 8.1 or newer and uses Guzzle 7 for HTTP.
 
 ## Installation
-
-### Install via Composer
-
-Add the EmailEngine PHP library as a dependency:
 
 ```bash
 composer require postalsys/emailengine-php
@@ -28,7 +18,7 @@ composer require postalsys/emailengine-php
 
 ## Quick Start
 
-### 1. Import and Initialize
+### 1. Create a Client
 
 ```php
 <?php
@@ -37,36 +27,67 @@ require 'vendor/autoload.php';
 
 use Postalsys\EmailEnginePhp\EmailEngine;
 
-// Initialize EmailEngine client from an options array
-$ee = EmailEngine::fromOptions([
-    'access_token' => '3eb50ef80efb67885af...',
-    'ee_base_url' => 'http://127.0.0.1:3000/',
-]);
+$ee = new EmailEngine(
+    accessToken: '3eb50ef80efb67885af...',
+    baseUrl: 'https://emailengine.example.com',
+);
 ```
 
-The constructor also accepts positional arguments (`new EmailEngine($accessToken, $eeBaseUrl)`); `EmailEngine::fromOptions()` is the array-style alternative.
-
-### Configuration Options
-
-| Option | Required | Description |
-|--------|----------|-------------|
-| `access_token` | Yes | API access token from EmailEngine |
-| `ee_base_url` | Yes | Base URL of your EmailEngine instance |
-
-**Getting an Access Token**:
-1. Open EmailEngine web interface
-2. Navigate to "Integrations" → "Access Tokens"
-3. Click "Create New Token"
-4. Copy the generated token
-
-## Registering an Email Account
-
-Use the `request()` helper method to make API calls to EmailEngine (see: [Account Registration API](/docs/api/post-v-1-account)):
+The constructor takes named (or positional) arguments. `EmailEngine::fromOptions()` accepts the same values as an array with snake_case keys:
 
 ```php
 <?php
 
-$account_response = $ee->request('post', '/v1/account', [
+use Postalsys\EmailEnginePhp\EmailEngine;
+
+$ee = EmailEngine::fromOptions([
+    'access_token' => '3eb50ef80efb67885af...',
+    'ee_base_url' => 'https://emailengine.example.com',
+    'service_secret' => 'the-service-secret-from-configuration-security',
+    'redirect_url' => 'https://app.example.com/email/connected',
+]);
+```
+
+### Client Options
+
+| Constructor argument | `fromOptions()` key | Required | Description |
+|----------------------|---------------------|----------|-------------|
+| `accessToken` | `access_token` | Yes | An EmailEngine access token |
+| `baseUrl` | `ee_base_url` | No | Base URL of the instance. Defaults to `http://localhost:3000` |
+| `serviceSecret` | `service_secret` | No | The instance's **Service Secret** (Configuration > Security). Needed for `verifyWebhookSignature()` |
+| `redirectUrl` | `redirect_url` | No | Default `redirectUrl` for `getAuthenticationUrl()` |
+| `timeout` | `timeout` | No | HTTP timeout in seconds. Defaults to 30 |
+
+**Getting an Access Token**:
+1. Open the EmailEngine admin interface and sign in
+2. Navigate to **Integrations** > **Access Tokens**
+3. Click **Create access token**, pick the scope and, if the token is for one mailbox only, the account
+4. Copy the token; it is shown once
+
+### Two Ways to Call the API
+
+The client exposes one resource object per API area: `$ee->accounts`, `$ee->messages`, `$ee->mailboxes`, `$ee->outbox`, `$ee->settings`, `$ee->tokens`, `$ee->templates`, `$ee->gateways`, `$ee->oauth2`, `$ee->webhooks`, `$ee->stats`, and `$ee->blocklists`. Each method calls one endpoint and returns the decoded JSON response as an array.
+
+For anything the resource classes do not cover, `request()` calls any path directly:
+
+```php
+<?php
+
+// request(string $method, string $path, ?array $data = null, array $query = [], array $headers = [])
+$stats = $ee->request('GET', '/v1/stats');
+$results = $ee->request('POST', '/v1/account/example/search', ['search' => ['unseen' => true]], ['path' => 'INBOX']);
+```
+
+`$data` is sent as the JSON body, `$query` as the query string. The examples below use the resource classes where one exists.
+
+## Registering an Email Account
+
+`$ee->accounts->create()` posts to [`POST /v1/account`](/docs/api/post-v-1-account) with the same body the endpoint takes:
+
+```php
+<?php
+
+$account = $ee->accounts->create([
     'account' => 'example',
     'name' => 'John Doe',
     'email' => 'john@example.com',
@@ -90,62 +111,86 @@ $account_response = $ee->request('post', '/v1/account', [
     ],
 ]);
 
-echo "Account registered: " . $account_response['account'] . "\n";
+echo "Account {$account['account']} is {$account['state']}\n";
 ```
+
+The response carries `account` and `state`, where `state` is `new` when the ID did not exist and `existing` when it did and was updated. Registering an ID that already exists is therefore not an error.
 
 ### Account Configuration
 
 **IMAP Settings**:
-- `auth.user`: IMAP username (usually email address)
+- `auth.user`: IMAP username (usually the email address)
 - `auth.pass`: IMAP password or app-specific password
 - `host`: IMAP server hostname
-- `port`: IMAP port (993 for SSL/TLS, 143 for STARTTLS)
-- `secure`: Use SSL/TLS connection
+- `port`: IMAP port (993 for TLS, 143 for STARTTLS)
+- `secure`: `true` for TLS on connect, `false` for plaintext with STARTTLS
 
 **SMTP Settings**:
-- `auth.user`: SMTP username (usually email address)
+- `auth.user`: SMTP username (usually the email address)
 - `auth.pass`: SMTP password or app-specific password
 - `host`: SMTP server hostname
-- `port`: SMTP port (465 for SSL/TLS, 587 for STARTTLS)
-- `secure`: Use SSL/TLS connection
+- `port`: SMTP port (465 for TLS, 587 for STARTTLS)
+- `secure`: `true` for TLS on connect, `false` for plaintext with STARTTLS
 
-## Waiting for Account Connection
+### Hosted Authentication Instead of Credentials
 
-After registering an account, EmailEngine begins indexing. Wait until the account is connected before making API requests:
+If you would rather not collect passwords in your own form, `getAuthenticationUrl()` calls [`POST /v1/authentication/form`](/docs/api/post-v-1-authentication-form) and returns the URL of EmailEngine's hosted form. Redirect the user there; EmailEngine sends them back to `redirectUrl` once the account is connected.
 
 ```php
 <?php
 
-$account_connected = false;
+$url = $ee->getAuthenticationUrl([
+    'account' => 'example',
+    'name' => 'John Doe',
+    'email' => 'john@example.com',
+    'redirectUrl' => 'https://app.example.com/email/connected',
+]);
 
-while (!$account_connected) {
-    sleep(1);
+header('Location: ' . $url);
+```
 
-    $account_info = $ee->request('get', '/v1/account/example');
+`redirectUrl` is required, either here or as the client's `redirectUrl` option. See [Hosted Authentication](/docs/accounts/hosted-authentication) for the form's options.
 
-    if ($account_info['state'] == 'connected') {
-        $account_connected = true;
-        echo "Account is connected\n";
-    } else {
-        echo "Account status is: " . $account_info['state'] . "...\n";
+## Waiting for Account Connection
+
+After registering an account, EmailEngine connects and indexes it in the background. Poll [`GET /v1/account/{account}`](/docs/api/get-v-1-account-account) until it reports a usable state:
+
+```php
+<?php
+
+$deadline = time() + 120;
+
+while (time() < $deadline) {
+    $info = $ee->accounts->get('example');
+
+    if (in_array($info['state'], ['connected', 'syncing'], true)) {
+        echo "Account is {$info['state']}\n";
+        break;
     }
+
+    if ($info['state'] === 'authenticationError') {
+        throw new RuntimeException('Credentials were rejected: ' . ($info['lastError']['response'] ?? ''));
+    }
+
+    echo "Account state is {$info['state']}\n";
+    sleep(1);
 }
 ```
 
 ### Account States
 
-Poll until the state reaches `connected` or `syncing`, and stop on `authenticationError`, which will not resolve on its own. See [Account States](/docs/api-reference/accounts-api#account-states) for the complete list.
+Poll until the state reaches `connected` or `syncing`, and stop on `authenticationError`, which does not resolve on its own. `unset` means the account is not syncing at all: either no IMAP or OAuth2 configuration is set, or syncing was switched off, by an operator or automatically after repeated authentication failures. Since v2.79.4 the account object carries `authFailureDisabledAt` (a timestamp, or `null`), which tells the automatic case from a deliberate one. Supplying working credentials lifts it: a new `imap` object through `update()`, or re-authorizing through the hosted form. In v2.79.4 a `partial` update that only changes the password keeps the flag unless it also sets `disabled` to `false`; releases after v2.79.4 lift it on the changed credentials alone. See [Account States](/docs/api-reference/accounts-api#account-states) for the complete list.
 
-**Important**: Add a timeout or maximum retry count. Without one, an account that can never connect keeps the loop running forever.
+The loop above has a deadline. Without one, an account that can never connect keeps the loop running forever.
 
 ## Sending Emails
 
-Once the account is connected, use the message submission endpoint (see: [Submit Message API](/docs/api/post-v-1-account-account-submit)):
+Once the account is connected, `$ee->messages->submit()` posts to [`POST /v1/account/{account}/submit`](/docs/api/post-v-1-account-account-submit):
 
 ```php
 <?php
 
-$submit_response = $ee->request('post', '/v1/account/example/submit', [
+$result = $ee->messages->submit('example', [
     'from' => [
         'name' => 'John Doe',
         'address' => 'john@example.com',
@@ -161,13 +206,15 @@ $submit_response = $ee->request('post', '/v1/account/example/submit', [
     'html' => '<p>Hello from <strong>PHP</strong>!</p>',
 ]);
 
-echo "Message sent! Message ID: " . $submit_response['messageId'] . "\n";
+echo "Queued as {$result['queueId']} with Message-ID {$result['messageId']}\n";
 ```
+
+The message is queued, not sent inline: the response carries `messageId` (the Message-ID header EmailEngine assigned), `queueId` (the queue entry), and `sendAt`. Delivery is reported later through the `messageSent` or `messageDeliveryError` webhooks. A third argument takes request options: `idempotencyKey` is sent as the `Idempotency-Key` header, so a retried call does not queue the message twice, and `timeout` (seconds) as `X-EE-Timeout`.
 
 ### Message Options
 
 **Main Fields**:
-- `from`: Sender address (object with `name` and `address`). Optional - defaults to the account's configured identity if omitted
+- `from`: Sender address (object with `name` and `address`). Optional; defaults to the account's configured identity
 - `to`: Array of recipient addresses
 
 **Other Fields**:
@@ -175,16 +222,19 @@ echo "Message sent! Message ID: " . $submit_response['messageId'] . "\n";
 - `bcc`: Blind carbon copy recipients (array)
 - `subject`: Email subject line
 - `text`: Plain text content
-- `html`: HTML content
+- `html`: HTML content. A submission with `html` only gets no generated plain-text part
 - `attachments`: Array of attachment objects
 - `headers`: Custom email headers
+- `sendAt`: Future delivery time, as an ISO 8601 timestamp
+
+See [Sending](/docs/sending) for the full field list, templates, and mail merge.
 
 ### Sending with Attachments
 
 ```php
 <?php
 
-$submit_response = $ee->request('post', '/v1/account/example/submit', [
+$result = $ee->messages->submit('example', [
     'from' => [
         'name' => 'John Doe',
         'address' => 'john@example.com',
@@ -199,6 +249,7 @@ $submit_response = $ee->request('post', '/v1/account/example/submit', [
     'attachments' => [
         [
             'filename' => 'invoice.pdf',
+            'contentType' => 'application/pdf',
             'content' => base64_encode(file_get_contents('/path/to/invoice.pdf')),
             'encoding' => 'base64',
         ],
@@ -206,73 +257,72 @@ $submit_response = $ee->request('post', '/v1/account/example/submit', [
 ]);
 ```
 
+`base64` is the only accepted `encoding`, and the attachment counts against the instance's `EENGINE_MAX_SIZE` limit (5 MB by default).
+
 ## Common Operations
 
 ### Listing Messages
 
-(See: [List Messages API](/docs/api/get-v-1-account-account-messages))
+`list()` calls [`GET /v1/account/{account}/messages`](/docs/api/get-v-1-account-account-messages). `path` is a required query parameter, and the second argument is sent as the query string:
 
 ```php
 <?php
 
-// Get messages from inbox
-// "path" is a required query parameter, so include it in the URL -
-// the third request() argument would be sent as a JSON body instead
-$messages = $ee->request('get', '/v1/account/example/messages?path=INBOX');
+$page = $ee->messages->list('example', ['path' => 'INBOX', 'pageSize' => 20]);
 
-foreach ($messages['messages'] as $message) {
-    echo "From: " . $message['from']['address'] . "\n";
-    echo "Subject: " . $message['subject'] . "\n";
+foreach ($page['messages'] as $message) {
+    echo "From: {$message['from']['address']}\n";
+    echo "Subject: {$message['subject']}\n";
     echo "---\n";
 }
 ```
 
 ### Getting Message Details
 
-(See: [Get Message API](/docs/api/get-v-1-account-account-message-message))
-
-By default, message text content is not included in the response. Use the `textType` query parameter to retrieve text content:
+`get()` calls [`GET /v1/account/{account}/message/{message}`](/docs/api/get-v-1-account-account-message-message). Text content is not included unless `textType` asks for it:
 
 ```php
 <?php
 
-// Use textType=* to include both plain text and HTML content
-$message = $ee->request('get', '/v1/account/example/message/' . $messageId . '?textType=*');
+// textType=* returns both the plain-text and the HTML part
+$message = $ee->messages->get('example', $messageId, ['textType' => '*']);
 
-echo "Subject: " . $message['subject'] . "\n";
+echo "Subject: {$message['subject']}\n";
 echo "Text: " . ($message['text']['plain'] ?? '') . "\n";
 
-// Attachments contain metadata, not content by default
-// Use the attachment download endpoint to get attachment content
+// Attachments are listed as metadata; fetch the content by attachment ID
 foreach ($message['attachments'] as $attachment) {
-    echo "Attachment: " . $attachment['filename'] . "\n";
+    echo "Attachment: {$attachment['filename']} ({$attachment['id']})\n";
 }
 ```
 
 ### Searching Messages
 
-The search endpoint uses POST method with the search criteria in the request body:
+[`POST /v1/account/{account}/search`](/docs/api/post-v-1-account-account-search) takes the criteria in the body and the folder as a query parameter. The `search()` resource method sends only a body, so use `request()` when you need `path`:
 
 ```php
 <?php
 
-$results = $ee->request('post', '/v1/account/example/search?path=INBOX', [
+$results = $ee->request('POST', '/v1/account/example/search', [
     'search' => [
         'from' => 'jane@example.com',
     ],
-]);
+], ['path' => 'INBOX']);
 
-echo "Found " . count($results['messages']) . " messages\n";
+echo "Found {$results['total']} messages\n";
 ```
 
 ### Updating Account Settings
 
+`update()` calls [`PUT /v1/account/{account}`](/docs/api/put-v-1-account-account). The `imap` and `smtp` objects replace the stored configuration unless `partial` is set, so include it when changing one field:
+
 ```php
 <?php
 
-$ee->request('put', '/v1/account/example', [
+$ee->accounts->update('example', [
     'name' => 'John Doe Updated',
     'smtp' => [
+        'partial' => true,
         'host' => 'new-smtp.example.com',
     ],
 ]);
@@ -283,48 +333,55 @@ $ee->request('put', '/v1/account/example', [
 ```php
 <?php
 
-$ee->request('delete', '/v1/account/example');
+$ee->accounts->delete('example');
 echo "Account deleted\n";
 ```
 
 ## Error Handling
 
-Always wrap API calls in try-catch blocks:
+Every method throws on a non-2xx response. The SDK maps the status code to a typed exception, all of which extend `EmailEngineException`:
+
+| Exception | HTTP status |
+|-----------|-------------|
+| `ValidationException` | 400 |
+| `AuthenticationException` | 401 |
+| `AuthorizationException` | 403 |
+| `NotFoundException` | 404 |
+| `RateLimitException` | 429; `getRetryAfter()` returns the `Retry-After` value |
+| `ServerException` | 500 and above |
+| `EmailEngineException` | Anything else, including 413, 422 and transport failures |
+
+`getMessage()` carries the `error` field of the API's error body, which is the HTTP status phrase (`Bad Request`, `Not Found`), not the human-readable `message` field; SDK 1.3.0 does not expose that one. `getErrorCode()` returns the body's `code` and `getDetails()` its `details`, which for a validation error names the offending fields. See the [error reference](/docs/reference/error-codes) for the error body itself.
 
 ```php
 <?php
 
-try {
-    $account_response = $ee->request('post', '/v1/account', [
-        'account' => 'example',
-        // ... configuration
-    ]);
-} catch (Exception $e) {
-    echo "Error: " . $e->getMessage() . "\n";
+use Postalsys\EmailEnginePhp\Exceptions\AuthenticationException;
+use Postalsys\EmailEnginePhp\Exceptions\NotFoundException;
+use Postalsys\EmailEnginePhp\Exceptions\ValidationException;
+use Postalsys\EmailEnginePhp\Exceptions\EmailEngineException;
 
-    // Handle specific error cases
-    // Note: re-registering an existing account ID is not an error - the
-    // request succeeds and returns "state": "existing". A duplicate error
-    // (code "AccountAlreadyExists") only occurs when another account for
-    // the same OAuth2 user already exists.
-    if (strpos($e->getMessage(), 'Another account for the same OAuth2 user already exists') !== false) {
-        echo "An account for this OAuth2 user is already registered\n";
-    }
+try {
+    $info = $ee->accounts->get('example');
+} catch (AuthenticationException $e) {
+    // The access token was rejected
+    error_log('Check the EmailEngine access token: ' . $e->getMessage());
+} catch (NotFoundException $e) {
+    // No account with this ID
+    echo "Account not registered\n";
+} catch (ValidationException $e) {
+    // The request body did not pass validation; getDetails() names the fields
+    error_log('Invalid request: ' . json_encode($e->getDetails()));
+} catch (EmailEngineException $e) {
+    error_log("EmailEngine error {$e->getErrorCode()}: {$e->getMessage()}");
 }
 ```
 
-### Common Errors
-
-| Error | Cause | Solution |
-|-------|-------|----------|
-| `Invalid access token` | Wrong or expired token | Generate new token in EmailEngine |
-| `AccountAlreadyExists` | Another account for the same OAuth2 user already exists | Use the existing account or delete it first (re-registering the same account ID is not an error - it returns `"state": "existing"`) |
-| `Authentication failed` | Wrong credentials | Verify email credentials |
-| `Connection failed` | Cannot reach email server | Check server hostname and port |
+Registering an account ID that already exists is not an error: the request succeeds with `"state": "existing"`. A `ValidationException` with the code `AccountAlreadyExists` is raised only when another account for the same OAuth2 user already exists.
 
 ## Processing Webhooks
 
-Create a webhook handler to receive email notifications:
+A webhook handler is a plain HTTP endpoint. Verify the signature first, then act on the event:
 
 ```php
 <?php
@@ -333,13 +390,27 @@ Create a webhook handler to receive email notifications:
 
 require 'vendor/autoload.php';
 
-// Read webhook payload
-$payload = json_decode(file_get_contents('php://input'), true);
+use Postalsys\EmailEnginePhp\EmailEngine;
 
-// Verify it's from EmailEngine (optional but recommended)
-// Implement signature verification here
+$ee = new EmailEngine(
+    accessToken: getenv('EMAILENGINE_TOKEN'),
+    baseUrl: getenv('EMAILENGINE_URL'),
+    serviceSecret: getenv('EMAILENGINE_SERVICE_SECRET'),
+);
 
-// Process different event types
+$body = file_get_contents('php://input');
+$signature = $_SERVER['HTTP_X_EE_WH_SIGNATURE'] ?? '';
+
+if (!$ee->verifyWebhookSignature($body, $signature)) {
+    http_response_code(403);
+    exit('Invalid signature');
+}
+
+// Acknowledge first; EmailEngine retries a delivery that does not get a 2xx in time
+http_response_code(200);
+
+$payload = json_decode($body, true);
+
 switch ($payload['event']) {
     case 'messageNew':
         handleNewMessage($payload);
@@ -348,49 +419,50 @@ switch ($payload['event']) {
         handleBounce($payload);
         break;
     default:
-        error_log("Unknown event: " . $payload['event']);
+        error_log("Unhandled event: {$payload['event']}");
 }
 
-// Always return 2xx status quickly
-http_response_code(200);
-
-function handleNewMessage($payload) {
+function handleNewMessage(array $payload): void
+{
     $account = $payload['account'];
-    $from = $payload['data']['from']['address'];
-    $subject = $payload['data']['subject'];
+    $from = $payload['data']['from']['address'] ?? '';
+    $subject = $payload['data']['subject'] ?? '';
 
-    // Process the new email
-    error_log("New email from $from: $subject");
-
-    // Store in database, trigger workflows, etc.
+    error_log("New email for $account from $from: $subject");
 }
 
-function handleBounce($payload) {
+function handleBounce(array $payload): void
+{
     $recipient = $payload['data']['recipient'];
-    error_log("Email to $recipient bounced");
+    $reason = $payload['data']['response']['message'] ?? '';
 
-    // Handle bounce (update database, notify sender, etc.)
+    error_log("Email to $recipient bounced: $reason");
 }
 ```
 
+`verifyWebhookSignature()` recomputes the HMAC-SHA256 of the raw body with the instance's Service Secret and compares it with the `X-EE-Wh-Signature` header, so the client needs the `serviceSecret` option and the body must be read before anything decodes it. Signature verification and retry behavior are described in the [Webhooks overview](/docs/webhooks/overview).
+
 ### Webhook Configuration
 
-Configure webhook URL in EmailEngine via the Settings API:
+The target URL and the event allowlist are instance settings. `setWebhooks()` writes them through [`POST /v1/settings`](/docs/api/post-v-1-settings), using its own short keys: `url` becomes the `webhooks` setting, `events` becomes `webhookEvents`, `enabled` becomes `webhooksEnabled`, `headers` becomes `notifyHeaders`, and `text` sets `notifyText` (a number also sets `notifyTextSize`, `false` turns text off). Keys it does not know are dropped:
 
 ```php
 <?php
 
-// Configure webhook URL via Settings API
-$ee->request('post', '/v1/settings', [
-    'webhooks' => 'https://yourdomain.com/webhook.php',
-    'webhookEvents' => ['messageNew', 'messageBounce'],
-    'webhooksEnabled' => true,
+$ee->settings->setWebhooks([
+    'url' => 'https://app.example.com/webhook.php',
+    'events' => ['messageNew', 'messageBounce'],
+    'enabled' => true,
 ]);
 ```
 
+It returns `true` when the API reported the update. To write any setting under its API name, use `$ee->settings->update(['webhookEvents' => ['*']])`, which posts the array as given.
+
+`webhookEvents` is an allowlist with no default: an instance where it was never set delivers nothing, and `['*']` selects every event.
+
 ## See Also
 
-- [SDK on GitHub](https://github.com/postalsys/emailengine-php) - Source, issues, and the full method list
+- [SDK on GitHub](https://github.com/postalsys/emailengine-php) - Source, issues, and the full method list of every resource class
 - [API Reference Overview](/docs/api-reference) - Authentication, error shape, and pagination conventions
 - [Webhook Overview](/docs/webhooks/overview) - Signature verification and retry behavior for the handler above
 - [CRM Integration Guide](/docs/integrations/crm) - A worked PHP integration built on these same calls

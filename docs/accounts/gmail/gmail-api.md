@@ -10,7 +10,7 @@ description: Configure EmailEngine to use Gmail REST API as the email backend wi
 This guide shows you how to configure EmailEngine to use Gmail REST API as the email backend instead of IMAP/SMTP. With this setup, EmailEngine uses direct Gmail API calls for all operations and receives change notifications via Google Cloud Pub/Sub.
 
 :::info IMAP vs Gmail API
-In a [previous guide](./gmail-imap), we showed how to configure EmailEngine to access Gmail over OAuth2 using IMAP and SMTP. That setup uses Gmail OAuth2 **only for generating access tokens** to authenticate IMAP/SMTP sessions.
+The [IMAP/SMTP guide](./gmail-imap) shows how to configure EmailEngine to access Gmail over OAuth2 using IMAP and SMTP. That setup uses the OAuth2 tokens **only to authenticate IMAP/SMTP sessions**.
 
 This guide covers using **Gmail REST API directly** as the email backend. EmailEngine does not open IMAP or SMTP sessions and instead performs all operations via Gmail REST API calls.
 :::
@@ -63,7 +63,7 @@ Wait for the project to be created, then select it from the project menu.
 
 ## Step 2: Enable Required APIs
 
-Click the hamburger menu (top-left) → **APIs & Services** → **Enabled APIs & Services**.
+Click the hamburger menu (top-left) > **APIs & Services** > **Enabled APIs & Services**.
 
 ![Navigating to APIs & Services](/img/external/v3Flo-WBVG.gif)
 
@@ -91,7 +91,7 @@ Without Pub/Sub, EmailEngine would not know when changes occur on the email acco
 
 The consent screen is shown to users when they authorize EmailEngine.
 
-Click hamburger menu → **APIs & Services** → **OAuth consent screen**.
+Click hamburger menu > **APIs & Services** > **OAuth consent screen**.
 
 ![Navigating to consent screen](/img/external/0h3kuzzsCN.gif)
 
@@ -128,7 +128,7 @@ Click **Save and continue**.
 
 ### Configure Scopes
 
-Click **Add or remove scopes** and find `gmail.modify` from the list.
+Click **Add or remove scopes** and find `gmail.modify` in the list.
 
 ![Adding required scope](/img/external/BONjtoR9p6.gif)
 
@@ -146,11 +146,11 @@ Scroll down and click **Save and continue** to finish consent screen setup.
 
 ## Step 4: Create OAuth Credentials for User Authentication
 
-Navigate to **APIs & Services** → **Credentials**.
+Navigate to **APIs & Services** > **Credentials**.
 
 ![Navigating to credentials page](/img/external/7bDFveWih1.gif)
 
-Click **Create credentials** → **OAuth client ID**.
+Click **Create credentials** > **OAuth client ID**.
 
 ![Creating OAuth client ID](/img/external/dd27iNGkH0.gif)
 
@@ -185,7 +185,7 @@ Click the **Download** button. Save this file - you'll need it to configure Emai
 - **User OAuth credentials**: Filename starts with `client_secret_`
 - **Service account credentials**: Uses service account name prefix
 
-Keep these separate - you'll need both!
+Keep these separate - you need both.
 :::
 
 ## Step 5: Create Service Account for Pub/Sub Management
@@ -224,7 +224,7 @@ Once created, select the service account and navigate to **Manage Keys**.
 
 ![Generating service account keys](/img/external/VtJcozUfxY.gif)
 
-Click **Add key** → **Create new key** → **JSON format**.
+Click **Add key** > **Create new key** > **JSON format**.
 
 The key file will automatically download. Store it securely - you cannot download it again.
 
@@ -247,9 +247,9 @@ Now configure EmailEngine to use the service account for managing webhooks.
 
 **Application name:** Give it a descriptive name (e.g., "Gmail Pub/Sub Manager")
 
-**Credentials file:** Select the **service account** JSON file (not the user OAuth credentials!)
+**Load configuration from the service key file:** Select the **service account** JSON file (not the user OAuth credentials)
 
-**Base scope:** Select **Cloud Pub/Sub**
+**Base scopes:** Select **Cloud Pub/Sub**
 
 :::warning Use Correct Credentials File
 Make sure you're uploading the **service account** credentials file, not the user OAuth credentials file. You can tell them apart:
@@ -258,7 +258,7 @@ Make sure you're uploading the **service account** credentials file, not the use
 - **User OAuth**: Filename starts with `client_secret_`
   :::
 
-Click **Register app** to save.
+Click **Register app** to save. Registering the app creates the Pub/Sub topic and subscription in your project; a setup failure is recorded on the app and shown under **Gmail Subscriptions**.
 
 ## Step 7: Configure EmailEngine - User OAuth
 
@@ -280,16 +280,16 @@ Now configure the user OAuth application that will authenticate Gmail accounts.
 
 **Enable this app:** Check this box
 
-**Credentials file:** Select the **user OAuth credentials** file (`client_secret_...json`)
+**Load configuration from the JSON file:** Select the **user OAuth credentials** file (the one whose name starts with `client_secret_`)
 
 **Redirect URL:** Verify this matches exactly what you entered in Google Cloud Console
 
-**Base scope:** Select **Gmail API**
+**Base scopes:** Select **Gmail API**
 
-**Service Account for managing webhook Pub/Sub:** Select the service account app you created earlier
+**Select service account to manage webhooks:** Select the service account app you created in Step 6. The selector only lists service accounts registered for the same Google Cloud project ID
 
 :::important Link Service Account
-This selector is marked as optional in the UI, but you should select the service account application you created in Step 6. It tells EmailEngine which credentials to use for managing Pub/Sub resources - without it, accounts using this app will not receive real-time notifications or webhooks.
+This selector is marked as optional in the UI. It tells EmailEngine which credentials to use for managing Pub/Sub resources. Without it, EmailEngine registers no Gmail watch and instead polls each account for changes about every 10 minutes, so webhooks still fire, with up to that much delay. Send-only accounts never need it.
 :::
 
 ### Configuring Limited Scopes
@@ -338,7 +338,7 @@ Direct the user to the returned URL.
 Check the account status in EmailEngine:
 
 - Account should enter "connected" state
-- In Google Cloud Console → Pub/Sub, you should see:
+- In Google Cloud Console > Pub/Sub, you should see:
   - The topic and subscription that EmailEngine created when you registered the service account app
 
 ## Using Custom Scopes
@@ -367,7 +367,7 @@ If you need a public app for any Gmail user:
 
 - Expensive and time-consuming
 - May require custom scope configuration
-- Not all email use cases will be approved
+- Not all email use cases are approved
 
 **Alternatives:**
 
@@ -381,15 +381,17 @@ EmailEngine automatically:
 
 - Creates one Pub/Sub topic and subscription pair per Pub/Sub service account app, shared by all accounts that use it (created when the app is registered)
 - Registers a Gmail watch (`users.watch`) for each account, pointing at the shared topic
-- Renews each Gmail watch at least daily (watches expire after about 7 days)
+- Renews each Gmail watch once it is more than a day old, checking hourly (watches expire after about 7 days)
 - Recreates the Pub/Sub subscription automatically if Google deletes it due to inactivity (default TTL 31 days, configurable via `gmailSubscriptionTtl`)
-- Deletes the topic and subscription when the OAuth2 app is deleted - not when individual accounts are removed
+- Deletes the topic and subscription it created when the service account app is deleted - not when individual accounts are removed. A topic or subscription that already existed under the configured name is adopted rather than created, and is left in place
 
 You can:
 
 - Monitor Pub/Sub usage in Google Cloud Console
 - Set up billing alerts for Pub/Sub costs
-- View subscription status in EmailEngine
+- View subscription status in EmailEngine under **Integrations** > **OAuth2 Apps** > **Gmail Subscriptions**, or with [`GET /v1/pubsub/status`](/docs/api/get-v-1-pubsub-status)
+
+See [Gmail Pub/Sub Integration](./gmail-pubsub) for the resource names, the TTL setting, and troubleshooting.
 
 ### Granular Consent and Scope Validation
 
@@ -409,9 +411,11 @@ This prevents accounts from being registered with insufficient permissions, whic
 EmailEngine automatically:
 
 - Refreshes access tokens when they expire during API requests
-- Makes regular API requests (at least daily) even for idle accounts, keeping refresh tokens active
-- Stores refresh tokens securely
+- Calls the Gmail API regularly even for idle accounts (the watch renewal and the fallback poll), which keeps the refresh token in use
+- Stores refresh tokens in Redis, encrypted when [field encryption](/docs/advanced/encryption) is enabled
 - Reports a failed refresh as an [`authenticationError`](/docs/webhooks/authenticationerror), since obtaining a new grant needs the user
+
+An account whose refresh keeps failing for longer than [`EENGINE_MAX_IMAP_AUTH_FAILURE_TIME`](/docs/configuration/environment-variables#max-imap-auth-failure-time) (three days by default) is switched off and reports the `unset` state with a non-null `authFailureDisabledAt`. Re-authorizing it through the hosted authentication form brings it back (since v2.79.4); see [Accounts switched off after authentication failures](/docs/accounts/managing-accounts#accounts-switched-off-after-authentication-failures).
 
 You can:
 
@@ -431,7 +435,7 @@ Google refresh tokens can expire under certain conditions:
 EmailEngine keeps tokens active by making regular API requests, but if an account is deleted from EmailEngine and re-added later, a new consent flow is required.
 :::
 
-[Learn more about OAuth2 token management →](../oauth2-token-management)
+[Learn more about OAuth2 token management >](../oauth2-token-management)
 
 ## See Also
 

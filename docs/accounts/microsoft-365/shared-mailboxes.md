@@ -32,7 +32,7 @@ Microsoft 365 shared mailboxes are mailboxes not bound to a specific user. Multi
 
 ### Application Access (Recommended)
 
-Add any mailbox in your organization -including shared mailboxes -without interactive user login. Uses the OAuth2 client credentials flow with MS Graph API. An Azure AD admin grants the application access to all mailboxes once, and you add accounts by specifying the email address.
+Add any mailbox in your organization - including shared mailboxes - without interactive user login. Uses the OAuth2 client credentials flow with MS Graph API. An Azure AD admin grants the application access to all mailboxes once, and you add accounts by specifying the email address.
 
 **Best for:**
 
@@ -141,8 +141,8 @@ Delegated access requires a main user account authenticated via OAuth2. Shared m
 
 ### Prerequisites
 
-1. **Azure AD OAuth2 application** configured for delegated access -see [Outlook OAuth2 Setup (Delegated Access)](./outlook-365)
-2. **Shared mailbox permissions** -the main user must have access to the shared mailbox in Microsoft 365 admin center
+1. **Azure AD OAuth2 application** configured for delegated access - see [Outlook OAuth2 Setup (Delegated Access)](./outlook-365)
+2. **Shared mailbox permissions** - the main user must have access to the shared mailbox in Microsoft 365 admin center
 3. **OAuth2 app registered in EmailEngine** under **Integrations > OAuth2 Apps**
 
 ### Additional Scopes for MS Graph API
@@ -163,8 +163,8 @@ If using the MS Graph API backend, your OAuth2 application needs additional scop
 
 **Step 2: Add scopes in EmailEngine**
 
-1. In EmailEngine, navigate to your OAuth2 application settings
-2. Find the **Additional Scopes** field
+1. In EmailEngine, open the OAuth2 app under **Integrations** > **OAuth2 Apps** and click **Edit app**
+2. Expand the **Additional scopes** section
 3. Add the same scopes:
    ```
    User.ReadBasic.All
@@ -227,11 +227,11 @@ curl -X POST https://emailengine.example.com/v1/account \
 
 **Key fields:**
 
-- `oauth2.provider` - EmailEngine OAuth2 application ID - use the same application the main account uses. Required when setting delegation fields via the API.
+- `oauth2.provider` - EmailEngine OAuth2 application ID - use the same application the main account uses. The API rejects a body that sets `delegatedUser` or `delegatedAccount` without it (HTTP 400)
 - `oauth2.auth.delegatedUser` - Email address or Microsoft 365 user ID of the shared mailbox
 - `oauth2.auth.delegatedAccount` - EmailEngine account ID of the main user (from Step 1)
 
-EmailEngine uses the main account's OAuth2 tokens to access the shared mailbox. No additional authentication is required. You can add multiple shared mailboxes referencing the same main account.
+EmailEngine uses the main account's OAuth2 tokens to access the shared mailbox. No additional authentication is required. You can add multiple shared mailboxes referencing the same main account. Delegation through another account is available since v2.49.0.
 
 ## Direct Access Setup
 
@@ -280,8 +280,8 @@ curl -X POST https://emailengine.example.com/v1/account \
         "user": "admin@company.com",
         "delegatedUser": "support@company.com"
       },
-      "accessToken": "EwBIA8l6...",
-      "refreshToken": "M.R3_BAY..."
+      "accessToken": "ACCESS_TOKEN_FROM_MICROSOFT",
+      "refreshToken": "REFRESH_TOKEN_FROM_MICROSOFT"
     }
   }'
 ```
@@ -405,7 +405,7 @@ curl https://emailengine.example.com/v1/account/shared-support \
   -H "Authorization: Bearer YOUR_TOKEN"
 ```
 
-The account should show `"state": "connected"`. For delegated access accounts, the `type` field will be `"delegated"`.
+The account should show `"state": "connected"`. For delegated access accounts the `type` field is `"delegated"`; if the chain to the credential-holding account cannot be resolved, it is `"invalid"` and `delegationError` carries the reason.
 
 ### Test Sending Email
 
@@ -494,7 +494,7 @@ curl -X POST https://emailengine.example.com/v1/account/sales-sender/submit \
   -d '{
     "to": [{"address": "customer@example.com"}],
     "subject": "Sales Inquiry",
-    "text": "Thank you for your interest..."
+    "text": "Thank you for your interest. A sales representative will contact you shortly."
   }'
 ```
 
@@ -506,7 +506,7 @@ curl -X POST https://emailengine.example.com/v1/account/sales-sender/submit \
 
 **"Too many delegation hops"** - The delegation chain exceeds 20 hops. Simplify by referencing the credential-holding account directly.
 
-**Parent account authentication errors** - If the parent account has authentication issues (expired tokens, changed password), all delegated accounts fail. Monitor the parent account's state and fix authentication promptly.
+**Parent account authentication errors** - If the parent account has authentication issues (expired tokens, changed password), all delegated accounts fail. Monitor the parent account's state and fix authentication promptly. A parent that EmailEngine has [switched off after repeated authentication failures](/docs/accounts/managing-accounts#accounts-switched-off-after-authentication-failures) has to be re-authorized before its delegated accounts work again. In v2.79.3 and v2.79.4 the delegated accounts are switched off as well, and re-authorizing the parent lifts only the parent, so each delegated account then needs **Resume syncing** on its account page. Releases after v2.79.4 leave delegated accounts alone, since the failing credential is the parent's, and re-authorizing the parent brings them back with it.
 
 ## See Also
 

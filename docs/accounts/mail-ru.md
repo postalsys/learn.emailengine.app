@@ -28,7 +28,7 @@ Mail.ru OAuth2 requires the following scopes:
 
 1. Go to the [Mail.ru OAuth2 Developer Portal](https://oauth.mail.ru/app/)
 2. Sign in with your Mail.ru account
-3. Click **Create Application** (or similar button)
+3. Create a new application
 4. Fill in the application details:
    - **Application Name**: Your application name (e.g., "EmailEngine Integration")
    - **Redirect URI**: Your EmailEngine callback URL (e.g., `https://emailengine.example.com/oauth`)
@@ -48,13 +48,13 @@ Never commit your Client ID and Client Secret to version control. Store them sec
 
 1. Open the EmailEngine admin dashboard
 2. Navigate to **Integrations** > **OAuth2 Apps**
-3. Click **Add New Application**
+3. Click **Create OAuth2 app**
 4. Select **Mail.ru** as the provider
 5. Enter your credentials:
    - **Client ID**: Your Mail.ru application ID
    - **Client Secret**: Your Mail.ru client secret
    - **Redirect URL**: Must match what you configured in Mail.ru
-6. Save the configuration
+6. Check **Enable this app** and click **Register app**
 
 ### Option B: Via API
 
@@ -65,22 +65,27 @@ curl -XPOST "https://emailengine.example.com/v1/oauth2" \
   -H "Authorization: Bearer <your-token>" \
   -H "Content-Type: application/json" \
   -d '{
+    "name": "Mail.ru",
     "provider": "mailRu",
+    "enabled": true,
     "clientId": "YOUR_MAIL_RU_CLIENT_ID",
     "clientSecret": "YOUR_MAIL_RU_CLIENT_SECRET",
-    "redirectUrl": "https://your-domain/oauth"
+    "redirectUrl": "https://emailengine.example.com/oauth"
   }'
 ```
+
+`name` is required, and `enabled` defaults to `false`, so an app registered without it does not appear on the hosted authentication form.
 
 **Response:**
 
 ```json
 {
-  "app": "AAABkQw...",
-  "provider": "mailRu",
-  "enabled": true
+  "id": "AAABkQwXd2kAAAAC",
+  "created": true
 }
 ```
+
+`id` is the OAuth2 application ID that the account examples below refer to.
 
 ## Step 3: Connect Mail.ru Accounts
 
@@ -94,26 +99,26 @@ curl -XPOST "https://emailengine.example.com/v1/authentication/form" \
   -H "Content-Type: application/json" \
   -d '{
     "account": "user-mailru-account",
-    "type": "mailRu",
+    "type": "AAABkQwXd2kAAAAC",
     "name": "User Mail.ru Account",
-    "redirectUrl": "https://your-app.com/callback"
+    "redirectUrl": "https://myapp.com/settings"
   }'
 ```
 
-The `type` field pre-selects an account type so the user skips the type-selection screen. Set it to your Mail.ru OAuth2 application's ID (the legacy key `mailRu` also resolves to the built-in Mail.ru app). There is no separate `provider` field on this endpoint - omit `type` entirely to let the user choose from all configured account types.
+The `type` field pre-selects an account type so the user skips the type-selection screen. Set it to your Mail.ru OAuth2 application's ID (an app migrated from the legacy single-app settings keeps the ID `mailRu`, so that key resolves too). There is no separate `provider` field on this endpoint - omit `type` entirely to let the user choose from all configured account types.
 
 **Response:**
 
 ```json
 {
-  "url": "https://emailengine.example.com/accounts/new?data=..."
+  "url": "https://emailengine.example.com/accounts/new?data=eyJhY2NvdW50IjoidXNlci1tYWlscnUtYWNjb3VudCJ9.k3Qb"
 }
 ```
 
 Direct users to the returned URL. They will:
-1. Be redirected to Mail.ru's OAuth2 consent screen
+1. Be redirected to Mail.ru's OAuth2 consent screen. EmailEngine requests it with `prompt_force=1`, so Mail.ru shows the consent screen every time rather than reusing an earlier grant
 2. Grant permission to your application
-3. Be redirected back to EmailEngine, which stores the tokens
+3. Be redirected back to EmailEngine, which exchanges the code for tokens, reads the address from Mail.ru's `userinfo` endpoint, and stores the account under that address
 4. Finally redirect to your specified `redirectUrl`
 
 ### Option B: Direct API Registration
@@ -129,7 +134,7 @@ curl -XPOST "https://emailengine.example.com/v1/account" \
     "name": "User Name",
     "email": "user@mail.ru",
     "oauth2": {
-      "provider": "AAABkQw...",
+      "provider": "AAABkQwXd2kAAAAC",
       "accessToken": "ACCESS_TOKEN_FROM_MAILRU",
       "refreshToken": "REFRESH_TOKEN_FROM_MAILRU",
       "expires": "2024-12-31T23:59:59.000Z",
@@ -160,8 +165,9 @@ curl "https://emailengine.example.com/v1/account/mailru-user" \
   "email": "user@mail.ru",
   "state": "connected",
   "type": "mailRu",
+  "app": "AAABkQwXd2kAAAAC",
   "oauth2": {
-    "provider": "AAABkQw...",
+    "provider": "AAABkQwXd2kAAAAC",
     "auth": { "user": "user@mail.ru" }
   }
 }
@@ -182,6 +188,8 @@ curl "https://emailengine.example.com/v1/account/mailru-user/oauth-token" \
   -H "Authorization: Bearer <your-token>"
 ```
 
+The endpoint is disabled by default; enable it under **Configuration** > **Security** ("Allow OAuth2 Token Access via API") or with `EENGINE_ENABLE_OAUTH_TOKENS_API=true`, otherwise it answers 403. See [OAuth2 token management](/docs/accounts/oauth2-token-management).
+
 **Response:**
 
 ```json
@@ -189,7 +197,7 @@ curl "https://emailengine.example.com/v1/account/mailru-user/oauth-token" \
   "account": "mailru-user",
   "user": "user@mail.ru",
   "provider": "mailRu",
-  "app": "AAABkQw...",
+  "app": "AAABkQwXd2kAAAAC",
   "accessToken": "current-access-token",
   "registeredScopes": ["userinfo", "mail.imap"],
   "expires": "2024-01-15T12:00:00.000Z",
@@ -208,7 +216,7 @@ curl -XPUT "https://emailengine.example.com/v1/account/mailru-user/reconnect" \
   -d '{"reconnect": true}'
 ```
 
-The body is required. `reconnect` defaults to `false`, so a `PUT` with an empty body is accepted and does nothing.
+The body is required. `reconnect` defaults to `false`, so a `PUT` with an empty body is accepted and does nothing. The response is `{"reconnect": true}` when a reconnect was requested, and since v2.79.4 `{"reconnect": false}` for an account that EmailEngine [switched off after repeated authentication failures](/docs/accounts/managing-accounts#accounts-switched-off-after-authentication-failures); re-authorize such an account instead.
 
 ## Troubleshooting
 
@@ -233,9 +241,10 @@ If accounts show as disconnected:
 
 | Error | Cause | Solution |
 |-------|-------|----------|
-| `Token request failed` | Invalid credentials or expired code | Re-authenticate the user |
-| `Empty response from API` | Mail.ru API temporarily unavailable | Retry the operation |
-| `Invalid JSON response` | Unexpected response format | Check Mail.ru service status |
+| `Token request failed` | Mail.ru rejected the code exchange or the refresh; the client ID, secret, or redirect URL does not match the registered app, or the grant was revoked | Check the app configuration, then re-authenticate the user |
+| `OAuth2 request failed` | A request to a Mail.ru API endpoint returned an error status | Read the account's [logs](/docs/api/get-v-1-logs-account) for the response |
+| `Empty response from API` | Mail.ru answered with an empty body | Retry; if it persists, check Mail.ru service status |
+| `Invalid JSON response from API` | Mail.ru answered with something other than JSON | Check Mail.ru service status |
 
 ## IMAP/SMTP Server Details
 

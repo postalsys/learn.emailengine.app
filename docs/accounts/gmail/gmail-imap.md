@@ -21,10 +21,10 @@ There are many screenshots in this guide. While the general process has remained
 
 When you enable OAuth2 for Gmail with IMAP/SMTP:
 
-- EmailEngine uses **IMAP** for reading emails and **SMTP** for sending
-- Gmail API is enabled but **only used to generate OAuth2 access tokens** for IMAP/SMTP authentication
-- Users authenticate once via OAuth2, and EmailEngine automatically refreshes tokens
-- No passwords are stored, and 2FA accounts work seamlessly
+- EmailEngine uses **IMAP** for reading emails and **SMTP** for sending, authenticating both with `XOAUTH2`
+- The OAuth2 tokens are **only used to authenticate the IMAP/SMTP sessions**; EmailEngine makes no Gmail REST API calls for this kind of account
+- Users authenticate once via OAuth2, and EmailEngine refreshes the access token from the stored refresh token whenever a connection needs one
+- No passwords are stored, and accounts with two-factor authentication work without an app password
 
 ### IMAP vs Gmail API: OAuth2 Scope Requirements
 
@@ -151,7 +151,7 @@ Wait for the project to be created, then select it from the project menu.
 
 Your new project is empty and needs API access configured.
 
-Click the hamburger menu (top-left) → **APIs & Services** → **Enabled APIs & Services**.
+Click the hamburger menu (top-left) > **APIs & Services** > **Enabled APIs & Services**.
 
 ![Navigating to APIs & Services](/img/external/v3Flo-WBVG.gif)
 
@@ -160,7 +160,7 @@ Find and enable **Gmail API** for your project.
 ![Enabling Gmail API](/img/external/vz7Is1SAWe.gif)
 
 :::info Why Enable Gmail API for IMAP?
-Enabling Gmail API means your project can access Gmail email accounts regardless of protocol. EmailEngine uses IMAP and SMTP for actual email operations, and Gmail API is **only used to generate OAuth2 access tokens** for authenticating those IMAP/SMTP sessions.
+Enabling the Gmail API in the project is what makes the Gmail scopes, including `https://mail.google.com/`, selectable on the consent screen. EmailEngine uses IMAP and SMTP for the email operations of this kind of account; it reads the signed-in user's address from the OpenID Connect ID token it receives with the OAuth2 tokens, and only calls the Gmail profile endpoint when that ID token carries no address.
 
 If you want to use Gmail REST API instead of IMAP/SMTP, see the [Gmail API setup guide](./gmail-api).
 :::
@@ -168,16 +168,16 @@ If you want to use Gmail REST API instead of IMAP/SMTP, see the [Gmail API setup
 :::tip IMAP vs Gmail API
 
 - **IMAP/SMTP** (this guide): Standard email protocols, easier setup, works like any other email account
-- **Gmail API** (alternate): Faster, Gmail-specific features (labels, drafts), requires Cloud Pub/Sub setup
+- **Gmail API** (alternate): Narrower scopes, Gmail category handling, no IMAP connection limits; Cloud Pub/Sub setup for push notifications
 
-For most use cases, IMAP/SMTP with OAuth2 is sufficient. Use Gmail API only if you need maximum performance or Gmail-specific features.
+For most use cases, IMAP/SMTP with OAuth2 is sufficient. Use the Gmail API when Google's verification requires narrower scopes or you need its category handling.
 :::
 
 ## Step 3: Configure OAuth Consent Screen
 
 The consent screen is shown to users when they authorize EmailEngine to access their Gmail account.
 
-Click hamburger menu → **APIs & Services** → **OAuth consent screen**.
+Click hamburger menu > **APIs & Services** > **OAuth consent screen**.
 
 ![Navigating to consent screen](/img/external/0h3kuzzsCN.gif)
 
@@ -232,7 +232,7 @@ Scroll down and click **Save and continue** to finish consent screen setup.
 
 ## Step 4: Create OAuth Credentials
 
-Navigate to **APIs & Services** → **Credentials**, then click **Create Credentials** → **OAuth client ID**.
+Navigate to **APIs & Services** > **Credentials**, then click **Create Credentials** > **OAuth client ID**.
 
 ![Creating OAuth credentials](/img/external/dd27iNGkH0.gif)
 
@@ -288,7 +288,7 @@ Now that you have your Google Cloud project configured, let's set up EmailEngine
 
 **Enable this app:** Check this box (otherwise it won't appear in authentication forms)
 
-**Credentials file:** Select the JSON file you downloaded from Google Cloud Console. This will auto-fill:
+**Load configuration from the JSON file:** Select the JSON file you downloaded from Google Cloud Console. This fills in:
 
 - Client ID
 - Client Secret
@@ -298,11 +298,11 @@ Now that you have your Google Cloud project configured, let's set up EmailEngine
 
 - Example: `http://127.0.0.1:3000/oauth`
 
-**Base scope:** Select **IMAP and SMTP**
+**Base scopes:** Select **IMAP and SMTP**
 
 Click **Register app** to save.
 
-:::tip Base Scope Selection
+:::tip Base Scopes Selection
 
 - **IMAP and SMTP**: EmailEngine uses IMAP for reading and SMTP for sending (this guide)
 - **Gmail API**: EmailEngine uses Gmail REST API for all operations (requires Cloud Pub/Sub)
@@ -334,7 +334,7 @@ curl -X POST https://emailengine.example.com/v1/authentication/form \
   -d '{
     "account": "user123",
     "email": "user@gmail.com",
-    "type": "gmail_oauth_app_id",
+    "type": "AAABhaBPHscAAAAH",
     "redirectUrl": "https://myapp.com/settings"
   }'
 ```
@@ -343,10 +343,10 @@ curl -X POST https://emailengine.example.com/v1/authentication/form \
 |-------|-------------|
 | `account` | Unique account identifier in EmailEngine |
 | `email` | Pre-fill email field (optional) |
-| `type` | OAuth2 application ID from EmailEngine (optional) - skips account type selection |
+| `type` | OAuth2 application ID from EmailEngine (optional) - skips the account type selection screen |
 | `redirectUrl` | Where to redirect after authentication |
 
-The `type` parameter is the Provider ID of your OAuth2 application in EmailEngine (visible in the OAuth2 settings page), not the Google client ID. When specified, users are sent directly to the Google authorization page without seeing the account type selection screen.
+The `type` parameter is the ID of your OAuth2 application in EmailEngine (shown under **Integrations** > **OAuth2 Apps**), not the Google client ID. When specified, users are sent directly to the Google authorization page without seeing the account type selection screen. The returned URL is single-use and valid for 24 hours.
 
 Response:
 
@@ -358,7 +358,7 @@ Response:
 
 Direct the user to this URL to complete authentication.
 
-[Learn more about hosted authentication →](/docs/accounts/hosted-authentication)
+[Learn more about hosted authentication >](/docs/accounts/hosted-authentication)
 
 ### Option 3: Direct API Account Registration
 
@@ -374,8 +374,8 @@ curl -X POST https://emailengine.example.com/v1/account \
     "email": "user@gmail.com",
     "oauth2": {
       "provider": "AAABlf_0iLgAAAAQ",
-      "accessToken": "ya29.a0AWY7Ckl...",
-      "refreshToken": "1//0gDj5...",
+      "accessToken": "ya29.a0AWY7CklEXAMPLEACCESSTOKEN",
+      "refreshToken": "1//0gDj5EXAMPLEREFRESHTOKEN",
       "auth": {
         "user": "user@gmail.com"
       }
@@ -384,10 +384,10 @@ curl -X POST https://emailengine.example.com/v1/account \
 ```
 
 :::info Provider ID
-The `provider` field should be the **OAuth2 application ID** from EmailEngine, which is a base64url encoded string like `AAABlf_0iLgAAAAQ`. You can find this ID in **Integrations → OAuth2 Apps** in the EmailEngine interface. This is NOT the Client ID from Google Cloud Console.
+The `provider` field should be the **OAuth2 application ID** from EmailEngine, which is a base64url encoded string like `AAABlf_0iLgAAAAQ`. You can find this ID in **Integrations > OAuth2 Apps** in the EmailEngine interface. This is NOT the Client ID from Google Cloud Console.
 :::
 
-[See full API documentation →](/docs/api/post-v-1-account)
+[See full API documentation >](/docs/api/post-v-1-account)
 
 ## Gmail-Specific Considerations
 
@@ -468,14 +468,15 @@ This prevents accounts from being registered with insufficient permissions, whic
 
 EmailEngine automatically:
 
-- Refreshes access tokens when they expire during API requests
-- Makes regular API requests (at least daily) even for idle accounts, keeping refresh tokens active
-- Stores refresh tokens securely in Redis
+- Refreshes the access token from the stored refresh token whenever an IMAP or SMTP connection is opened and the cached token is expired or about to expire
+- Stores refresh tokens in Redis, encrypted when [field encryption](/docs/advanced/encryption) is enabled
 - Reports a failed refresh as an [`authenticationError`](/docs/webhooks/authenticationerror), since obtaining a new grant needs the user
+
+An account whose refresh keeps failing for longer than [`EENGINE_MAX_IMAP_AUTH_FAILURE_TIME`](/docs/configuration/environment-variables#max-imap-auth-failure-time) (three days by default) is switched off and reports the `unset` state with a non-null `authFailureDisabledAt`. Re-authorizing it through the hosted authentication form, or re-registering it with fresh tokens, brings it back (since v2.79.4); see [Accounts switched off after authentication failures](/docs/accounts/managing-accounts#accounts-switched-off-after-authentication-failures).
 
 You can:
 
-- Retrieve current access tokens via API for use with other Google APIs
+- Retrieve the current access token via the API for use with other Google APIs
 - Revoke access by deleting the account
 - Monitor token status via account state
 
@@ -491,7 +492,7 @@ Google refresh tokens can expire under certain conditions:
 EmailEngine keeps tokens active by making regular API requests, but if an account is deleted from EmailEngine and re-added later, a new consent flow is required.
 :::
 
-[Learn more about OAuth2 token management →](../oauth2-token-management)
+[Learn more about OAuth2 token management >](../oauth2-token-management)
 
 ## See Also
 

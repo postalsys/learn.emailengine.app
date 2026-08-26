@@ -90,27 +90,6 @@ IMAP/SMTP requires the full `https://mail.google.com/` scope. Gmail API can use 
 
 [Gmail API Setup Guide →](/docs/accounts/gmail/gmail-api)
 
-### OAuth2 (Outlook IMAP/SMTP)
-
-**Best for:** Microsoft 365 and Outlook.com accounts
-
-**Pros:**
-- No password storage
-- Automatic token refresh
-- Works with 2FA-enabled accounts
-- Supports shared mailboxes
-
-**Cons:**
-- Requires Azure AD setup
-- App verification for multi-tenant apps
-
-**Use Cases:**
-- Business applications using M365 accounts
-- CRM systems for Office 365 users
-- Email tools for enterprises
-
-[Outlook OAuth2 Setup Guide →](/docs/accounts/microsoft-365/outlook-365)
-
 ### Microsoft Graph API (Native)
 
 **Best for:** Microsoft 365 and Outlook.com advanced features
@@ -239,8 +218,18 @@ const response = await fetch('https://emailengine.example.com/v1/account', {
     account: 'user123',
     name: 'John Doe',
     email: 'john@example.com',
-    imap: { /* config */ },
-    smtp: { /* config */ }
+    imap: {
+      host: 'imap.example.com',
+      port: 993,
+      secure: true,
+      auth: { user: 'john@example.com', pass: 'password' }
+    },
+    smtp: {
+      host: 'smtp.example.com',
+      port: 587,
+      secure: false,
+      auth: { user: 'john@example.com', pass: 'password' }
+    }
   })
 });
 ```
@@ -272,10 +261,10 @@ const { url } = await formResponse.json();
 
 **Via Web Interface:**
 
-Navigate to **Accounts** → **Add an account** in the EmailEngine dashboard.
+Navigate to **Accounts** > **Add an account** in the EmailEngine dashboard. The dialog asks for a display name and an optional account identifier, and **Continue** opens the hosted authentication form.
 
 :::note
-The web interface is a shorthand for the hosted authentication form. When you click "Add Account", EmailEngine generates a hosted authentication form URL and redirects your browser to that form. The experience is identical to what end users see when your application generates the URL via API and redirects them to complete the authentication flow.
+The web interface is a shorthand for the hosted authentication form. EmailEngine generates a hosted authentication form URL and redirects your browser to it, so the experience is identical to what end users see when your application generates the URL via the API.
 :::
 
 ### Updating Accounts
@@ -292,26 +281,18 @@ await fetch('https://emailengine.example.com/v1/account/user123', {
   },
   body: JSON.stringify({
     name: 'John Doe Updated',
-    subconnections: ['\\Sent']  // Enable instant Sent folder notifications
+    subconnections: ['\\Sent']
   })
 });
 ```
 
-:::warning Partial Updates for Nested Objects
-When updating fields within nested objects (like `imap`, `smtp`, or `oauth2`), you must set `{subobject}.partial = true` to perform a partial update. Otherwise, the entire sub-object is replaced with only the fields you provide.
+:::warning Partial updates for nested objects
+The `imap`, `smtp`, and `oauth2` objects are replaced whole unless the object carries `"partial": true`. This body changes only the Sent folder path and keeps the stored host, port, and credentials:
 
-```javascript
-// Correct: Update only imap.sentMailPath, keep other IMAP settings
+```json
 {
   "imap": {
     "partial": true,
-    "sentMailPath": "Sent Items"
-  }
-}
-
-// Wrong: This replaces the entire imap object, losing host, port, auth, etc.
-{
-  "imap": {
     "sentMailPath": "Sent Items"
   }
 }
@@ -324,13 +305,15 @@ When updating fields within nested objects (like `imap`, `smtp`, or `oauth2`), y
 |-------|-------------|-------------------|
 | `init` | The account was just registered and has not connected yet | Wait |
 | `connecting` | Connecting to the mail server or authorizing with the provider | Wait |
-| `syncing` | Performing the initial or a periodic mailbox sync | Wait for the sync to complete |
-| `connected` | Connected and watching for changes | All operations available |
+| `syncing` | Connected and performing the initial or a periodic mailbox sync | Wait for the sync to complete |
+| `connected` | Connected and watching for changes. This is the healthy steady state | All operations available |
 | `disconnected` | The connection dropped and EmailEngine is retrying with backoff | Wait for the retry |
-| `authenticationError` | The credentials were rejected | Update credentials or re-authorize |
-| `connectError` | The server could not be reached or the TLS handshake failed | Check connectivity, retry |
-| `paused` | Syncing was paused through the API | Resume syncing |
-| `unset` | No usable IMAP or OAuth2 configuration, or syncing is [disabled](/docs/accounts/managing-accounts#disabling-and-enabling-accounts) for the account | Finish the setup, or re-enable the account |
+| `authenticationError` | The credentials were rejected. Requires re-authentication before syncing resumes | Update credentials or re-authorize |
+| `connectError` | The server could not be reached or the TLS handshake failed. Retried with backoff | Check connectivity, retry |
+| `paused` | Syncing was paused through the API. No connection is maintained | Resume syncing |
+| `unset` | The account is not syncing: either no IMAP or OAuth2 configuration is set, or syncing was switched off, by the operator or automatically after repeated authentication failures | Finish the setup, or [re-enable the account](/docs/accounts/managing-accounts#disabling-and-enabling-accounts) |
+
+An `unset` account that EmailEngine switched off itself carries a non-null `authFailureDisabledAt` timestamp in the account object (since v2.79.4). See [Accounts switched off after authentication failures](/docs/accounts/managing-accounts#accounts-switched-off-after-authentication-failures) for how to bring one back.
 
 ### Reconnecting Accounts
 
@@ -342,6 +325,8 @@ curl -X PUT https://emailengine.example.com/v1/account/user123/reconnect \
   -H "Content-Type: application/json" \
   -d '{"reconnect": true}'
 ```
+
+The response is `{"reconnect": true}` when a reconnect was requested. Since v2.79.4 it is `{"reconnect": false}` for an account that EmailEngine [switched off after repeated authentication failures](/docs/accounts/managing-accounts#accounts-switched-off-after-authentication-failures), because a reconnect cannot bring such an account back; supply working credentials or use **Resume syncing** in the admin interface instead.
 
 ### Flushing Accounts
 
@@ -379,8 +364,8 @@ curl -X PUT https://emailengine.example.com/v1/account/user123/flush \
 | `notifyFrom` | string | Only send webhooks for messages after this date (IMAP only). Defaults to current time, so only new messages trigger webhooks. Set to a past date like `"1970-01-01T00:00:00.000Z"` to process existing emails |
 | `imapIndexer` | string | Set indexing strategy: `"full"` or `"fast"` (IMAP only) |
 
-:::warning Single Operation at a Time
-You can only run one flush operation at a time. Wait for the previous flush to complete before starting a new one.
+:::warning One flush at a time
+Only one flush can run at a time across the whole instance. A second request while one is running fails with HTTP 429 and the error code `LockFail`.
 :::
 
 :::note API-Based Backends

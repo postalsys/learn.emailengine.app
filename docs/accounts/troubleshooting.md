@@ -20,10 +20,11 @@ curl https://emailengine.example.com/v1/account/user123 \
 ```
 
 Look for:
-- `state`: Current account state
-- `lastError`: Recent error messages
-- `syncTime`: Last successful sync
-- Connection details
+- `state`: Current account state, one of the nine listed under [Account states](/docs/accounts/managing-accounts#account-states)
+- `lastError`: The last error, with the provider's rejection in `lastError.response`
+- `syncTime`: Last successful sync (IMAP accounts)
+- `authFailureDisabledAt`: Set when EmailEngine itself switched syncing off after repeated authentication failures, `null` otherwise (since v2.79.4)
+- `imap.disabled`: `true` when syncing is off, whether the operator or the safety net turned it off
 
 ### Check EmailEngine Logs
 
@@ -61,7 +62,7 @@ docker logs -f emailengine
      -H "Authorization: Bearer YOUR_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{
-       "imap": { "partial": true, "auth": { "user": "user@example.com", "pass": "correct-password" } },
+       "imap": { "partial": true, "disabled": false, "auth": { "user": "user@example.com", "pass": "correct-password" } },
        "smtp": { "partial": true, "auth": { "user": "user@example.com", "pass": "correct-password" } }
      }'
 
@@ -71,6 +72,8 @@ docker logs -f emailengine
      -H "Content-Type: application/json" \
      -d '{"reconnect": true}'
    ```
+
+   `"disabled": false` matters when the failures have been going on for more than three days: by then EmailEngine has [switched syncing off](#state-unset). In releases after v2.79.4 a partial update that changes `imap.auth` lifts the switch-off on its own, but in v2.79.4 it does not, and the explicit flag is harmless in either case.
 
 2. **App password required but not used**
    - Gmail: Account passwords completely disabled, app-specific passwords required for all accounts
@@ -96,7 +99,7 @@ docker logs -f emailengine
 
    **Solution:**
    - Enable in [Microsoft 365 admin center](https://admin.microsoft.com/)
-   - Navigate to Users → Active users → Mail settings
+   - Navigate to Users > Active users > Mail settings
    - Enable IMAP and SMTP AUTH
    - Or use MS Graph API: [Outlook setup guide](./microsoft-365/outlook-365)
 
@@ -129,9 +132,9 @@ docker logs -f emailengine
    - Required scopes not configured
 
    **Solution:**
-   - Check OAuth2 app settings in EmailEngine
-   - Verify against Google Cloud Console / Azure AD
-   - Look for error messages in OAuth2 app settings page
+   - Open the app under **Integrations** > **OAuth2 Apps**. An app whose credentials the provider has rejected is badged **Failing** and carries the provider's message at the top of its page
+   - Press **Verify setup** on the app page, or call [`POST /v1/oauth2/{app}/verify`](/docs/api/post-v-1-oauth-2-app-verify), to walk the authentication chain step by step. See [Verifying the app setup](/docs/accounts/oauth2-setup#verifying-the-app-setup)
+   - Check the client ID, secret and redirect URL against Google Cloud Console or Microsoft Entra
    - [Gmail OAuth2 setup guide](./gmail/gmail-imap)
    - [Outlook OAuth2 setup guide](./microsoft-365/outlook-365)
 
@@ -210,8 +213,8 @@ docker logs -f emailengine
 **What it means:** Connection in progress.
 
 **Normal Behavior:**
-- Accounts usually stay in this state for 5-30 seconds
-- First connection may take longer (folder sync)
+- A reconnect passes through this state in seconds
+- The first connection takes longer, because the folder list is fetched and the initial sync starts
 
 **If Stuck:**
 
@@ -238,30 +241,39 @@ docker logs -f emailengine
 
 ### State: unset
 
-**What it means:** OAuth2 authentication not completed.
+**What it means:** The account is not syncing. Either no IMAP or OAuth2 configuration is set, or syncing was switched off: by the operator through `imap.disabled`, or by EmailEngine itself after repeated authentication failures.
 
-**Occurs When:**
-- Hosted authentication form URL was generated
-- User hasn't completed OAuth2 flow yet
+**Tell the cases apart** with the [account object](/docs/api/get-v-1-account-account):
 
-**Solution:**
-- User needs to visit the authentication form URL
-- Complete OAuth2 consent
-- Account will automatically move to `connecting` then `connected`
+| `imap.disabled` | `authFailureDisabledAt` | Cause |
+| --- | --- | --- |
+| `false` or absent | `null` | No credentials yet. Typically an account created through the hosted authentication form whose user has not completed the OAuth2 consent |
+| `true` | `null` | The operator switched syncing off (a send-only account). A password account switched off by a release older than v2.79.4 also looks like this, since the timestamp did not exist yet; `lastError` then records the authentication failures behind it |
+| `true` | a timestamp | EmailEngine switched syncing off after the account had failed authentication for longer than [`EENGINE_MAX_IMAP_AUTH_FAILURE_TIME`](/docs/configuration/environment-variables#max-imap-auth-failure-time), three days by default. `lastError` holds the provider's last rejection |
 
-**If user says they completed it:**
-- Check redirect URL is correct
-- Verify OAuth2 app is enabled in EmailEngine
-- Check for errors in OAuth2 app settings
-- Generate new authentication form URL
+**No credentials yet:**
+- The user needs to open the authentication form URL and complete the consent
+- If they say they did: check the redirect URL, confirm the OAuth2 app is enabled, look at the app's page for a recorded error, and generate a fresh form URL
+
+**Switched off by the operator:**
+- Set `imap.disabled` to `false`, as in the reconnect example under [disconnected](#state-disconnected)
+
+**Switched off after authentication failures** (since v2.79.4 the account page shows a "Syncing was switched off" alert with the time, and the accounts list badges it "Syncing switched off"):
+- Fix the credentials first. A re-authorization through the hosted authentication form or the account page's **Re-authenticate** button lifts the disable and reconnects the account; so does a `PUT /v1/account/{account}` that carries new OAuth2 tokens, replaces the whole `imap` object, or sets `"disabled": false`. In releases after v2.79.4 a partial update of `imap.auth` lifts it too, and saving the account's edit form with new IMAP credentials does the same
+- Or press **Resume syncing** on the account page to retry with the stored credentials. This is the only admin path for a Gmail API or MS Graph account, whose edit page has no IMAP settings
+- A shared mailbox that borrows another account's token is not switched off in releases after v2.79.4; fix the account that owns the credential and the shared mailboxes come back with it
+- `PUT /v1/account/{account}/reconnect` does not help here: it answers `{"reconnect": false}` and changes nothing, because the connection setup checks the flag before dialing out
+
+The full list of what lifts the disable, and the version history behind it, is in [Accounts switched off after authentication failures](/docs/accounts/managing-accounts#accounts-switched-off-after-authentication-failures).
 
 ### State: disconnected
 
-**What it means:** Account is disconnected (manually disabled or closed).
+**What it means:** The connection dropped and EmailEngine is retrying with backoff. This is transient; an account that stays here is usually one whose server keeps closing the session, so check `lastError` and the [per-account log](#emailengine-logs).
 
-**Solution:**
+A disabled account does not report `disconnected`; it reports `unset` (above). To re-enable one the operator switched off:
+
 ```bash
-# Re-enable account if it was disabled
+# Re-enable the account
 curl -X PUT https://emailengine.example.com/v1/account/user123 \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
@@ -273,6 +285,10 @@ curl -X PUT https://emailengine.example.com/v1/account/user123/reconnect \
   -H "Content-Type: application/json" \
   -d '{"reconnect": true}'
 ```
+
+### State: paused
+
+**What it means:** Syncing was paused through the API and no connection is maintained. EmailEngine pauses an account while [`PUT /v1/account/{account}/flush`](/docs/api/put-v-1-account-account-flush) clears its stored mailbox data, and reconnects it when the flush completes. An account that stays `paused` after a flush has finished can be brought back with a [reconnect](/docs/api/put-v-1-account-account-reconnect).
 
 ## Provider-Specific Issues
 
@@ -328,8 +344,8 @@ Gmail has completely disabled account password authentication. The "Less secure 
 
 **Solution:**
 1. Go to [Microsoft 365 admin center](https://admin.microsoft.com/)
-2. Users → Active users → Select user
-3. Mail tab → Manage email apps
+2. Users > Active users > Select user
+3. Mail tab > Manage email apps
 4. Enable IMAP
 5. Wait 15-30 minutes for changes to propagate
 
@@ -353,7 +369,7 @@ Gmail has completely disabled account password authentication. The "Less secure 
 **Solution:**
 - Organization admin must grant consent
 - Or admin can pre-approve app for all users
-- In Azure AD → App registrations → API permissions → Grant admin consent
+- In Azure AD > App registrations > API permissions > Grant admin consent
 
 #### Shared Mailbox Access Denied
 
@@ -364,8 +380,8 @@ Gmail has completely disabled account password authentication. The "Less secure 
 **Solution:**
 1. Verify user has "Full Access" permission to shared mailbox
 2. In Microsoft 365 admin:
-   - Recipients → Shared → Select mailbox
-   - Mailbox delegation → Full Access
+   - Recipients > Shared > Select mailbox
+   - Mailbox delegation > Full Access
    - Add user
 3. Wait 15-30 minutes for permissions to propagate
 
@@ -393,7 +409,7 @@ Gmail has completely disabled account password authentication. The "Less secure 
 **Solution:**
 1. Generate app-specific password:
    - Visit [appleid.apple.com](https://appleid.apple.com/)
-   - Sign in → Security → App-Specific Passwords
+   - Sign in > Security > App-Specific Passwords
    - Generate password
 2. Use app-specific password in EmailEngine
 
@@ -442,15 +458,14 @@ curl "https://emailengine.example.com/v1/settings?webhooks=true" \
    - Must return 2xx status code
    - EmailEngine will retry on failures
 
-4. **For Gmail API/MS Graph accounts: Subscription not active**
-   - Check account details for subscription status
-   - For Gmail API: Verify Cloud Pub/Sub is configured
-   - For MS Graph: Verify subscription is active
+4. **For Gmail API and MS Graph accounts: the push subscription is not active**
+   - Microsoft Graph: the account object carries `outlookSubscription` with the subscription ID, its `expirationDateTime` and its state
+   - Gmail API: push notifications come from Cloud Pub/Sub, configured on the OAuth2 application rather than on the account. [`GET /v1/pubsub/status`](/docs/api/get-v-1-pubsub-status) lists the Pub/Sub applications and their subscription status; see [Gmail Pub/Sub](/docs/accounts/gmail/gmail-pubsub)
 
 **Debug webhooks:**
 
 Check webhook queue in Bull Board:
-- Navigate to **System** → **Queues** in the EmailEngine dashboard (`/admin/bull-board`)
+- Navigate to **System** > **Queues** in the EmailEngine dashboard (`/admin/bull-board`)
 - Check the "notify" queue
 - Look for failed jobs and error messages
 
@@ -460,7 +475,7 @@ Check webhook queue in Bull Board:
 
 **Solution:**
 1. Check Bull Board for queue status
-2. Increase webhook workers (if needed)
+2. Run more webhook workers with `EENGINE_WORKERS_WEBHOOKS` (default 1)
 3. Optimize your webhook endpoint response time
 4. Implement idempotency (handle duplicate webhooks)
 
@@ -487,9 +502,8 @@ curl -X PUT https://emailengine.example.com/v1/account/user123 \
 ```
 
 **Provider Limits:**
-- Gmail: 15 concurrent connections
-- Outlook: 15 concurrent connections
-- Yahoo: 10 concurrent connections
+- Gmail allows 15 simultaneous IMAP connections per account
+- Other providers publish their own limits; the account's sync connection, each sub-connection and every [IMAP proxy](/docs/accounts/proxying-connections) session all count against it
 
 ### SSL/TLS Certificate Errors
 
@@ -558,10 +572,7 @@ No action needed from you. If issues persist, check logs for specific errors.
      }'
    ```
 
-2. **Be patient** - Initial sync can take time for large mailboxes
-   - 10,000 messages: ~5-10 minutes
-   - 50,000 messages: ~30-60 minutes
-   - 100,000+ messages: Hours
+2. **Be patient** - Initial sync time grows with the message count, and with the provider's rate limits
 
 3. **Consider Gmail API** for very large Gmail accounts:
    - Faster initial sync
@@ -577,7 +588,7 @@ No action needed from you. If issues persist, check logs for specific errors.
 **Solutions:**
 
 1. **Reduce number of accounts**
-   - Check account count: `curl https://emailengine.example.com/v1/accounts | jq '.total'`
+   - Check the account count: `curl https://emailengine.example.com/v1/accounts -H "Authorization: Bearer YOUR_TOKEN" | jq '.total'`
    - Scale vertically (increase server resources)
 
 2. **Reduce sub-connections**
@@ -625,7 +636,7 @@ No action needed from you. If issues persist, check logs for specific errors.
    - **Solution:** Recreate app or update settings
 
 :::info Accounts stop retrying after three days
-Whatever the cause, an account that keeps failing authentication is [parked](/docs/reference/configuration-options#max-imap-auth-failure-time) once the failures have run for `EENGINE_MAX_IMAP_AUTH_FAILURE_TIME`, so a dead grant is not retried against the provider forever. Check `imap.disabled` on the account before assuming a re-authorization has not been done yet.
+Whatever the cause, an account that keeps failing authentication is [switched off](/docs/accounts/managing-accounts#accounts-switched-off-after-authentication-failures) once the failures have run for `EENGINE_MAX_IMAP_AUTH_FAILURE_TIME`, so a dead grant is not retried against the provider forever. The account then reports `unset` with `authFailureDisabledAt` set. Re-authorizing lifts it (since v2.79.4; before that only `imap.disabled: false` through the API did), and so does **Resume syncing** on the account page. Before v2.79.3 this only applied to password IMAP accounts.
 :::
 
 ### "redirect_uri_mismatch" Error
@@ -665,8 +676,8 @@ The port differs, so the provider rejects the redirect.
    - Outlook Graph: `Mail.ReadWrite`, `Mail.Send`, `offline_access`
 
 2. **Update OAuth2 app in provider console:**
-   - Google Cloud Console → APIs & Services → OAuth consent screen → Scopes
-   - Azure AD → App registrations → API permissions
+   - Google Cloud Console > APIs & Services > OAuth consent screen > Scopes
+   - Azure AD > App registrations > API permissions
 
 3. **Update EmailEngine OAuth2 app** if using additional scopes
 
@@ -747,7 +758,7 @@ curl https://www.googleapis.com/gmail/v1/users/me/profile \
 
 When seeking help, include:
 
-1. **EmailEngine version:** The dashboard footer, or `emailengine --version`
+1. **EmailEngine version:** The **Software versions** panel on the dashboard, which also lists the Node.js, Redis, ImapFlow and BullMQ versions, or `emailengine --version`
 2. **Account state:** From account details API
 3. **Error messages:** From logs
 4. **Provider:** Gmail, Outlook, Yahoo, etc.
@@ -768,7 +779,7 @@ curl "https://emailengine.example.com/v1/logs/user123" \
   -H "Authorization: Bearer YOUR_TOKEN"
 ```
 
-`logs` on an account is a boolean. Retention (`logs.maxLogLines`) and the switch that turns this on for every account (`logs.all`) are server-wide settings. See [Per-account protocol logs](/docs/advanced/logging#per-account-protocol-logs).
+`logs` on an account is a boolean. Retention (`logs.maxLogLines`) and the switch that turns this on for every account (`logs.all`) are server-wide settings. See [Per-account logs](/docs/advanced/logging#per-account-logs).
 
 See [Logging](/docs/advanced/logging) for the format and what each level records.
 

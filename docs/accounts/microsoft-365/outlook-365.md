@@ -63,7 +63,7 @@ MS Graph API has **significantly more limited search capabilities** compared to 
 
 ## Step 1: Create Azure AD Application
 
-Go to [Azure Portal](https://portal.azure.com/) and navigate to **Microsoft Entra ID** → **App Registrations**.
+Go to [Azure Portal](https://portal.azure.com/) and navigate to **Microsoft Entra ID > App Registrations**.
 
 ![Navigate to Azure AD App Registrations](/img/outlook/out001.gif)
 
@@ -86,7 +86,7 @@ Choose who can use this application:
 **Personal Microsoft accounts only:**
 
 - Only free @hotmail.com, @outlook.com, @live.com accounts
-- Select: "Accounts in any organizational directory and personal Microsoft accounts"
+- Select: "Personal Microsoft accounts only"
 
 **Single tenant (organization only):**
 
@@ -111,7 +111,7 @@ For maximum compatibility, select **"Accounts in any organizational directory an
 
 ### Microsoft Cloud Environments
 
-EmailEngine supports multiple Microsoft cloud environments for government and regional deployments. Select the appropriate cloud when creating an Outlook OAuth2 application to use the correct endpoints.
+EmailEngine supports multiple Microsoft cloud environments for government and regional deployments (since v2.46.0). Select the appropriate cloud in the **Azure cloud environment** field when creating an Outlook OAuth2 application to use the correct endpoints.
 
 | Cloud | Value | Use Case |
 |-------|-------|----------|
@@ -282,13 +282,8 @@ Add these permissions instead:
 - `Mail.Send` - For sending emails
 - `offline_access` - For token refresh
 
-:::warning Don't Mix Scopes
-You cannot use both IMAP/SMTP and Mail.\* scopes together. Choose one backend:
-
-- **IMAP/SMTP scopes**: From Outlook API
-- **Mail.\* scopes**: From MS Graph API
-
-Pick one approach and stick with it.
+:::info One backend per OAuth2 app
+An EmailEngine OAuth2 app requests one set of scopes, selected by its **Base scopes** setting: either the IMAP/SMTP scopes or the `Mail.*` scopes. Register two OAuth2 apps in EmailEngine if you need both backends against the same Azure application.
 :::
 
 Verify all required permissions are listed, then continue to the next step.
@@ -339,7 +334,7 @@ If you're managing a Microsoft 365 organization and EmailEngine cannot connect v
 ![Enabling IMAP and SMTP in Microsoft 365 admin center](/img/outlook/enable-imap-smtp.gif)
 
 1. Navigate to [https://admin.microsoft.com/](https://admin.microsoft.com/)
-2. Go to **Users** → **Active users**
+2. Go to **Users > Active users**
 3. Select a user
 4. Navigate to **Mail** settings
 5. Enable **IMAP** and **SMTP AUTH**
@@ -371,33 +366,28 @@ Now configure EmailEngine with your Azure application credentials.
 
 **Client Secret:** Paste the secret value you copied earlier
 
+**Azure cloud environment:** Azure Global unless the tenant lives in a [government or regional cloud](#microsoft-cloud-environments)
+
 **Redirect URL:** Must match exactly what you entered in Azure:
 
-- Example: `http://localhost:3000/oauth`
+- Example: `https://emailengine.example.com/oauth`
 
-**Supported account types:** Choose based on your Azure configuration:
+**Supported account types:** Choose the option that matches your Azure registration. The API field is `authority`, and each option maps to one value:
 
-- `common` - Organizations and personal accounts (most flexible)
-- `consumers` - Personal Microsoft accounts only (@hotmail.com, @outlook.com, @live.com)
-- `organizations` - Microsoft 365 organizations only
-- `<directory-id>` - Specific organization only (use Directory/Tenant ID like `f8cdef31-a31e-4b4a-93e4-5f571e91255a`)
+| Option in EmailEngine | Azure registration | `authority` value |
+|---|---|---|
+| Accounts in any organizational directory (Multitenant) | Accounts in any organizational directory | `organizations` |
+| Accounts in any organizational directory and personal Microsoft accounts | Accounts in any organizational directory and personal Microsoft accounts | `common` |
+| Personal Microsoft accounts only | Personal Microsoft accounts only | `consumers` |
+| Accounts in the specified organizational directory only (Single tenant) | Accounts in this organizational directory only | The Directory (tenant) ID, a UUID like `f8cdef31-a31e-4b4a-93e4-5f571e91255a`, entered in the **Directory (tenant) ID** field |
 
-:::tip Account Type Mapping
-| Azure Setting | EmailEngine Value |
-|---------------|-------------------|
-| Any org + personal | `common` |
-| Personal accounts only | `consumers` |
-| Any organization | `organizations` |
-| Single organization | Use Directory ID |
-:::
+**Base scopes:** Select based on your Azure permissions:
 
-**Base scope:** Select based on your Azure permissions:
+- **IMAP and SMTP** (`baseScopes: "imap"`) - If you added `IMAP.AccessAsUser.All` and `SMTP.Send`
+- **MS Graph API** (`baseScopes: "api"`) - If you added `Mail.ReadWrite` and `Mail.Send`
 
-- **IMAP and SMTP** - If you added `IMAP.AccessAsUser.All` and `SMTP.Send`
-- **MS Graph API** - If you added `Mail.ReadWrite` and `Mail.Send`
-
-:::important Base Scope Must Match Azure Permissions
-The base scope you select here must match the permissions you configured in Azure. Mismatches will cause authentication failures.
+:::important Base scopes must match the Azure permissions
+The base scopes you select here must match the permissions you configured in Azure. Mismatches will cause authentication failures.
 :::
 
 Click **Register app** to save.
@@ -410,8 +400,8 @@ Add an Outlook account to test the OAuth2 flow.
 
 ![Using hosted authentication form](/img/outlook/out012.gif)
 
-1. In EmailEngine, click **Add account**
-2. Click **Sign in with Microsoft**
+1. In EmailEngine, open **Accounts**, click **Add an account**, and click **Continue**
+2. On the hosted authentication form, click **Sign in with Microsoft**
 3. Complete the OAuth2 consent flow
 4. EmailEngine will store the credentials and connect
 
@@ -450,8 +440,8 @@ curl -X POST https://emailengine.example.com/v1/account \
     "email": "user@outlook.com",
     "oauth2": {
       "provider": "AAABlf_0iLgAAAAQ",
-      "accessToken": "EwBIA8l6...",
-      "refreshToken": "M.R3_BAY...",
+      "accessToken": "ACCESS_TOKEN_FROM_MICROSOFT",
+      "refreshToken": "REFRESH_TOKEN_FROM_MICROSOFT",
       "auth": {
         "user": "user@outlook.com"
       }
@@ -460,7 +450,7 @@ curl -X POST https://emailengine.example.com/v1/account \
 ```
 
 :::info Provider ID
-The `provider` field should be the **OAuth2 application ID** from EmailEngine, which is a base64url encoded string like `AAABlf_0iLgAAAAQ`. You can find this ID in **Integrations → OAuth2 Apps** in the EmailEngine interface. This is NOT the Application (client) ID from Azure AD.
+The `provider` field should be the **OAuth2 application ID** from EmailEngine, which is a base64url encoded string like `AAABlf_0iLgAAAAQ`. You can find this ID in **Integrations > OAuth2 Apps** in the EmailEngine interface. This is NOT the Application (client) ID from Azure AD.
 :::
 
 [See full API documentation →](/docs/api/post-v-1-account)
@@ -470,7 +460,7 @@ The `provider` field should be the **OAuth2 application ID** from EmailEngine, w
 Microsoft 365 shared mailboxes are mailboxes not bound to a specific user. Multiple users can access them using their own credentials.
 
 :::tip Recommended: Application Access
-For shared mailboxes, [Outlook Application Access (Client Credentials)](./outlook-client-credentials) is the simplest approach - no interactive login, no extra scopes, just an API call per mailbox.
+For shared mailboxes, [Outlook Application Access (Client Credentials)](./outlook-client-credentials) is the simplest approach - no interactive login, no extra scopes, one API call per mailbox.
 :::
 
 With delegated access, EmailEngine also supports shared mailboxes through:
@@ -484,38 +474,11 @@ For detailed setup instructions covering all three approaches, see the [Shared M
 
 ### IMAP/SMTP Limits
 
-Microsoft enforces connection and rate limits:
-
-**Connection Limits:**
-
-- 15 concurrent IMAP connections per account
-- 30 SMTP connections per minute
-
-**Rate Limits:**
-
-- Throttling on excessive operations
-- May temporarily block account
-
-**Best Practices:**
-
-- Use sub-connections sparingly
-- Implement path filtering
-- Monitor account states for throttling
+Exchange Online caps the number of concurrent IMAP connections per mailbox and rate-limits SMTP submission; the current figures are in Microsoft's [Exchange Online limits](https://learn.microsoft.com/en-us/office365/servicedescriptions/exchange-online-service-description/exchange-online-limits). Every [sub-connection](/docs/advanced/performance-tuning#sub-connections-for-selected-folders) is one more IMAP connection against that cap, so enable them only for folders that need real-time notifications, and narrow the [monitored folders](/docs/advanced/performance-tuning#limiting-indexed-folders) on large mailboxes.
 
 ### MS Graph API Limits
 
-Microsoft Graph has separate quotas:
-
-**Throttling Limits:**
-
-- Varies by license type and tenant
-- Typically higher than IMAP limits
-
-**Best Practices:**
-
-- Implement exponential backoff
-- Use batch requests where possible
-- Monitor for throttling responses
+Microsoft Graph throttles per app and per mailbox rather than by connection; see [Microsoft Graph throttling limits](https://learn.microsoft.com/en-us/graph/throttling-limits). EmailEngine retries a throttled request with backoff on its own.
 
 [Learn more about performance tuning →](/docs/advanced/performance-tuning)
 
@@ -533,38 +496,15 @@ This pre-approves the app for all users in the organization.
 
 ### Token Management
 
-EmailEngine automatically:
+EmailEngine renews the access token with the stored refresh token whenever a connection or an API request needs one, and stores both tokens in Redis (encrypted when `EENGINE_SECRET` is set). When Microsoft rejects the refresh token, the account enters `authenticationError` and stays there until the user signs in again; EmailEngine cannot re-authorize on the user's behalf. Deleting an account discards its tokens, so re-adding it later takes a new consent flow.
 
-- Refreshes access tokens when they expire during API requests
-- Makes regular API requests (at least daily) even for idle accounts, keeping refresh tokens active
-- Stores refresh tokens securely
-- Re-authenticates on token failures
-
-You can:
-
-- Retrieve current access tokens for other Microsoft API calls
-- Monitor token status via account state
-- Revoke access by deleting the account
-
-:::warning Refresh Token Expiration
-Microsoft refresh tokens can expire under certain conditions:
-
-- **90 days of inactivity** - If not used to obtain new access tokens
-- **Maximum ~1 year** - Rolling lifetime limit even if used regularly (may vary by tenant configuration)
-- **User revokes consent** - Via https://myapps.microsoft.com
-- **Admin revokes app** - Via Azure AD Enterprise Applications
-- **Password change** - Invalidates existing refresh tokens
-- **Policy changes** - New MFA or conditional access policies invalidate old tokens
-- **"Sign out everywhere"** - User action that kills all refresh tokens
-
-EmailEngine keeps tokens active by making regular API requests, but if an account is deleted from EmailEngine and re-added later, a new consent flow is required.
-:::
+Which events invalidate a Microsoft refresh token, and how long an idle one lives, is covered on the [OAuth2 token management](/docs/accounts/oauth2-token-management) page.
 
 :::danger Client Secret Expiration
-Microsoft OAuth2 **client secrets expire** (90 days to 2 years max). When expired, **all accounts** using that OAuth2 app fail immediately. Monitor expiration dates in Azure AD and rotate secrets before they expire.
+Microsoft OAuth2 **client secrets expire**; the Azure portal offers lifetimes of up to 24 months. When the secret expires, **all accounts** using that OAuth2 app fail at their next token refresh. Monitor expiration dates in Azure AD and rotate secrets before they expire.
 :::
 
-[Learn more about OAuth2 token management →](../oauth2-token-management)
+[Learn more about OAuth2 token management →](/docs/accounts/oauth2-token-management)
 
 ## See Also
 
