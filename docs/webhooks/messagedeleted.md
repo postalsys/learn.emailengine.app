@@ -10,16 +10,11 @@ The `messageDeleted` webhook event is triggered when EmailEngine detects that a 
 
 ## When This Event is Triggered
 
-The `messageDeleted` event fires when:
+How a deletion is detected depends on the account type:
 
-- A message is permanently deleted from a folder
-- A message is moved to another folder (the source folder triggers deletion)
-- A message is expunged from the server
-- The IMAP EXPUNGE command is issued for the message
-- Gmail: A message loses all labels or is moved to Trash
-- Outlook: A message is deleted via the Graph API
-
-The event is triggered after EmailEngine confirms the message is no longer present in the monitored folder.
+- **IMAP**: the server reports an expunge for a message EmailEngine has indexed (an untagged `EXPUNGE` or, with QRESYNC, `VANISHED`), or a resync finds an indexed UID gone. Moving a message to another folder removes it from the source folder, so a move produces `messageDeleted` for the source folder and [`messageNew`](/docs/webhooks/messagenew) for the destination
+- **Gmail API**: the Gmail history reports the message as deleted, which happens when it is permanently deleted. Moving a message to Trash or removing a label is a label change, reported as [`messageUpdated`](/docs/webhooks/messageupdated)
+- **MS Graph**: a change notification reports the message as deleted and EmailEngine confirms that it no longer exists. A message that still exists was moved, and no event is sent, because Graph does not report which folder it left
 
 :::note Requires the full indexer
 On IMAP accounts, deletions are detected only under the full [indexer](/docs/accounts/imap-indexers), which is the default. The fast indexer tracks the highest UID it has seen and nothing else, so it never notices a message going away.
@@ -40,13 +35,15 @@ On IMAP accounts, deletions are detected only under the full [indexer](/docs/acc
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `serviceUrl` | string | No | The configured EmailEngine service URL |
+| `serviceUrl` | string or null | Yes | The configured EmailEngine service URL, `null` if not set |
 | `account` | string | Yes | Account ID where the message was deleted |
 | `date` | string | Yes | ISO 8601 timestamp when the webhook was generated |
-| `path` | string | Yes | Mailbox folder path where the message was located (e.g., "INBOX") |
-| `specialUse` | string | No | Special use flag of the folder (e.g., "\Inbox", "\Sent", "\Trash") |
-| `event` | string | Yes | Event type, always "messageDeleted" for this event |
+| `path` | string | Yes | Folder the message was removed from. IMAP accounts report the folder path (for example `INBOX`). Gmail API and MS Graph accounts report `\All`, because their change feeds are not folder-specific |
+| `specialUse` | string | No | Special use flag of the folder, for example `\Inbox` or `\Trash`. Gmail API and MS Graph accounts report `\All` |
+| `event` | string | Yes | Always `messageDeleted` |
 | `data` | object | Yes | Message identification data (see below) |
+
+The unique event identifier is sent as the HTTP header `X-EE-Wh-Event-Id`, not in the JSON payload.
 
 ### Message Data Fields (`data` object)
 
@@ -56,7 +53,7 @@ The `messageDeleted` event includes minimal data since the message content is no
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `id` | string | Yes | EmailEngine's unique message ID (base64url encoded) |
+| `id` | string | Yes | EmailEngine message ID (base64url-packed folder and UID) |
 | `uid` | number | Yes | IMAP UID of the deleted message within the folder |
 
 #### Gmail API Accounts
@@ -65,15 +62,15 @@ The `messageDeleted` event includes minimal data since the message content is no
 |-------|------|----------|-------------|
 | `id` | string | Yes | Gmail message ID |
 | `threadId` | string | No | Gmail thread ID the message belonged to |
-| `flags` | array | No | Last known flags before deletion |
-| `labels` | array | No | Last known Gmail labels before deletion |
-| `category` | string | No | Last known category (e.g., "primary", "social") |
+| `flags` | array | Yes | Last known flags, derived from the labels: `\Seen` unless `UNREAD`, `\Flagged` for `STARRED`, `\Draft` for `DRAFT` |
+| `labels` | array | Yes | Last known labels. System labels use their IMAP special-use names (`\Inbox`, `\Sent`, `\Trash`, `\Drafts`, `\Junk`), other labels are Gmail label IDs |
+| `category` | string | No | Last known inbox tab (`primary`, `social`, `promotions`, `updates`, `forums`), set for messages that were in the Inbox |
 
 #### Microsoft Graph (Outlook) Accounts
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `id` | string | Yes | Outlook message ID |
+| `id` | string | Yes | Graph message ID |
 
 ## Example Payloads
 
@@ -101,13 +98,14 @@ The `messageDeleted` event includes minimal data since the message content is no
   "serviceUrl": "https://emailengine.example.com",
   "account": "gmail-user",
   "date": "2025-10-17T08:15:22.123Z",
-  "path": "[Gmail]/All Mail",
+  "path": "\\All",
+  "specialUse": "\\All",
   "event": "messageDeleted",
   "data": {
     "id": "18b5c7d8e9f01234",
     "threadId": "18b5c7d8e9f01234",
     "flags": ["\\Seen"],
-    "labels": ["INBOX", "IMPORTANT"],
+    "labels": ["\\Inbox", "Label_42"],
     "category": "primary"
   }
 }
@@ -120,7 +118,8 @@ The `messageDeleted` event includes minimal data since the message content is no
   "serviceUrl": "https://emailengine.example.com",
   "account": "outlook-user",
   "date": "2025-10-17T09:30:45.789Z",
-  "path": "Inbox",
+  "path": "\\All",
+  "specialUse": "\\All",
   "event": "messageDeleted",
   "data": {
     "id": "AAMkADI2NGVhZTVlLTI1OGItNDUwZS05ZDVkLWQzN2E2MDUyYzc3YQBGAAAAAAI"
@@ -143,7 +142,6 @@ async function handleMessageDeleted(event) {
     console.log(`  UID: ${data.uid}`);
   }
 
-  // Remove from your database
   await removeMessageFromDatabase(account, data.id);
 }
 ```
@@ -155,7 +153,6 @@ async function handleMessageDeleted(event) {
   const { account, data } = event;
 
   try {
-    // Remove from primary database
     await db.messages.delete({
       where: {
         accountId: account,
@@ -163,27 +160,27 @@ async function handleMessageDeleted(event) {
       }
     });
 
-    // Remove from search index
     await searchIndex.delete(`${account}:${data.id}`);
 
-    // Clean up any cached attachments
     await cache.deletePattern(`attachments:${account}:${data.id}:*`);
 
     console.log(`Cleaned up message ${data.id} for account ${account}`);
   } catch (err) {
     console.error('Failed to clean up deleted message:', err);
-    throw err; // Retry the webhook
+    throw err;
   }
 }
 ```
 
 ### Audit Logging
 
-```javascript
-async function handleMessageDeleted(event) {
-  const { account, path, date, data, eventId } = event;
+The event identifier is in the `X-EE-Wh-Event-Id` request header, so an audit record needs both the header and the body:
 
-  // Log deletion for compliance
+```javascript
+async function handleMessageDeleted(req) {
+  const eventId = req.headers['x-ee-wh-event-id'];
+  const { account, path, date, data } = req.body;
+
   await auditLog.create({
     eventId,
     timestamp: new Date(date),
@@ -213,17 +210,11 @@ If you need message content for deletion processing (e.g., archiving before dele
 
 ### Deletion vs. Move
 
-When a message is moved between folders:
-1. A `messageDeleted` event fires for the source folder
-2. A `messageNew` event fires for the destination folder
+On IMAP accounts a message moved between folders produces:
+1. A `messageDeleted` event for the source folder
+2. A `messageNew` event for the destination folder
 
-To distinguish between permanent deletion and folder moves, you can:
-- Check if a `messageNew` event arrives shortly after with the same `messageId`
-- Track message IDs across your system to detect moves
-
-### Gmail Label Changes
-
-For Gmail API accounts, removing the last label from a message (except for Trash/Spam) triggers a deletion event. The `labels` field in the payload shows the last known labels before deletion.
+The two events carry different `id` values, because the ID encodes the folder. To tell a move from a deletion, match the `messageId` (the Message-ID header) of a `messageNew` event that arrives shortly after against the message you recorded under the deleted `id`. The `seemsLikeNew` field of `messageNew` is `false` for a message EmailEngine has seen before on the account.
 
 ### Idempotency
 
@@ -233,7 +224,6 @@ Handle deletion events idempotently since webhooks may be retried:
 async function handleMessageDeleted(event) {
   const { account, data } = event;
 
-  // Check if already processed
   const exists = await db.messages.findUnique({
     where: {
       accountId: account,
@@ -263,6 +253,8 @@ async function handleMessageDeleted(event) {
 
 ## See Also
 
-- [Webhooks Overview](/docs/webhooks/overview) - Complete webhook setup guide
+- [Webhooks Overview](/docs/webhooks/overview) - Delivery, retries, headers and signing
+- [Tracking deleted messages](/docs/receiving/tracking-deleted) - Keeping an external copy in step with the mailbox
+- [IMAP indexers](/docs/accounts/imap-indexers) - Why the fast indexer never reports deletions
 - [Message Operations](/docs/receiving/message-operations) - Working with messages via API
 - [Settings API](/docs/api/post-v-1-settings) - Configure webhook settings

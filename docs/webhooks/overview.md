@@ -17,28 +17,17 @@ import TabItem from '@theme/TabItem';
 
 Webhooks are the primary mechanism for receiving real-time notifications from EmailEngine about mailbox events, message changes, and delivery status. Instead of repeatedly polling for updates, EmailEngine pushes notifications to your application as events occur.
 
-## Why Use Webhooks?
+## What Webhooks Cover
 
-**Real-Time Updates**
-- Instant notifications when events occur
-- No polling delays or missed events
-- Process messages as they arrive
+EmailEngine posts a JSON document to your endpoint as each event happens, so an integration does not have to poll for changes. The events fall into five groups:
 
-**Efficient**
-- Eliminates the need for constant polling
-- Reduces API calls and server load
-- Lower latency for time-sensitive operations
+- **Message lifecycle** - a message arrived, its flags or labels changed, it is gone
+- **Delivery status** - a queued message was accepted, an attempt failed, EmailEngine gave up, a bounce or a complaint came back
+- **Mailbox changes** - a folder appeared, disappeared, or had its UIDVALIDITY reset
+- **Account status** - registered, initialized, authenticated, failing to connect, deleted
+- **Recipient actions** - opens, clicks, unsubscribes
 
-**Event Coverage**
-- Message lifecycle (new, updated, deleted)
-- Delivery status (sent, failed, bounced)
-- Account status (connected, disconnected, errors)
-- User interactions (opens, clicks, unsubscribes)
-
-**Scalable**
-- Absorb bursts without dropping events
-- Process events asynchronously
-- Built on BullMQ for reliability
+Deliveries are queued rather than sent inline with the mail operation that produced them, so a slow endpoint delays webhooks but never syncing.
 
 ## Setting Up Webhooks
 
@@ -47,11 +36,11 @@ Webhooks are the primary mechanism for receiving real-time notifications from Em
 Set your webhook endpoint URL in EmailEngine:
 
 **Via Web UI:**
-1. Navigate to **Configuration → Webhooks**
-2. Check **Enable webhooks**
+1. Navigate to **Configuration > Webhooks**
+2. Check **Enable Webhooks**
 3. Enter your **Webhook URL**: `https://your-app.com/webhooks/emailengine`
-4. Select which events to receive. Selecting none means no webhooks are sent
-5. Click **Update Settings**
+4. Under **Event Types**, select which events to receive. Selecting none means no webhooks are sent
+5. Click **Save Changes**
 
 ![Webhooks configuration page](/img/screenshots/05-webhooks-config.png)
 _The Webhooks settings page with the target URL and event selection_
@@ -68,7 +57,7 @@ curl -X POST "https://emailengine.example.com/v1/settings" \
     "webhooks": "https://your-app.com/webhooks/emailengine",
     "webhooksEnabled": true,
     "webhookEvents": ["*"],
-    "notifyHeaders": ["List-ID", "X-Priority"],
+    "notifyHeaders": ["list-id", "x-priority"],
     "notifyTextSize": 65536,
     "notifyWebSafeHtml": true,
     "notifyCalendarEvents": true
@@ -141,30 +130,35 @@ app.listen(3000, () => {
 <TabItem value="python" label="Python">
 
 ```python
-from flask import Flask, request, jsonify
-import asyncio
+from concurrent.futures import ThreadPoolExecutor
+
+from flask import Flask, jsonify, request
 
 app = Flask(__name__)
+executor = ThreadPoolExecutor(max_workers=4)
+
 
 @app.route('/webhooks/emailengine', methods=['POST'])
 def webhook_handler():
     event = request.get_json()
 
-    # Acknowledge immediately
-    asyncio.create_task(process_event(event))
+    # Hand the work off to a worker thread and acknowledge right away
+    executor.submit(process_event, event)
     return jsonify({'success': True}), 200
 
-async def process_event(event):
+
+def process_event(event):
     event_type = event.get('event')
     account = event.get('account')
 
     print(f"Processing {event_type} for {account}")
 
     if event_type == 'messageNew':
-        await handle_new_message(event)
+        handle_new_message(event)
     elif event_type == 'messageSent':
-        await handle_message_sent(event)
+        handle_message_sent(event)
     # Handle other events...
+
 
 if __name__ == '__main__':
     app.run(port=3000)
@@ -216,7 +210,7 @@ function processEvent($event) {
 
 ## Delivery and Retries
 
-Webhooks are queued, not sent inline with the mail operation that produced them, so a slow or unavailable endpoint never blocks syncing.
+Each event becomes a job in the notify queue, and the queue worker posts it.
 
 | Behavior | Value |
 |----------|-------|
@@ -224,7 +218,7 @@ Webhooks are queued, not sent inline with the mail operation that produced them,
 | Attempts | 10, counting the first |
 | Backoff | Exponential, starting at 5 seconds, with 20% jitter |
 | Per-attempt timeout | 30 seconds, configurable with `EENGINE_WEBHOOK_TIMEOUT` |
-| After the last attempt | The delivery moves to the **Failed** tab of the Webhooks queue and is not retried again |
+| After the last attempt | The event is dropped. The job moves to the **Failed** tab of the Webhooks Queue, where the last 500 failures are kept for 7 days |
 
 Two failures are treated as final and consume the whole retry budget at once, because retrying could not change the outcome: a destination refused by the [egress policy](#blocked-destinations-and-redirects) (`EEGRESSBLOCKED`) and an endpoint that answers with a redirect (`EREDIRECTNOTFOLLOWED`).
 
@@ -244,25 +238,25 @@ Events related to emails in monitored mailbox folders. These webhooks notify you
 
 Triggered when a new message is detected in a mailbox folder. This is one of the most commonly used webhook events, enabling real-time processing of incoming emails.
 
-[See full messageNew reference →](/docs/webhooks/messagenew)
+[See full messageNew reference](/docs/webhooks/messagenew)
 
 #### messageDeleted
 
 Triggered when a previously tracked email has been removed from a mailbox folder. Helps keep external systems synchronized with mailbox state changes.
 
-[See full messageDeleted reference →](/docs/webhooks/messagedeleted)
+[See full messageDeleted reference](/docs/webhooks/messagedeleted)
 
 #### messageUpdated
 
 Triggered when EmailEngine detects that the flags or labels on a message have changed, enabling real-time synchronization of message state changes with external systems.
 
-[See full messageUpdated reference →](/docs/webhooks/messageupdated)
+[See full messageUpdated reference](/docs/webhooks/messageupdated)
 
 #### messageMissing
 
 Triggered when EmailEngine detects that a message it expected to find on the mail server is not available. This event indicates a potential synchronization issue and helps handle edge cases in message processing.
 
-[See full messageMissing reference →](/docs/webhooks/messagemissing)
+[See full messageMissing reference](/docs/webhooks/messagemissing)
 
 ### Delivery Events
 
@@ -272,17 +266,17 @@ Events related to outgoing email delivery. These webhooks track the lifecycle of
 
 Triggered when a queued message is successfully accepted by the SMTP server or email API (Gmail API, Microsoft Graph API). This event confirms that the message has been handed off to the mail transfer agent for delivery.
 
-[See full messageSent reference →](/docs/webhooks/messagesent)
+[See full messageSent reference](/docs/webhooks/messagesent)
 
 #### messageDeliveryError
 
-Triggered when EmailEngine fails to deliver an email to the SMTP server. This event indicates a temporary failure that may be retried automatically based on the configured retry policy.
+Triggered for every failed SMTP delivery attempt, whether or not the message will be retried. Only SMTP submissions produce it.
 
 [See full messageDeliveryError reference](/docs/webhooks/messagedeliveryerror)
 
 #### messageFailed
 
-Triggered when EmailEngine permanently fails to deliver a queued email after all retry attempts have been exhausted. This is a terminal event indicating that the message will not be delivered.
+Triggered when EmailEngine gives up on a queued email, either because the attempts ran out or because a failure was permanent. Sent for SMTP, Gmail API and Microsoft Graph submissions alike.
 
 [See full messageFailed reference](/docs/webhooks/messagefailed)
 
@@ -400,7 +394,7 @@ Triggered when a bulk email export job finishes successfully. The export file is
 
 #### exportFailed
 
-Triggered when a bulk email export job fails. Check the `resumable` field to determine if the export can be continued from checkpoint.
+Triggered when a bulk email export job fails. The payload names the phase it failed in and how many messages had been written. An export cannot be resumed; start a new one.
 
 [See full exportFailed reference](/docs/webhooks/exportfailed)
 
@@ -473,7 +467,7 @@ This gives you a real-time, pretty-printed view of all incoming webhooks.
 
 EmailEngine allows you to send a test webhook from the UI:
 
-1. Go to **Configuration → Webhooks**
+1. Go to **Configuration > Webhooks**
 2. Click **Send test webhook**
 3. Check your webhook endpoint receives the test
 
@@ -502,7 +496,7 @@ EmailEngine will not deliver to every address. Two refusals come from EmailEngin
 | Error code | Meaning | Fix |
 |------------|---------|-----|
 | `EEGRESSBLOCKED` | The destination resolves to an address the egress policy blocks. By default that is the link-local range where cloud instance metadata services live | Point the webhook at a routable address, or widen `EENGINE_WEBHOOK_EGRESS_POLICY` |
-| `EREDIRECTNOTFOLLOWED` | The endpoint answered with a redirect (301, 302, 307, ...). Redirects are not followed, because a permitted host could redirect to a blocked one | Configure the webhook with the endpoint's final URL |
+| `EREDIRECTNOTFOLLOWED` | The endpoint answered with a redirect (301, 302, 307, ...). Since v2.75.0 redirects are refused rather than followed, because a permitted host could redirect to a blocked one | Configure the webhook with the endpoint's final URL |
 
 Both fail immediately without consuming the retry budget, since the same address would be refused, and the same endpoint would redirect, on every attempt.
 
@@ -514,31 +508,32 @@ See [Webhook Delivery settings](/docs/configuration/environment-variables#webhoo
 
 EmailEngine uses BullMQ to manage webhook delivery. To inspect webhook jobs:
 
-1. Go to **System → Queues**
-2. Select **Webhooks** queue
+1. Go to **System > Queues**
+2. Select **Webhooks Queue**
 3. Check these tabs:
-   - **Active**: Currently processing
-   - **Delayed**: Failed but will retry
-   - **Failed**: Exceeded retry limit
-   - **Completed**: Successfully delivered (if retention enabled)
+   - **Active**: Currently being posted
+   - **Delayed**: An attempt failed and the next one is waiting out the backoff
+   - **Failed**: Every attempt is spent, or the failure was final
+   - **Completed**: The endpoint answered `2xx`, or the event was dropped before delivery because no target was set or the event is not in `webhookEvents`
 
-Failed webhooks are retained with full error details by default, so there is nothing to enable before inspecting them. To also keep successful deliveries, go to **Configuration → General** and set **Job History Limit** to, for example, 100. See [Queue Management](/docs/advanced/queue-management#enable-job-retention).
+Failed webhooks are retained with full error details by default, so there is nothing to enable before inspecting them. To also keep successful deliveries, go to **Configuration > General** and set **Job History Limit** to, for example, 100. See [Queue Management](/docs/advanced/queue-management#enable-job-retention).
 
 ### 3. Inspect Failed Jobs
 
 Click on a failed job in Bull Board to see:
-- Complete error stack trace
-- Request headers sent
-- Payload data
-- Response from your server
-- Retry attempts
+- The payload that was being delivered
+- The failure reason and the stack trace of each attempt
+- How many attempts were made
 
-Common errors:
-- **Connection timeout**: Your server is unreachable
-- **SSL/TLS error**: Certificate issues
-- **4xx status**: Your server rejected the webhook
-- **5xx status**: Your server had an internal error
-- **JSON parse error**: Your server returned invalid JSON
+The response body from your endpoint is read and discarded rather than stored, so a failure is described by its status code and error code alone.
+
+Common failures:
+- **`ETIMEDOUT`**: The attempt ran past the 30 second cap, either connecting or reading the response
+- **Socket errors**: The host is unreachable, refuses the connection, or does not resolve
+- **TLS errors**: The endpoint's certificate did not validate
+- **A `4xx` status**: Your endpoint rejected the request. Check the path and any authentication headers
+- **A `5xx` status**: Your endpoint failed while handling it
+- **`EEGRESSBLOCKED` or `EREDIRECTNOTFOLLOWED`**: EmailEngine refused the destination, see [Blocked destinations and redirects](#blocked-destinations-and-redirects)
 
 ### 4. Verify Event Generation
 
@@ -553,11 +548,11 @@ Test if events are being generated at all:
 - Check message is visible via API:
 
 ```bash
-curl "https://emailengine.example.com/v1/account/ACCOUNT_ID/messages?path=INBOX" \
-  -H "Authorization: Bearer TOKEN"
+curl "https://emailengine.example.com/v1/account/user123/messages?path=INBOX" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
 
-[List messages API →](/docs/api/get-v-1-account-account-messages)
+[List messages API](/docs/api/get-v-1-account-account-messages)
 
 If message is missing:
 - Wrong account credentials
@@ -570,7 +565,7 @@ If message is missing:
 
 If using Gmail API (not IMAP):
 
-1. Go to **Integrations → OAuth2 Apps**
+1. Go to **Integrations > OAuth2 Apps**
 2. Select your Gmail OAuth app
 3. Scroll to **Cloud Pub/Sub configuration**
 4. Verify all show **Created** (in green):
@@ -599,12 +594,17 @@ If not created:
 - OAuth app missing required scopes
 
 Microsoft Graph requires these endpoints to be publicly accessible:
-```
-https://YOUR-EMAILENGINE-HOST/oauth/msg/lifecycle
-https://YOUR-EMAILENGINE-HOST/oauth/msg/notification
+
+```text
+https://emailengine.example.com/oauth/msg/lifecycle
+https://emailengine.example.com/oauth/msg/notification
 ```
 
 ## Webhook Security
+
+### Use HTTPS
+
+A webhook payload carries subjects, addresses, and, with `notifyText` on, message bodies. Use an `https:` target so that content is not readable in transit, and so that credentials embedded in the URL or carried in a custom header are not exposed.
 
 ### Verify Webhook Authenticity
 
@@ -614,7 +614,7 @@ Every webhook is signed with HMAC-SHA256 over the raw request body, sent as `X-E
 
 ```bash
 curl -X POST "https://emailengine.example.com/v1/settings" \
-  -H "Authorization: Bearer TOKEN" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"serviceSecret": "your-secret-key-here"}'
 ```
@@ -676,6 +676,29 @@ When enabled:
 
 This is useful for reducing webhook volume when you only need to process incoming emails.
 
+### Custom Request Headers (webhooksCustomHeaders)
+
+`webhooksCustomHeaders` adds headers to every request sent to the default webhook target. It is an array of `{key, value}` objects:
+
+```bash
+curl -X POST "https://emailengine.example.com/v1/settings" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "webhooksCustomHeaders": [
+      { "key": "Authorization", "value": "Bearer my-endpoint-token" },
+      { "key": "X-Tenant", "value": "acme" }
+    ]
+  }'
+```
+
+In the admin interface the same list is **Custom Headers** on **Configuration > Webhooks**, written one `Key: Value` pair per line.
+
+Headers come from two places, applied in this order, so the second overwrites a header of the same name from the first:
+
+1. `webhooksCustomHeaders`, or the route's own header list when the delivery belongs to a [webhook route](/docs/webhooks/webhook-routing). A route replaces the global list for its own deliveries rather than adding to it
+2. The account's own `webhooksCustomHeaders`, set through the [Update Account API](/docs/api/put-v-1-account-account)
+
 ### Webhook Error Tracking (webhookErrorFlag)
 
 EmailEngine automatically tracks webhook delivery errors. When a webhook delivery fails, the error details are stored and displayed in the admin panel on the account details page. When a subsequent webhook delivery succeeds, the error flag is automatically cleared.
@@ -689,13 +712,6 @@ The error flag includes:
 
 This is an internal tracking mechanism - there is no configuration needed. Check the admin panel or account details API response for the current webhook error status.
 
-### Use HTTPS
-
-Always use HTTPS for webhook URLs to prevent:
-- Man-in-the-middle attacks
-- Credential exposure
-- Data tampering
-
 ### Webhook HTTP Headers
 
 EmailEngine includes the following HTTP headers with each webhook request:
@@ -708,11 +724,12 @@ EmailEngine includes the following HTTP headers with each webhook request:
 | `X-EE-Wh-Attempts-Made` | How many attempts have already been made for this delivery. `0` on the first attempt. |
 | `X-EE-Wh-Queued-Time` | How long the event waited in the queue before this attempt, in seconds (for example `3s`). |
 | `X-EE-Wh-Custom-Route` | ID of the [custom route](/docs/webhooks/webhook-routing) that produced this delivery. Only sent for route deliveries. |
-| `User-Agent` | `emailengine/<version>` plus the project URL |
+| `User-Agent` | `emailengine-app/<version> (+https://emailengine.app/)`, for example `emailengine-app/2.79.4 (+https://emailengine.app/)` |
 | `Content-Type` | Always `application/json` |
 | `Content-Length` | Size of the request body in bytes |
+| `Authorization` | `Basic` credentials, only when the webhook URL itself embeds a user name or password. They are taken out of the URL and moved into this header |
 
-Any [custom headers](/docs/webhooks/webhook-routing) configured globally, on a route, or on an account are added to this set.
+Custom headers are added on top of this set, see [Custom Request Headers](#custom-request-headers-webhookscustomheaders).
 
 **Using the Event ID for Deduplication:**
 
@@ -736,7 +753,7 @@ app.post('/webhooks/emailengine', (req, res) => {
 
 ## See Also
 
-- [Webhook events reference](/docs/reference/webhook-events) - Every event and its payload in one table
+- [Webhook events reference](/docs/reference/webhook-events) - The list of events, each linking to its payload reference
 - [Webhook routing](/docs/webhooks/webhook-routing) - Sending different events to different endpoints
 - [Pre-processing functions](/docs/advanced/pre-processing) - Filtering or reshaping a payload before delivery
 - [Queue management](/docs/advanced/queue-management) - Watching and draining the notify queue

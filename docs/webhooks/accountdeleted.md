@@ -6,17 +6,18 @@ description: "Webhook event triggered when an email account is removed from Emai
 
 # accountDeleted
 
-The `accountDeleted` webhook event is triggered when an email account is removed from EmailEngine. This is the final webhook event in the account lifecycle and signals that the account configuration has been permanently deleted.
+The `accountDeleted` webhook event is triggered when an email account is removed from EmailEngine. It is the final event in the account lifecycle and means the account configuration and its cached data have been deleted.
 
 ## When This Event is Triggered
 
 The `accountDeleted` event fires when:
 
 - An account is deleted via the [Delete Account API](/docs/api/delete-v-1-account-account)
-- An account is removed through the EmailEngine web interface
-- An account is programmatically removed through any other deletion method
+- An account is removed through the admin interface
 
-This event fires **after** the account has been removed from EmailEngine's configuration. At this point, all account data, including stored messages, mailbox information, and credentials, has been deleted.
+Both paths go through the same deletion routine. The account record, its stored credentials, mailbox listing and cached message index are removed from Redis first, then the main process sends this webhook and tells the worker that held the connection to tear it down.
+
+This is the one event that is still delivered for an account that no longer exists. Every other webhook is dropped when its account cannot be found at delivery time.
 
 ## Common Use Cases
 
@@ -34,17 +35,19 @@ This event fires **after** the account has been removed from EmailEngine's confi
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `serviceUrl` | string | No | The configured EmailEngine service URL, if set |
-| `account` | string | Yes | The unique account ID of the deleted account |
+| `serviceUrl` | string or null | Yes | The configured EmailEngine service URL. `null` when the `serviceUrl` setting is empty |
+| `account` | string | Yes | The account ID of the deleted account |
 | `date` | string | Yes | ISO 8601 timestamp when the webhook was generated |
-| `event` | string | Yes | Event type, always `accountDeleted` for this event |
-| `data` | object | Yes | Event data object containing account information |
+| `event` | string | Yes | Always `accountDeleted` |
+| `data` | object | Yes | Event data object |
 
 ### Event Data Fields (`data` object)
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `account` | string | Yes | The account ID (same as top-level `account` field) |
+| `account` | string | Yes | The account ID, the same value as the top-level `account` field |
+
+There is no event ID in the body. EmailEngine sends it in the `X-EE-Wh-Event-Id` request header, which is what to deduplicate on. See [Delivery and Retries](/docs/webhooks/overview#delivery-and-retries).
 
 ## Example Payload
 
@@ -81,8 +84,9 @@ When no service URL is configured:
 ### Basic Handler
 
 ```javascript
-async function handleAccountDeleted(event) {
-  const { account, date, eventId } = event;
+async function handleAccountDeleted(event, headers) {
+  const { account, date } = event;
+  const eventId = headers['x-ee-wh-event-id'];
 
   console.log(`Account deleted: ${account}`);
   console.log(`  Time: ${date}`);
@@ -96,8 +100,9 @@ async function handleAccountDeleted(event) {
 ### Cleaning Up Account Data
 
 ```javascript
-async function handleAccountDeleted(event) {
-  const { account, date, eventId } = event;
+async function handleAccountDeleted(event, headers) {
+  const { account, date } = event;
+  const eventId = headers['x-ee-wh-event-id'];
 
   // Delete account record from database
   await db.accounts.delete({
@@ -174,7 +179,7 @@ async function handleAccountDeleted(event) {
     await sendNotification({
       userId: accountRecord.user.id,
       type: 'account_removed',
-      message: `Your email account has been disconnected.`,
+      message: 'Your email account has been disconnected.',
       metadata: {
         accountId: account,
         removedAt: date
@@ -191,11 +196,12 @@ async function handleAccountDeleted(event) {
 
 ### Idempotent Handler
 
-Since webhooks may be delivered multiple times, ensure your handler is idempotent:
+A failed or timed-out delivery is retried, so the same event can arrive more than once. Deduplicate on the event ID header:
 
 ```javascript
-async function handleAccountDeleted(event) {
-  const { account, eventId, date } = event;
+async function handleAccountDeleted(event, headers) {
+  const { account, date } = event;
+  const eventId = headers['x-ee-wh-event-id'];
 
   // Check if we've already processed this event
   const existingEvent = await db.processedEvents.findUnique({
@@ -242,11 +248,11 @@ async function handleAccountDeleted(event) {
 
 ## Event Sequence
 
-When an account is deleted, you will typically only receive:
+When an account is deleted, you receive only:
 
 1. **`accountDeleted`** - Account is removed (this event)
 
-No other events are triggered after deletion since the account no longer exists.
+No other events follow, because the account no longer exists. Events for the same account that were still queued when it was deleted are dropped rather than delivered.
 
 ### Complete Account Lifecycle
 
@@ -255,22 +261,18 @@ A typical complete account lifecycle includes:
 1. **`accountAdded`** - Account is registered
 2. **`authenticationSuccess`** - Account successfully authenticates
 3. **`accountInitialized`** - Initial mailbox sync is complete
-4. *(Account is active, various message/mailbox events may occur)*
+4. *(Account is active, various message and mailbox events may occur)*
 5. **`accountDeleted`** - Account is removed (final event)
 
 ## Important Considerations
 
 ### Data Already Deleted
 
-When you receive the `accountDeleted` webhook, the account data has already been removed from EmailEngine. You cannot query EmailEngine for additional account information at this point. If you need account metadata for cleanup purposes, ensure you store relevant information in your own database when accounts are created.
-
-### Webhook Reliability
-
-If your webhook endpoint is unavailable when the deletion occurs, EmailEngine will retry delivery with exponential backoff. Ensure your handler is idempotent to handle potential duplicate deliveries.
+When you receive the `accountDeleted` webhook, the account data has already been removed from EmailEngine. [Get Account](/docs/api/get-v-1-account-account) returns a 404 for it. If you need account metadata for cleanup purposes, store it in your own database when the account is created.
 
 ### Timing
 
-The webhook is sent immediately after the account is deleted. There is no delay between the deletion and the webhook notification.
+The webhook is queued as part of the deletion, so it arrives as soon as delivery succeeds. There is no delay between the deletion and the notification other than queue and network time.
 
 ## Related Events
 
@@ -282,6 +284,7 @@ The webhook is sent immediately after the account is deleted. There is no delay 
 
 ## See Also
 
-- [Webhooks Overview](/docs/webhooks/overview) - Complete webhook setup guide
-- [Account Management](/docs/accounts) - Managing email accounts
-- [Delete Account API](/docs/api/delete-v-1-account-account) - API endpoint for deleting accounts
+- [Webhooks Overview](/docs/webhooks/overview) - Delivery, retries and the `webhookEvents` allowlist
+- [Account Management](/docs/accounts/managing-accounts) - Deleting accounts and what deletion removes
+- [Delete Account API](/docs/api/delete-v-1-account-account) - The request that triggers this event
+- [Get Account API](/docs/api/get-v-1-account-account) - What to store before the account is gone

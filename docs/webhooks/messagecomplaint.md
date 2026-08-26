@@ -10,18 +10,16 @@ The `messageComplaint` webhook event is triggered when EmailEngine detects a fee
 
 ## When This Event is Triggered
 
-The `messageComplaint` event fires when:
+The `messageComplaint` event fires when a message arriving in the Inbox is recognized as an abuse report and the report names at least one complaining recipient (`Original-Rcpt-To`, or the Hotmail `X-HmXmrOriginalRecipient` header). A report without a recipient produces no event.
 
-- An ARF (Abuse Reporting Format) complaint message is received in a monitored mailbox
-- EmailEngine successfully parses the complaint and extracts recipient information
-- The complaint contains identifiable information about the original message
+A message is checked for complaint content when one of these holds:
 
-EmailEngine analyzes incoming messages for FBL complaint patterns including:
+- It has a `message/feedback-report` part (an ARF report, [RFC 5965](https://www.rfc-editor.org/rfc/rfc5965))
+- It comes from `staff@hotmail.com`, embeds the original message as `message/rfc822` or `message/rfc822-headers`, and has `complaint` in the subject (Microsoft JMRP reports)
 
-- Standard ARF (RFC 5965) abuse reports with `message/feedback-report` content type
-- Hotmail/Outlook.com complaint notifications from `staff@hotmail.com`
-- Microsoft FBL reports via the JMRP (Junk Mail Reporting Program)
-- ISP feedback loop messages containing embedded original headers
+Messages in other folders are not checked.
+
+The complaint message itself also produces a [`messageNew`](/docs/webhooks/messagenew) event, sent before this one, with `isComplaint: true` and `relatedMessageId` set to the Message-ID of the reported message when the report included it. On IMAP accounts neither event is sent for messages dated before the account's `notifyFrom`.
 
 ## Common Use Cases
 
@@ -38,49 +36,58 @@ EmailEngine analyzes incoming messages for FBL complaint patterns including:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `serviceUrl` | string | No | The configured EmailEngine service URL |
+| `serviceUrl` | string or null | Yes | The configured EmailEngine service URL, `null` if not set |
 | `account` | string | Yes | Account ID that received the complaint message |
 | `date` | string | Yes | ISO 8601 timestamp when the webhook was generated |
-| `event` | string | Yes | Event type, always "messageComplaint" for this event |
+| `event` | string | Yes | Always `messageComplaint` |
 | `data` | object | Yes | Complaint data object (see below) |
+
+The event carries no `path` or `specialUse`. The unique event identifier is sent as the HTTP header `X-EE-Wh-Event-Id`, not in the JSON payload.
 
 ### Complaint Data Fields (`data` object)
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `complaintMessage` | string | Yes | EmailEngine message ID of the complaint notification email itself |
-| `arf` | object | Yes | ARF (Abuse Reporting Format) data extracted from the complaint |
-| `headers` | object | No | Headers from the original complained-about message |
+| `complaintMessage` | string | Yes | EmailEngine message ID of the complaint notification email itself. Fetch it through the [message API](/docs/api/get-v-1-account-account-message-message) to read the full report |
+| `arf` | object | Yes | Fields of the feedback report, camelCased (see below) |
+| `headers` | object | No | Selected headers of the reported message, when the report embedded it (see below) |
 
 ### ARF Object Structure
 
-The `arf` object contains complaint metadata extracted from the ARF report:
+Every field of the `message/feedback-report` part is passed through under its camelCased name, so the exact set depends on the reporter. These fields are single strings:
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `source` | string | Source of the complaint (e.g., "Hotmail", ISP name) |
-| `feedbackType` | string | Type of feedback report (typically "abuse") |
-| `abuseType` | string | Specific type of abuse reported (typically "complaint") |
-| `originalMailFrom` | string | Return-Path/envelope sender of the original message |
-| `originalRcptTo` | array | Email addresses of recipients who complained |
-| `sourceIp` | string | IP address of the sending server for the original message |
-| `arrivalDate` | string | ISO 8601 timestamp when the original message arrived |
-| `userAgent` | string | User agent/software that generated the report |
-| `version` | string | ARF format version |
-| `reportingMta` | string | MTA that generated the complaint report |
+| Field | Description |
+|-------|-------------|
+| `feedbackType` | Type of report as stated by the reporter, typically `abuse` |
+| `userAgent` | Software that generated the report |
+| `version` | ARF format version, typically `1` |
+| `originalEnvelopeId` | Envelope ID of the original delivery |
+| `originalMailFrom` | Envelope sender of the original message, without angle brackets |
+| `abuseType` | Specific abuse type, for example `complaint` |
+| `arrivalDate` | When the original message arrived, as an ISO 8601 timestamp. `Received-Date` is reported under this name as well |
+| `reportingMta` | MTA that generated the report, as written in the report (for example `dns; mx.isp.example.com`) |
+| `sourceIp` | IP address the original message was sent from |
+| `source` | Name of the reporting system |
+| `subscriptionLink` | Link to subscription preferences |
+| `incidents` | Number of incidents the report covers |
+
+Any other field, including `originalRcptTo`, is an array of strings with one entry per occurrence. `originalRcptTo` lists the recipients who complained and is the field that decides whether the event is sent at all. Empty fields are omitted, and an `Arrival-Date` that does not parse is dropped.
+
+For Microsoft JMRP reports EmailEngine fills in what the report leaves out: `source` is set to `Hotmail`, `feedbackType` to `abuse` and `abuseType` to `complaint` unless the report says otherwise, and `originalMailFrom` falls back to the `Return-Path` of the embedded message.
 
 ### Headers Object Structure
 
-The `headers` object contains headers from the original complained-about message (when available):
+When the report embeds the reported message (`message/rfc822`, `message/rfc822-headers`, `text/rfc822-headers` or `text/rfc822-header`), `headers` carries these values from it. Fields the embedded message does not have are omitted, and the object is absent when nothing was found:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `messageId` | string | Message-ID header of the original message |
-| `from` | string | From address of the original message |
-| `to` | array | To addresses of the original message |
-| `cc` | array | CC addresses of the original message |
-| `subject` | string | Subject line of the original message |
-| `date` | string | ISO 8601 timestamp from the original message Date header |
+| `messageId` | string | Message-ID of the reported message |
+| `from` | string | Sender address |
+| `to` | array | Recipient addresses |
+| `cc` | array | CC addresses |
+| `bcc` | array | BCC addresses |
+| `subject` | string | Subject line, MIME decoded |
+| `date` | string | Date header as an ISO 8601 timestamp |
 
 ## Example Payload
 
@@ -114,28 +121,7 @@ The `headers` object contains headers from the original complained-about message
 
 ## ARF Parsing Details
 
-EmailEngine parses Abuse Reporting Format (ARF) messages according to RFC 5965 and supports proprietary formats from major providers. This section documents the parsing logic and supported formats.
-
-### Supported ARF Formats
-
-EmailEngine detects and parses these complaint formats:
-
-**RFC 5965 Standard ARF**
-
-The standard abuse reporting format used by most ISPs:
-
-- Content-Type: `message/feedback-report`
-- Contains structured fields like `Feedback-Type`, `User-Agent`, `Version`
-- Includes embedded original message as `message/rfc822` attachment
-
-**Microsoft/Hotmail JMRP**
-
-Microsoft's Junk Mail Reporting Program (JMRP) format:
-
-- Sent from `staff@hotmail.com`
-- Uses `X-HmXmrOriginalRecipient` header for original recipient
-- May include `X-Sender-IP` and `X-MS-Exchange-CrossTenant-OriginalArrivalTime` headers
-- EmailEngine automatically sets `source: "Hotmail"` for these reports
+EmailEngine parses Abuse Reporting Format (ARF) messages according to RFC 5965 and the Microsoft JMRP variant.
 
 ### Parsed Content Types
 
@@ -144,59 +130,40 @@ EmailEngine examines message attachments for these content types:
 | Content-Type | Purpose |
 |--------------|---------|
 | `message/feedback-report` | Standard ARF feedback report with structured fields |
-| `message/rfc822` | Complete original message (headers and body) |
+| `message/rfc822` | Complete original message; only its headers are read |
 | `message/rfc822-headers` | Original message headers only |
 | `text/rfc822-headers` | Original message headers (alternate type) |
 | `text/rfc822-header` | Original message headers (singular form) |
 
-### Extracted ARF Fields
-
-From the feedback report (`message/feedback-report`), EmailEngine extracts:
-
-| ARF Field | Webhook Field | Description |
-|-----------|---------------|-------------|
-| `Feedback-Type` | `feedbackType` | Type of report (abuse, fraud, virus, other) |
-| `User-Agent` | `userAgent` | Software that generated the report |
-| `Version` | `version` | ARF format version (typically "1") |
-| `Original-Envelope-Id` | `originalEnvelopeId` | Original SMTP envelope ID |
-| `Original-Mail-From` | `originalMailFrom` | Return-Path of the original message |
-| `Original-Rcpt-To` | `originalRcptTo` | Recipients who complained (array) |
-| `Abuse-Type` | `abuseType` | Specific abuse type (complaint, spam) |
-| `Arrival-Date` | `arrivalDate` | When original message arrived (ISO 8601) |
-| `Received-Date` | `arrivalDate` | Alternative to Arrival-Date |
-| `Reporting-MTA` | `reportingMta` | MTA that generated the report |
-| `Source-IP` | `sourceIp` | IP address of the original sender |
-| `Source` | `source` | Name/identifier of the reporting system |
-| `Subscription-Link` | `subscriptionLink` | Link to subscription preferences |
-| `Incidents` | `incidents` | Number of abuse incidents |
+Only the first three are downloaded for parsing. A report that puts the original headers in a `text/rfc822-headers` or `text/rfc822-header` part is recognized but contributes nothing, so its `headers` object is absent and the event is sent only if the feedback report itself named a recipient.
 
 ### Extracted Original Message Headers
 
-From the embedded original message, EmailEngine extracts:
+From the embedded original message, EmailEngine reads:
 
 | Header | Webhook Field | Description |
 |--------|---------------|-------------|
-| `Message-ID` | `headers.messageId` | Message-ID of the complained message |
+| `Message-ID` | `headers.messageId` | Message-ID of the reported message |
 | `From` | `headers.from` | Sender address |
 | `To` | `headers.to` | Recipient addresses (array) |
 | `CC` | `headers.cc` | CC addresses (array) |
 | `BCC` | `headers.bcc` | BCC addresses (array) |
 | `Subject` | `headers.subject` | Subject line (MIME decoded) |
 | `Date` | `headers.date` | Message date (ISO 8601) |
-| `Return-Path` | `arf.originalMailFrom` | Envelope sender (fallback) |
-| `X-Sender-IP` | `arf.sourceIp` | Sender IP (Microsoft-specific) |
-| `X-HmXmrOriginalRecipient` | `arf.originalRcptTo` | Original recipient (Hotmail) |
-| `X-MS-Exchange-CrossTenant-OriginalArrivalTime` | `arf.arrivalDate` | Arrival time (Microsoft) |
+| `Return-Path` | `arf.originalMailFrom` | Envelope sender, JMRP reports only, when the report has no `Original-Mail-From` |
+| `X-HmXmrOriginalRecipient` | `arf.originalRcptTo` | Original recipient (Hotmail), appended to the list |
+| `X-Sender-IP` | `arf.sourceIp` | Sender IP (Microsoft), when the report has no `Source-IP` |
+| `X-MS-Exchange-CrossTenant-OriginalArrivalTime` | `arf.arrivalDate` | Arrival time (Microsoft), when the report has no `Arrival-Date` |
 
 ### Example: Standard ARF Message
 
 A standard RFC 5965 complaint message looks like this:
 
-```
+```text
 From: abusedesk@isp.example.com
 To: abuse@sender.example.com
 Subject: FBL Notification
-Content-Type: multipart/report; report-type=feedback-report
+Content-Type: multipart/report; report-type=feedback-report; boundary=boundary
 
 --boundary
 Content-Type: text/plain
@@ -224,7 +191,7 @@ Subject: Your Weekly Newsletter
 Date: Thu, 17 Oct 2025 07:06:34 +0000
 Message-ID: <abc123@sender.example.com>
 
-[Original message content...]
+The original message body.
 
 --boundary--
 ```
@@ -255,13 +222,13 @@ EmailEngine parses this into:
 
 ### Example: Hotmail/JMRP Complaint
 
-Microsoft's JMRP complaints have a specific structure:
+Microsoft's JMRP complaints have no feedback report part. The original recipient and the sending IP are in headers of the embedded message:
 
-```
+```text
 From: staff@hotmail.com
 To: abuse@sender.example.com
 Subject: complaint about message from 203.0.113.42
-Content-Type: multipart/report; report-type=feedback-report
+Content-Type: multipart/report; report-type=feedback-report; boundary=boundary
 
 --boundary
 Content-Type: text/plain
@@ -284,7 +251,7 @@ X-MS-Exchange-CrossTenant-OriginalArrivalTime: 17 Oct 2025 07:06:35.0210 (UTC)
 --boundary--
 ```
 
-EmailEngine automatically detects the `staff@hotmail.com` sender and sets:
+EmailEngine recognizes the `staff@hotmail.com` sender and reports:
 
 ```json
 {
@@ -309,37 +276,26 @@ EmailEngine automatically detects the `staff@hotmail.com` sender and sets:
 
 ### Handling Incomplete ARF Data
 
-Not all complaint messages contain complete ARF data. EmailEngine extracts whatever information is available:
-
-- If `Original-Mail-From` is missing, it falls back to `Return-Path` from the embedded message
-- If `Original-Rcpt-To` is missing, it checks `X-HmXmrOriginalRecipient` for Hotmail complaints
-- Dates are parsed flexibly and converted to ISO 8601 format
-- Invalid dates are omitted from the output
-
-Your webhook handler should check for the presence of fields before using them:
+Not all complaint messages contain complete ARF data. EmailEngine extracts whatever is available, so check for the presence of fields before using them:
 
 ```javascript
 async function handleComplaint(event) {
   const { arf, headers } = event.data;
 
-  // Always check if fields exist
   const complainants = arf?.originalRcptTo || [];
   const originalMessageId = headers?.messageId;
   const source = arf?.source || 'unknown';
 
   if (complainants.length === 0) {
-    // Cannot identify complainant - log for manual review
     console.warn('Complaint received but no recipient identified');
     return;
   }
 
-  // Process complaint...
+  await processComplaint(event.data);
 }
 ```
 
 ## Understanding FBL Complaints
-
-### What Causes Complaints
 
 Recipients mark emails as spam for various reasons:
 
@@ -349,26 +305,7 @@ Recipients mark emails as spam for various reasons:
 - **Misleading content** - Email doesn't match user expectations
 - **Excessive frequency** - Too many emails sent too often
 
-### Feedback Loop Sources
-
-Major ISPs operate feedback loop programs:
-
-| Provider | Program | Notes |
-|----------|---------|-------|
-| Microsoft (Outlook, Hotmail) | JMRP/SNDS | Reports from `staff@hotmail.com` |
-| Yahoo | CFL | Complaint Feedback Loop |
-| AOL | FBL | Feedback Loop program |
-| Comcast | FBL | Requires registration |
-
-### Complaint Rate Thresholds
-
-ISPs monitor complaint rates and may block senders who exceed thresholds:
-
-| Provider | Recommended Maximum | Risk Threshold |
-|----------|---------------------|----------------|
-| General guideline | < 0.1% | > 0.3% |
-| Microsoft | < 0.1% | > 0.5% |
-| Google | < 0.1% | > 0.3% |
+Mailbox providers deliver these reports through feedback loop programs that a sender enrolls in, such as Microsoft's Junk Mail Reporting Program (JMRP) for Outlook.com and Hotmail. The reports arrive at the address registered with the program, so that mailbox has to be one EmailEngine monitors.
 
 ## Handling the Event
 
@@ -392,7 +329,6 @@ async function handleMessageComplaint(event) {
     console.log(`  Original Subject: ${data.headers.subject}`);
   }
 
-  // Process the complaint
   await processComplaint(data);
 }
 ```
@@ -403,11 +339,9 @@ async function handleMessageComplaint(event) {
 async function processComplaint(complaintData) {
   const { arf, headers } = complaintData;
 
-  // Get complainant email addresses
   const complainants = arf?.originalRcptTo || [];
 
   for (const email of complainants) {
-    // Unsubscribe the user from all mailing lists
     await db.subscriptions.updateMany(
       { email: email.toLowerCase() },
       {
@@ -420,7 +354,6 @@ async function processComplaint(complaintData) {
       }
     );
 
-    // Add to suppression list to prevent future sends
     await db.suppressionList.upsert({
       email: email.toLowerCase(),
       reason: 'complaint',
@@ -440,7 +373,6 @@ async function processComplaint(complaintData) {
 async function trackComplaintMetrics(event) {
   const { account, data } = event;
 
-  // Extract campaign info from original message if available
   const campaignId = extractCampaignId(data.headers?.messageId);
 
   await metrics.increment('email.complaints', {
@@ -450,11 +382,10 @@ async function trackComplaintMetrics(event) {
     campaign: campaignId
   });
 
-  // Calculate and alert on complaint rate
   const stats = await getRecentStats(account);
   const complaintRate = stats.complaints / stats.totalSent;
 
-  if (complaintRate > 0.001) { // 0.1%
+  if (complaintRate > 0.001) {
     await sendAlert({
       type: 'high_complaint_rate',
       account,
@@ -465,7 +396,6 @@ async function trackComplaintMetrics(event) {
 }
 
 function extractCampaignId(messageId) {
-  // Extract campaign ID from Message-ID if your system embeds it
   const match = messageId?.match(/campaign-([a-z0-9]+)/i);
   return match ? match[1] : null;
 }
@@ -477,7 +407,6 @@ function extractCampaignId(messageId) {
 async function correlateComplaint(complaintData) {
   const { headers, arf } = complaintData;
 
-  // Try to find the original sent message in your database
   let originalMessage = null;
 
   if (headers?.messageId) {
@@ -486,19 +415,17 @@ async function correlateComplaint(complaintData) {
     });
   }
 
-  if (!originalMessage && arf?.originalMailFrom) {
-    // Fallback: search by sender and approximate time
+  if (!originalMessage && arf?.originalMailFrom && arf?.arrivalDate) {
     originalMessage = await db.sentMessages.findOne({
       from: arf.originalMailFrom,
       sentAt: {
-        $gte: new Date(Date.parse(arf.arrivalDate) - 86400000), // 1 day before
+        $gte: new Date(Date.parse(arf.arrivalDate) - 86400000),
         $lte: new Date(arf.arrivalDate)
       }
     });
   }
 
   if (originalMessage) {
-    // Link complaint to original message for analytics
     await db.sentMessages.updateOne(
       { _id: originalMessage._id },
       {
@@ -527,17 +454,19 @@ async function correlateComplaint(complaintData) {
 5. **Improve list acquisition** - Ensure clear opt-in and set expectations
 6. **Make unsubscribe easy** - Prominent, one-click unsubscribe reduces complaints
 7. **Respect frequency preferences** - Allow users to control email frequency
-8. **Clean inactive subscribers** - Remove users who haven't engaged in 6+ months
+8. **Clean inactive subscribers** - Remove users who have not engaged for a long time
 
 ## Related Events
 
 - [messageBounce](/docs/webhooks/messagebounce) - Triggered when a bounce notification is received
-- [messageFailed](/docs/webhooks/messagefailed) - Triggered when EmailEngine fails to deliver a queued email
-- [messageSent](/docs/webhooks/messagesent) - Triggered when a message is successfully sent
+- [messageFailed](/docs/webhooks/messagefailed) - Triggered when EmailEngine gives up on a queued email
+- [messageSent](/docs/webhooks/messagesent) - Triggered when a message is accepted for delivery
 - [messageNew](/docs/webhooks/messagenew) - The complaint notification also triggers this event
 
 ## See Also
 
-- [Webhooks Overview](/docs/webhooks/overview) - Complete webhook setup guide
+- [Webhooks Overview](/docs/webhooks/overview) - Delivery, retries, headers and signing
+- [listUnsubscribe](/docs/webhooks/listunsubscribe) - The event EmailEngine's own one-click unsubscribe produces
 - [Sending Emails](/docs/sending/basic-sending) - How to send emails through EmailEngine
+- [Message API](/docs/api/get-v-1-account-account-message-message) - Fetching the report message by `complaintMessage`
 - [Settings API](/docs/api/post-v-1-settings) - Configure webhook settings

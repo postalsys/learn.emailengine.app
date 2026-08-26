@@ -6,25 +6,24 @@ description: "Webhook event triggered when EmailEngine fails to establish a conn
 
 # connectError
 
-The `connectError` webhook event is triggered when EmailEngine fails to establish a connection to an email server. This event indicates network-level or server-level connection failures that are distinct from authentication errors.
+The `connectError` webhook event is triggered when EmailEngine fails to establish an IMAP connection to a mail server. It covers network-level and server-level failures, as distinct from a login that the server rejected, which is [`authenticationError`](/docs/webhooks/authenticationerror).
 
 ## When This Event is Triggered
 
-The `connectError` event fires when:
+The `connectError` event fires when an IMAP connection attempt fails for a reason other than rejected credentials:
 
-- The email server is unreachable (network timeout, DNS failure)
+- The server is unreachable (network timeout, DNS failure)
 - The server refuses the connection (port closed, firewall blocking)
-- TLS/SSL handshake fails
-- The server returns a connection-level error before authentication
-- The IMAP connection is interrupted unexpectedly
+- The TLS handshake fails
+- The server returns an error before authentication, or drops the connection during it
 
-This event is specifically for connection failures that occur **before or outside of authentication**. If the connection succeeds but authentication fails, an [authenticationError](/docs/webhooks/authenticationerror) event is triggered instead.
+EmailEngine reports the **first occurrence** of a failure and suppresses repeats until the error changes or the account connects. See [Webhook Deduplication](#webhook-deduplication).
+
+A connection attempt that EmailEngine itself interrupted, because the account was paused, deleted or reconfigured while it was connecting, does not fire the event.
 
 :::note IMAP accounts only
-Only the IMAP client emits `connectError`. Gmail API and Microsoft Graph accounts reach their provider over HTTPS, so a transport failure there surfaces as a retry or, if the credentials are rejected, as [`authenticationError`](/docs/webhooks/authenticationerror). Do not rely on `connectError` to detect provider outages for API-based accounts.
+Only the IMAP client emits `connectError`. Gmail API and Microsoft Graph accounts reach their provider over HTTPS, and a transport failure there is retried; if the provider rejects the credentials instead, [`authenticationError`](/docs/webhooks/authenticationerror) is sent. Do not rely on `connectError` to detect provider outages for API-based accounts.
 :::
-
-EmailEngine uses intelligent error tracking to avoid spamming your webhook endpoint. The event is only sent on the **first occurrence** of a connection error for an account. Subsequent identical errors are suppressed until the account successfully connects again or the error state changes.
 
 ## Common Use Cases
 
@@ -32,7 +31,6 @@ EmailEngine uses intelligent error tracking to avoid spamming your webhook endpo
 - **Network diagnostics** - Identify connectivity issues between EmailEngine and mail servers
 - **Account health dashboards** - Display connection status in your application
 - **Automated alerting** - Notify administrators of server outages
-- **Failover triggers** - Initiate backup connection strategies
 - **SLA tracking** - Monitor uptime and connection reliability
 
 ## Payload Schema
@@ -41,35 +39,39 @@ EmailEngine uses intelligent error tracking to avoid spamming your webhook endpo
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `serviceUrl` | string | No | The configured EmailEngine service URL |
+| `serviceUrl` | string or null | Yes | The configured EmailEngine service URL. `null` when the `serviceUrl` setting is empty |
 | `account` | string | Yes | Account ID that experienced the connection failure |
 | `date` | string | Yes | ISO 8601 timestamp when the webhook was generated |
-| `event` | string | Yes | Event type, always "connectError" for this event |
-| `data` | object | Yes | Error details object (see below) |
+| `event` | string | Yes | Always `connectError` |
+| `data` | object | Yes | Error details (see below) |
 
 ### Error Data Fields (`data` object)
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `response` | string | Yes | Error message describing the connection failure |
-| `serverResponseCode` | string | No | Error code identifying the failure type |
+| `response` | string | Yes | The server's response text if it sent one, otherwise the error message from the connection attempt |
+| `serverResponseCode` | string | No | The server's response code if it sent one, otherwise the error code from the connection attempt, such as Node.js's `ECONNREFUSED`. Missing when the failure carried neither |
+
+There is no event ID in the body. EmailEngine sends it in the `X-EE-Wh-Event-Id` request header. See [Delivery and Retries](/docs/webhooks/overview#delivery-and-retries).
 
 ## Server Response Codes
 
-Common `serverResponseCode` values you may encounter:
+Most connection failures carry a Node.js system error code as `serverResponseCode`:
 
 | Code | Description |
 |------|-------------|
-| `ECONNREFUSED` | Connection refused - server not accepting connections on the specified port |
-| `ECONNRESET` | Connection reset - server closed the connection unexpectedly |
-| `ETIMEDOUT` | Connection timed out - no response from server |
-| `ENOTFOUND` | DNS lookup failed - hostname could not be resolved |
-| `EHOSTUNREACH` | Host unreachable - no route to the server |
-| `ECONNABORTED` | Connection aborted - operation was cancelled |
-| `CERT_HAS_EXPIRED` | TLS certificate has expired |
-| `UNABLE_TO_VERIFY_LEAF_SIGNATURE` | TLS certificate verification failed |
-| `SELF_SIGNED_CERT_IN_CHAIN` | Self-signed certificate detected |
-| `DEPTH_ZERO_SELF_SIGNED_CERT` | Server using self-signed certificate |
+| `ECONNREFUSED` | Connection refused: nothing is accepting connections on the host and port |
+| `ECONNRESET` | Connection reset: the server closed the connection unexpectedly |
+| `ETIMEDOUT` | Connection timed out: no response from the server |
+| `ENOTFOUND` | DNS lookup failed: the hostname could not be resolved |
+| `EHOSTUNREACH` | Host unreachable: no route to the server |
+| `ECONNABORTED` | Connection aborted |
+| `CERT_HAS_EXPIRED` | The server's TLS certificate has expired |
+| `UNABLE_TO_VERIFY_LEAF_SIGNATURE` | The server's TLS certificate could not be verified |
+| `SELF_SIGNED_CERT_IN_CHAIN` | A self-signed certificate is in the chain |
+| `DEPTH_ZERO_SELF_SIGNED_CERT` | The server presented a self-signed certificate |
+
+When the server answered but refused service before the login, the code is the IMAP response code from that answer instead.
 
 ## Example Payload (Connection Refused)
 
@@ -137,11 +139,11 @@ Common `serverResponseCode` values you may encounter:
 
 ```javascript
 async function handleConnectError(event) {
-  const { account, data, date } = event;
+  const { account, data } = event;
 
   console.error(`Connection failed for account ${account}:`);
   console.error(`  Error: ${data.response}`);
-  console.error(`  Code: ${data.serverResponseCode || 'N/A'}`);
+  console.error(`  Code: ${data.serverResponseCode || 'none'}`);
 
   // Take appropriate action based on error type
   switch (data.serverResponseCode) {
@@ -163,13 +165,12 @@ async function handleConnectError(event) {
 }
 
 async function handleNetworkError(account, data) {
-  // Server may be down or network issue
-  console.log(`Network error for ${account} - server may be unreachable`);
+  // Server may be down or unreachable from EmailEngine's network
+  console.log(`Network error for ${account}, server may be unreachable`);
 
-  // Check if this is affecting multiple accounts
+  // Check whether other accounts on the same server are affected
   await checkServerStatus(account);
 
-  // Alert if server appears to be down
   await sendInfrastructureAlert({
     type: 'server_unreachable',
     account,
@@ -178,19 +179,19 @@ async function handleNetworkError(account, data) {
 }
 
 async function handleDnsError(account, data) {
-  // DNS resolution failed - hostname may be incorrect
-  console.log(`DNS error for ${account} - check hostname configuration`);
+  // The configured hostname does not resolve
+  console.log(`DNS error for ${account}, check the hostname configuration`);
   await notifyAdmin(account, {
-    message: 'DNS lookup failed - verify email server hostname',
+    message: 'DNS lookup failed, verify the mail server hostname',
     error: data.response
   });
 }
 
 async function handleTlsError(account, data) {
-  // TLS/SSL certificate issue
-  console.log(`TLS error for ${account} - certificate problem`);
+  // The server certificate was rejected
+  console.log(`TLS error for ${account}, certificate problem`);
   await notifyAdmin(account, {
-    message: 'TLS certificate error - server certificate may need renewal',
+    message: 'TLS certificate error, the server certificate may need renewal',
     error: data.response
   });
 }
@@ -250,53 +251,46 @@ async function handleConnectError(event) {
 
 ## Distinguishing connectError from authenticationError
 
-It's important to understand the difference between these two error events:
-
 | Aspect | connectError | authenticationError |
 |--------|--------------|---------------------|
-| **When triggered** | Connection cannot be established | Connection established but login fails |
-| **Typical causes** | Network issues, server down, firewall, TLS problems | Invalid credentials, expired tokens, revoked access |
-| **User action** | Usually none - wait for server recovery | Update credentials or re-authenticate |
-| **Resolution** | Automatic when server becomes available | Requires credential update |
+| **When triggered** | The connection cannot be established | The connection is established but the login is rejected |
+| **Typical causes** | Network issues, server down, firewall, TLS problems | Invalid credentials, expired or revoked OAuth2 grants |
+| **Account state** | `connectError` | `authenticationError`, then `unset` once the account is switched off |
+| **User action** | Usually none, wait for the server to recover | Update credentials or re-authorize |
+| **Resolution** | Automatic once the server is reachable | Requires new credentials |
 
 ## Webhook Deduplication
 
-EmailEngine tracks error states to prevent webhook flooding. Key behaviors:
+EmailEngine stores the last error for each account and compares each new failure against it:
 
-1. **First occurrence** - Webhook is sent immediately when connection first fails
-2. **Repeated failures** - Subsequent identical errors do NOT trigger new webhooks
-3. **State change** - A new webhook is sent only when:
-   - The account successfully connects (triggers a state change)
-   - The error message or code changes
-   - The account is reconnected with updated configuration
+1. **First occurrence** - Reported at once, and the stored error is set
+2. **Same code** - A failure with the same `serverResponseCode` as the stored error is treated as a repeat and not reported, even if `response` differs
+3. **Different code** - A different `serverResponseCode` is a new failure and is reported. A server that goes from `ETIMEDOUT` to `ECONNREFUSED` while it is being restarted therefore produces two webhooks
+4. **No code** - When neither error carries a code, the whole `data` object is compared, and any difference is reported
+5. **Recovery** - A successful login sends [`authenticationSuccess`](/docs/webhooks/authenticationsuccess) and clears the stored error, so the next failure is a first occurrence again
 
-This means you can rely on receiving exactly one `connectError` webhook per failure episode, making it safe to trigger alerts without rate limiting on your end.
+The stored error is shared between `connectError` and `authenticationError`, so a connection failure that follows an unresolved authentication failure is reported as a change, and the reverse likewise.
 
 ## Automatic Retry Behavior
 
-When a connection error occurs, EmailEngine will automatically retry connecting with exponential backoff:
+After a connection failure the account stays in the `connectError` state and EmailEngine keeps retrying on its own, with exponential backoff that starts at 2 seconds and is capped at 10 minutes between attempts. The retries continue until:
 
-- Initial retry after a few seconds
-- Subsequent retries with increasing delays
-- Maximum backoff capped at 10 minutes
-
-The connection will be retried indefinitely until:
 - The connection succeeds
-- The account is deleted or disabled
-- The account configuration is updated
+- The account is deleted, paused, or disabled
+- The account configuration is updated, which starts a fresh connection
 
-You do not need to implement retry logic in your webhook handler - EmailEngine handles this automatically.
+You do not need to request a [reconnect](/docs/accounts/managing-accounts#reconnecting-accounts) from your webhook handler; one only shortens the wait until the next attempt.
 
 ## Related Events
 
-- [authenticationError](/docs/webhooks/authenticationerror) - Triggered when authentication fails (after connection succeeds)
-- [authenticationSuccess](/docs/webhooks/authenticationsuccess) - Triggered when authentication succeeds
+- [authenticationError](/docs/webhooks/authenticationerror) - Triggered when the login is rejected after the connection succeeds
+- [authenticationSuccess](/docs/webhooks/authenticationsuccess) - Triggered when the account recovers and logs in
 - [accountAdded](/docs/webhooks/accountadded) - Triggered when a new account is registered
 - [accountDeleted](/docs/webhooks/accountdeleted) - Triggered when an account is removed
 
 ## See Also
 
-- [Webhooks Overview](/docs/webhooks/overview) - Complete webhook setup guide
-- [Account Management](/docs/accounts) - Managing email accounts
-- [Troubleshooting](/docs/troubleshooting) - Common issues and solutions
-- [IMAP Configuration](/docs/accounts/imap-smtp) - Setting up IMAP accounts
+- [Webhooks Overview](/docs/webhooks/overview) - Configuring the webhook URL and the `webhookEvents` allowlist
+- [Account Management](/docs/accounts/managing-accounts) - Account states and reconnecting accounts
+- [IMAP Configuration](/docs/accounts/imap-smtp) - Host, port and TLS settings that a connection failure points at
+- [Troubleshooting](/docs/troubleshooting) - Diagnosing connectivity between EmailEngine and a mail server

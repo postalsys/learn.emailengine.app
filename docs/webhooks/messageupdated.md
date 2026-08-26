@@ -12,16 +12,18 @@ The `messageUpdated` webhook event is triggered when EmailEngine detects that th
 
 The `messageUpdated` event fires when:
 
-- A message is marked as read (\Seen flag added)
-- A message is marked as unread (\Seen flag removed)
-- A message is flagged/starred (\Flagged flag added)
-- A message is unflagged (\Flagged flag removed)
-- A message is replied to (\Answered flag added)
-- A draft flag is changed (\Draft flag added/removed)
-- Custom IMAP flags are added or removed
-- Gmail labels are added or removed (Gmail API accounts only)
+- A message is marked as read (`\Seen` flag added) or unread (`\Seen` flag removed)
+- A message is flagged or starred (`\Flagged` flag added) or unflagged
+- A message is replied to (`\Answered` flag added) or forwarded (`$Forwarded` keyword added)
+- A draft flag is changed (`\Draft` flag added or removed)
+- Any other IMAP flag or keyword is added or removed
+- Gmail labels are added or removed, on Gmail API accounts and on Gmail over IMAP
 
-The event is triggered after EmailEngine confirms the flag/label change on the mail server.
+How the change is detected depends on the account type:
+
+- **IMAP**: an untagged `FETCH` response reports new flags, or a resync compares the stored flags with the server's. Requires the full [indexer](/docs/accounts/imap-indexers), which is the default; the fast indexer keeps no flag state and never sends this event. The session-specific `\Recent` flag is ignored
+- **Gmail API**: the Gmail history reports labels added to or removed from a message. `UNREAD`, `STARRED` and `DRAFT` are reported as flag changes, the other labels as label changes
+- **MS Graph**: a change notification reports the message as updated. Graph does not say what changed, so EmailEngine fetches the current state and reports only the full flag list. Repeated notifications with the same flags within a short window are reported once
 
 ## Common Use Cases
 
@@ -39,44 +41,52 @@ The event is triggered after EmailEngine confirms the flag/label change on the m
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `serviceUrl` | string | No | The configured EmailEngine service URL |
+| `serviceUrl` | string or null | Yes | The configured EmailEngine service URL, `null` if not set |
 | `account` | string | Yes | Account ID where the message was updated |
 | `date` | string | Yes | ISO 8601 timestamp when the webhook was generated |
-| `path` | string | Yes | Mailbox folder path (e.g., "INBOX", "Sent Mail") |
-| `specialUse` | string | No | Special use flag of the folder (e.g., "\Inbox", "\Sent") |
-| `event` | string | Yes | Event type, always "messageUpdated" for this event |
+| `path` | string | Yes | Folder of the message. IMAP and MS Graph accounts report the folder path (for example `INBOX`). Gmail API accounts report `\All` |
+| `specialUse` | string | No | Special use flag of the folder, for example `\Inbox` or `\Sent`. Gmail API accounts report `\All` |
+| `event` | string | Yes | Always `messageUpdated` |
 | `data` | object | Yes | Message update data (see below) |
+
+The unique event identifier is sent as the HTTP header `X-EE-Wh-Event-Id`, not in the JSON payload.
 
 ### Message Data Fields (`data` object)
 
-#### All Account Types
-
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `id` | string | Yes | EmailEngine's unique message ID (base64url encoded for IMAP, Gmail ID for Gmail API) |
+| `id` | string | Yes | EmailEngine message ID. Base64url-packed folder and UID for IMAP, the provider's message ID for Gmail API and MS Graph |
 | `uid` | number | IMAP only | IMAP UID of the message within the folder |
-| `threadId` | string | Gmail only | Gmail thread ID the message belongs to |
-| `changes` | object | Yes | Object describing what changed (see below) |
+| `threadId` | string | Gmail API and MS Graph only | Gmail thread ID or Graph conversation ID |
+| `changes` | object | Yes | What changed (see below) |
 
 ### Changes Object Structure
 
-The `changes` object contains flag and/or label changes:
+The `changes` object has a `flags` member, a `labels` member, or both, and only for the kind of value that changed.
 
 #### Flag Changes (`changes.flags`)
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `added` | array | Array of flags that were added (e.g., `["\Seen"]`) |
-| `deleted` | array | Array of flags that were removed (e.g., `["\Flagged"]`) |
-| `value` | array | Complete current flag list after the change |
+| `added` | array | Flags that were added. Present only when something was added. Never sent for MS Graph accounts |
+| `deleted` | array | Flags that were removed. Present only when something was removed. Never sent for MS Graph accounts |
+| `value` | array | Complete flag list after the change |
 
-#### Label Changes (`changes.labels`) - Gmail Only
+#### Label Changes (`changes.labels`)
+
+Sent for Gmail API accounts and for Gmail accounts connected over IMAP.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `added` | array | Array of labels that were added (e.g., `["IMPORTANT"]`) |
-| `deleted` | array | Array of labels that were removed (e.g., `["INBOX"]`) |
-| `value` | array | Complete current label list after the change |
+| `added` | array | Labels that were added. Present only when something was added |
+| `deleted` | array | Labels that were removed. Present only when something was removed |
+| `value` | array | Complete label list after the change |
+
+### How Gmail Labels are Represented
+
+Gmail system labels are reported by their IMAP special-use name: `\Inbox`, `\Sent`, `\Trash`, `\Drafts` and `\Junk`. `UNREAD`, `STARRED` and `DRAFT` never appear as labels; they are reported as the `\Seen` (absent), `\Flagged` and `\Draft` flags instead. `IMPORTANT` and the `CATEGORY_*` tab labels are not reported at all.
+
+User-defined labels are reported by name in `added` and `deleted`, and by Gmail label ID (for example `Label_42`) in `value`, on Gmail API accounts. Over IMAP, Gmail reports user labels by name everywhere.
 
 ### Common IMAP Flags
 
@@ -87,19 +97,7 @@ The `changes` object contains flag and/or label changes:
 | `\Flagged` | Message is flagged/starred |
 | `\Deleted` | Message is marked for deletion |
 | `\Draft` | Message is a draft |
-
-### Common Gmail Labels
-
-| Label | Description |
-|-------|-------------|
-| `INBOX` | Message is in inbox |
-| `SENT` | Message is in sent folder |
-| `DRAFT` | Message is a draft |
-| `TRASH` | Message is in trash |
-| `SPAM` | Message is marked as spam |
-| `STARRED` | Message is starred |
-| `IMPORTANT` | Message is marked important |
-| `UNREAD` | Message is unread |
+| `$Forwarded` | Message has been forwarded |
 
 ## Example Payloads
 
@@ -174,34 +172,40 @@ The `changes` object contains flag and/or label changes:
 
 ### Gmail API Account - Label Added
 
+A user label named `Customers` (label ID `Label_42`) added to a message in the Inbox:
+
 ```json
 {
   "serviceUrl": "https://emailengine.example.com",
   "account": "gmail-user",
   "date": "2025-10-17T09:45:30.123Z",
-  "path": "[Gmail]/All Mail",
+  "path": "\\All",
+  "specialUse": "\\All",
   "event": "messageUpdated",
   "data": {
     "id": "18b5c7d8e9f01234",
     "threadId": "18b5c7d8e9f01234",
     "changes": {
       "labels": {
-        "added": ["IMPORTANT"],
-        "value": ["INBOX", "IMPORTANT", "UNREAD"]
+        "added": ["Customers"],
+        "value": ["\\Inbox", "Label_42"]
       }
     }
   }
 }
 ```
 
-### Gmail API Account - Multiple Changes
+### Gmail API Account - Archived and Read
+
+Removing `INBOX` and `UNREAD` in one change:
 
 ```json
 {
   "serviceUrl": "https://emailengine.example.com",
   "account": "gmail-user",
   "date": "2025-10-17T10:00:00.000Z",
-  "path": "[Gmail]/All Mail",
+  "path": "\\All",
+  "specialUse": "\\All",
   "event": "messageUpdated",
   "data": {
     "id": "18b5c7d8e9f01234",
@@ -209,12 +213,11 @@ The `changes` object contains flag and/or label changes:
     "changes": {
       "flags": {
         "added": ["\\Seen"],
-        "value": ["\\Seen", "\\Flagged"]
+        "value": ["\\Seen"]
       },
       "labels": {
-        "added": ["STARRED"],
-        "deleted": ["UNREAD"],
-        "value": ["INBOX", "IMPORTANT", "STARRED"]
+        "deleted": ["\\Inbox"],
+        "value": ["Label_42"]
       }
     }
   }
@@ -223,18 +226,21 @@ The `changes` object contains flag and/or label changes:
 
 ### Microsoft Outlook Account - Message Read
 
+Only the full flag list is reported:
+
 ```json
 {
   "serviceUrl": "https://emailengine.example.com",
   "account": "outlook-user",
   "date": "2025-10-17T11:20:45.678Z",
   "path": "Inbox",
+  "specialUse": "\\Inbox",
   "event": "messageUpdated",
   "data": {
     "id": "AAMkADI2NGVhZTVlLTI1OGItNDUwZS05ZDVkLWQzN2E2MDUyYzc3YQBGAAAAAAI",
+    "threadId": "AAQkADI2NGVhZTVlLTI1OGItNDUwZS05ZDVkLWQzN2E2MDUyYzc3YQAQAJ5X",
     "changes": {
       "flags": {
-        "added": ["\\Seen"],
         "value": ["\\Seen"]
       }
     }
@@ -248,7 +254,7 @@ The `changes` object contains flag and/or label changes:
 
 ```javascript
 async function handleMessageUpdated(event) {
-  const { account, path, data } = event;
+  const { account, data } = event;
   const { changes } = data;
 
   console.log(`Message ${data.id} updated in ${account}:`);
@@ -277,40 +283,31 @@ async function handleMessageUpdated(event) {
 
 ### Track Read Status
 
+Compare against `value` rather than `added` and `deleted`, so that the handler works for MS Graph accounts as well. In JavaScript source the backslash in a flag name has to be escaped:
+
 ```javascript
 async function handleMessageUpdated(event) {
   const { account, data } = event;
   const { changes } = data;
 
-  // Check if message was marked as read
-  if (changes.flags?.added?.includes('\Seen')) {
-    await db.messages.update({
-      where: {
-        accountId: account,
-        messageId: data.id
-      },
-      data: {
-        isRead: true,
-        readAt: new Date()
-      }
-    });
-    console.log(`Message ${data.id} marked as read`);
+  if (!changes.flags) {
+    return;
   }
 
-  // Check if message was marked as unread
-  if (changes.flags?.deleted?.includes('\Seen')) {
-    await db.messages.update({
-      where: {
-        accountId: account,
-        messageId: data.id
-      },
-      data: {
-        isRead: false,
-        readAt: null
-      }
-    });
-    console.log(`Message ${data.id} marked as unread`);
-  }
+  const isRead = changes.flags.value.includes('\\Seen');
+
+  await db.messages.update({
+    where: {
+      accountId: account,
+      messageId: data.id
+    },
+    data: {
+      isRead,
+      readAt: isRead ? new Date() : null
+    }
+  });
+
+  console.log(`Message ${data.id} marked as ${isRead ? 'read' : 'unread'}`);
 }
 ```
 
@@ -321,24 +318,20 @@ async function handleMessageUpdated(event) {
   const { account, data } = event;
   const { changes } = data;
 
-  const isFlagged = changes.flags?.value?.includes('\Flagged');
+  if (!changes.flags) {
+    return;
+  }
 
-  if (changes.flags?.added?.includes('\Flagged')) {
-    // Message was flagged
+  const isFlagged = changes.flags.value.includes('\\Flagged');
+
+  if (changes.flags.added?.includes('\\Flagged')) {
     await notifyPriorityMessage(account, data.id);
-    await db.messages.update({
-      where: { accountId: account, messageId: data.id },
-      data: { isFlagged: true, flaggedAt: new Date() }
-    });
   }
 
-  if (changes.flags?.deleted?.includes('\Flagged')) {
-    // Message was unflagged
-    await db.messages.update({
-      where: { accountId: account, messageId: data.id },
-      data: { isFlagged: false, flaggedAt: null }
-    });
-  }
+  await db.messages.update({
+    where: { accountId: account, messageId: data.id },
+    data: { isFlagged, flaggedAt: isFlagged ? new Date() : null }
+  });
 }
 ```
 
@@ -349,20 +342,19 @@ async function handleMessageUpdated(event) {
   const { account, data } = event;
   const { changes } = data;
 
-  if (!changes.labels) return;
+  if (!changes.labels) {
+    return;
+  }
 
-  // Trigger workflow when message is labeled "Work/Urgent"
   if (changes.labels.added?.includes('Work/Urgent')) {
     await triggerUrgentWorkflow(account, data.id);
   }
 
-  // Archive action when removed from INBOX
-  if (changes.labels.deleted?.includes('INBOX')) {
+  if (changes.labels.deleted?.includes('\\Inbox')) {
     await markAsArchived(account, data.id);
   }
 
-  // Move to CRM when "Customer" label is added
-  if (changes.labels.added?.includes('Customer')) {
+  if (changes.labels.added?.includes('Customers')) {
     await syncToCRM(account, data.id);
   }
 }
@@ -372,43 +364,23 @@ async function handleMessageUpdated(event) {
 
 ### Changes Object Structure
 
-The `changes` object only includes the fields that actually changed:
+The `changes` object only includes what changed:
 
-- If only flags changed, `changes.labels` will be absent
-- If only labels changed, `changes.flags` will be absent
-- Within each change type, `added` and `deleted` arrays are only present if there are items in them
+- If only flags changed, `changes.labels` is absent
+- If only labels changed, `changes.flags` is absent
+- Within each, `added` and `deleted` are present only when they have entries, and MS Graph accounts never send them
 
 Always check for the existence of these fields before accessing them:
 
 ```javascript
-// Safe access pattern
 const flagsAdded = data.changes.flags?.added || [];
 const flagsDeleted = data.changes.flags?.deleted || [];
 const currentFlags = data.changes.flags?.value || [];
 ```
 
-### IMAP Indexer Mode
+### Flags on API Accounts
 
-For standard IMAP accounts, the `messageUpdated` event is only triggered when using the "full" IMAP indexer mode (default). In "fast" indexer mode, flag changes are not tracked because the full message list is not maintained.
-
-### Recent Flag
-
-The `\Recent` flag is a session-specific IMAP flag and is not tracked by EmailEngine. Changes to this flag will not trigger `messageUpdated` events.
-
-### Event Deduplication
-
-EmailEngine implements rolling bucket locks to prevent duplicate `messageUpdated` events for the same message within a short time window. If the same flag change is detected multiple times rapidly, only the first event is sent.
-
-### Gmail Labels vs IMAP Flags
-
-For Gmail API accounts, both `flags` and `labels` may be present in the same event:
-
-- **Flags** represent standard email states (\Seen, \Flagged, \Answered, \Draft)
-- **Labels** represent Gmail-specific categorization
-
-Some Gmail labels map to IMAP flags:
-- `STARRED` maps to `\Flagged`
-- `UNREAD` absence maps to `\Seen`
+Gmail API and MS Graph accounts have no IMAP flags. EmailEngine derives them: on Gmail from the `UNREAD`, `STARRED` and `DRAFT` labels, on Graph from the `isRead`, `isDraft` and `flag` properties. `\Answered` is not available on either.
 
 ## Related Events
 
@@ -418,6 +390,8 @@ Some Gmail labels map to IMAP flags:
 
 ## See Also
 
-- [Webhooks Overview](/docs/webhooks/overview) - Complete webhook setup guide
-- [Message Operations](/docs/receiving/message-operations) - Working with messages via API
+- [Webhooks Overview](/docs/webhooks/overview) - Delivery, retries, headers and signing
+- [Message Operations](/docs/receiving/message-operations) - Changing flags and labels through the API
+- [IMAP indexers](/docs/accounts/imap-indexers) - Why the fast indexer never reports flag changes
+- [Tracking replies](/docs/receiving/tracking-replies) - Using the `\Answered` flag
 - [Settings API](/docs/api/post-v-1-settings) - Configure webhook settings

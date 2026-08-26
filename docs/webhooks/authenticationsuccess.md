@@ -6,22 +6,18 @@ description: "Webhook event triggered when an email account successfully authent
 
 # authenticationSuccess
 
-The `authenticationSuccess` webhook event is triggered when an email account successfully authenticates with the mail server or email API. This event helps you monitor account health and confirm that previously problematic accounts have recovered.
+The `authenticationSuccess` webhook event is triggered when an email account authenticates with the mail server or the provider API after either never having done so or having been in an error state. It confirms a new account works and tells you when a failing account has recovered.
 
 ## When This Event is Triggered
 
-The `authenticationSuccess` event fires when:
+The `authenticationSuccess` event fires when an account logs in successfully and one of these is true:
 
-- An account successfully establishes an IMAP session for the **first time** after being added
-- An account recovers from a previous authentication error state
-- An account reconnects after being in a disconnected or errored state
+1. The account has never reached the `connected` state before (initial connection, or the first connection after a [flush](/docs/api/put-v-1-account-account-flush))
+2. The account carries a stored error from a previous [`authenticationError`](/docs/webhooks/authenticationerror) or [`connectError`](/docs/webhooks/connecterror), and has now recovered
 
-This event is **not** sent on every successful connection. EmailEngine tracks connection history and only sends this webhook when:
+It is **not** sent on every successful login. A routine reconnection after a dropped connection, a restart or a token renewal on an account that was not in an error state produces no webhook. The stored error is cleared once the account is connected again, so the next failure and recovery are reported as a fresh pair.
 
-1. The account has never successfully connected before (initial connection)
-2. The account was previously in an error state (`authenticationError` or `connectError`) and has now recovered
-
-This intelligent filtering prevents webhook spam during normal reconnection cycles.
+For an IMAP account the event is sent as soon as the IMAP login succeeds, before folders are synced. For a Gmail API or Microsoft Graph account it is sent once the provider accepted the access token and returned the account profile.
 
 ## Common Use Cases
 
@@ -38,17 +34,19 @@ This intelligent filtering prevents webhook spam during normal reconnection cycl
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `serviceUrl` | string | No | The configured EmailEngine service URL |
-| `account` | string | Yes | Account ID that successfully authenticated |
+| `serviceUrl` | string or null | Yes | The configured EmailEngine service URL. `null` when the `serviceUrl` setting is empty |
+| `account` | string | Yes | Account ID that authenticated |
 | `date` | string | Yes | ISO 8601 timestamp when the webhook was generated |
-| `event` | string | Yes | Event type, always "authenticationSuccess" for this event |
-| `data` | object | Yes | Authentication details object (see below) |
+| `event` | string | Yes | Always `authenticationSuccess` |
+| `data` | object | Yes | Authentication details (see below) |
 
 ### Authentication Data Fields (`data` object)
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `user` | string | Yes | The email address or username used for authentication |
+| `user` | string | Yes | The username the login used. For an IMAP account this is `imap.auth.user`; for an OAuth2 account it is `oauth2.auth.user`, the email address of the authorized mailbox |
+
+There is no event ID in the body. EmailEngine sends it in the `X-EE-Wh-Event-Id` request header. See [Delivery and Retries](/docs/webhooks/overview#delivery-and-retries).
 
 ## Example Payload
 
@@ -66,7 +64,7 @@ This intelligent filtering prevents webhook spam during normal reconnection cycl
 
 ## Example Payload (Gmail API Account)
 
-For accounts using Gmail API with OAuth2:
+For accounts using the Gmail API:
 
 ```json
 {
@@ -82,7 +80,7 @@ For accounts using Gmail API with OAuth2:
 
 ## Example Payload (Outlook Account)
 
-For accounts using Microsoft Graph API or Outlook IMAP with OAuth2:
+For accounts using the Microsoft Graph API or Outlook IMAP with OAuth2:
 
 ```json
 {
@@ -117,7 +115,7 @@ async function handleAuthenticationSuccess(event) {
 
 ```javascript
 async function handleAuthenticationSuccess(event) {
-  const { account, data, date } = event;
+  const { account, date } = event;
 
   // Update account status in your database
   await db.accounts.update({
@@ -182,7 +180,6 @@ async function handleAuthenticationSuccess(event) {
 
   if (isNewAccount) {
     // Trigger initial setup workflows
-    await startInitialSync(account);
     await setupAccountFilters(account);
     await notifyUser(account, 'Your email account is now connected');
   }
@@ -199,28 +196,32 @@ async function handleAuthenticationSuccess(event) {
 
 ## Event Sequence
 
-When a new account is added, you will typically receive webhooks in this order:
+When a new IMAP account is added, you receive webhooks in this order:
 
 1. `accountAdded` - Account is registered with EmailEngine
-2. `authenticationSuccess` - Account successfully authenticates
-3. `accountInitialized` - Initial mailbox sync is complete
+2. `authenticationSuccess` - The mail server accepted the login
+3. `accountInitialized` - The first pass over the folders is complete
+
+For a Gmail API or Microsoft Graph account the last two are swapped: `accountInitialized` is sent as soon as the state becomes `connected`, and `authenticationSuccess` follows it. Do not depend on the order between them.
 
 When an account recovers from an error:
 
-1. (Previous) `authenticationError` - Authentication failed
-2. (Later) `authenticationSuccess` - Authentication succeeded after recovery
+1. (Earlier) `authenticationError` or `connectError` - The login or the connection failed
+2. (Later) `authenticationSuccess` - The login succeeded after the cause was fixed
+
+An account that was [switched off after repeated authentication failures](/docs/webhooks/authenticationerror#parked-after-repeated-failures) sends this event once it has been re-authorized or resumed and logs in again.
 
 ## Related Events
 
 - [authenticationError](/docs/webhooks/authenticationerror) - Triggered when authentication fails
-- [connectError](/docs/webhooks/connecterror) - Triggered when connection fails (network-level, not authentication)
+- [connectError](/docs/webhooks/connecterror) - Triggered when the connection fails before authentication
 - [accountAdded](/docs/webhooks/accountadded) - Triggered when a new account is registered
-- [accountInitialized](/docs/webhooks/accountinitialized) - Triggered when initial sync completes
+- [accountInitialized](/docs/webhooks/accountinitialized) - Triggered when the first sync completes
 
 ## See Also
 
-- [Webhooks Overview](/docs/webhooks/overview) - Complete webhook setup guide
-- [Account Management](/docs/accounts) - Managing email accounts
+- [Webhooks Overview](/docs/webhooks/overview) - Configuring the webhook URL and the `webhookEvents` allowlist
+- [Account Management](/docs/accounts/managing-accounts) - Account states, reconnecting and re-enabling accounts
 - [Gmail OAuth2 Setup](/docs/accounts/gmail/gmail-imap) - Setting up Gmail with OAuth2
 - [Outlook OAuth2 Setup](/docs/accounts/microsoft-365/outlook-365) - Setting up Outlook with OAuth2
-- [Troubleshooting](/docs/troubleshooting) - Common issues and solutions
+- [Troubleshooting](/docs/troubleshooting) - Diagnosing an account that never sends this event

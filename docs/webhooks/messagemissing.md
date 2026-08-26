@@ -6,19 +6,17 @@ description: "Webhook event triggered when a message that should exist is not fo
 
 # messageMissing
 
-The `messageMissing` webhook event is triggered when EmailEngine detects that a message it expected to find on the mail server is not available. This event indicates a potential synchronization issue and helps you handle edge cases in message processing.
+The `messageMissing` webhook event is triggered when EmailEngine learns about a new message but cannot fetch it from the mail server. It is sent in place of the [`messageNew`](/docs/webhooks/messagenew) event that the message would otherwise have produced.
 
 ## When This Event is Triggered
 
 The `messageMissing` event fires when:
 
-- EmailEngine receives a notification about a new message but cannot retrieve it from the server
-- A message was deleted between the time EmailEngine was notified and when it attempted to fetch the full content
-- IMAP replication lag causes a message to be temporarily unavailable (after multiple retry attempts)
-- The mail server reports a message exists but returns an error when EmailEngine tries to download it
-- Network issues or server timeouts prevent message retrieval after exhausting retry attempts
+- **IMAP**: a new UID appeared in the folder listing, but the server returned nothing when EmailEngine fetched the message, and three retries did not change that. Servers with replication lag between the listing and the fetch, and messages deleted or moved by a filter right after arrival, are the usual causes
+- **Gmail API**: the history reported a new message, but fetching it by ID returned nothing
+- **MS Graph**: a change notification reported a new message, but fetching it by ID returned nothing
 
-For IMAP accounts, EmailEngine implements exponential backoff retry logic before triggering this event. The system attempts to fetch the message multiple times with increasing delays (using a 1.7^n second formula) before giving up and sending the `messageMissing` notification.
+On IMAP accounts the retries are spaced 1.7<sup>n</sup> seconds apart: 1000 ms, then 1700 ms, then 2890 ms, so the event is sent about 5.6 seconds after the first failed fetch. Gmail API and MS Graph accounts do not retry.
 
 ## Common Use Cases
 
@@ -35,26 +33,28 @@ For IMAP accounts, EmailEngine implements exponential backoff retry logic before
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `serviceUrl` | string | No | The configured EmailEngine service URL |
+| `serviceUrl` | string or null | Yes | The configured EmailEngine service URL, `null` if not set |
 | `account` | string | Yes | Account ID where the missing message was detected |
 | `date` | string | Yes | ISO 8601 timestamp when the webhook was generated |
-| `path` | string | No | Mailbox folder path where the message should have been found (IMAP only) |
-| `specialUse` | string | No | Special use flag of the folder (e.g., "\Inbox", "\Sent") |
-| `event` | string | Yes | Event type, always "messageMissing" for this event |
+| `path` | string | Yes | Folder the message should have been in. IMAP accounts report the folder path (for example `INBOX`). Gmail API and MS Graph accounts report `\All` |
+| `specialUse` | string | No | Special use flag of the folder, for example `\Inbox`. Gmail API and MS Graph accounts report `\All` |
+| `event` | string | Yes | Always `messageMissing` |
 | `data` | object | Yes | Message identification and retry data (see below) |
 
-### Message Data Fields (`data` object)
+The unique event identifier is sent as the HTTP header `X-EE-Wh-Event-Id`, not in the JSON payload.
 
-The `messageMissing` event includes identification data and retry statistics:
+### Message Data Fields (`data` object)
 
 #### IMAP Accounts
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `id` | string | Yes | EmailEngine's unique message ID (base64url encoded packed UID) |
+| `id` | string | Yes | EmailEngine message ID (base64url-packed folder and UID) |
 | `uid` | number | Yes | IMAP UID of the missing message within the folder |
-| `missingRetries` | number | No | Number of retry attempts made before giving up |
-| `missingDelay` | number | No | Total delay in milliseconds spent on retry attempts |
+| `missingRetries` | number | Yes | Number of retries made before giving up, always `3` |
+| `missingDelay` | number | Yes | Total time in milliseconds spent waiting between the attempts, always `5590` |
+
+A message that the server did return on one of the retries produces a normal `messageNew` event instead, carrying the same two fields with the counts it took.
 
 #### Gmail API Accounts
 
@@ -66,11 +66,11 @@ The `messageMissing` event includes identification data and retry statistics:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `id` | string | Yes | Outlook message ID that could not be retrieved |
+| `id` | string | Yes | Graph message ID that could not be retrieved |
 
 ## Example Payloads
 
-### IMAP Account (with retry statistics)
+### IMAP Account
 
 ```json
 {
@@ -83,8 +83,8 @@ The `messageMissing` event includes identification data and retry statistics:
   "data": {
     "id": "AAAADAAABy4",
     "uid": 1838,
-    "missingRetries": 5,
-    "missingDelay": 12450
+    "missingRetries": 3,
+    "missingDelay": 5590
   }
 }
 ```
@@ -96,7 +96,8 @@ The `messageMissing` event includes identification data and retry statistics:
   "serviceUrl": "https://emailengine.example.com",
   "account": "gmail-user",
   "date": "2025-10-17T08:15:22.123Z",
-  "path": "[Gmail]/All Mail",
+  "path": "\\All",
+  "specialUse": "\\All",
   "event": "messageMissing",
   "data": {
     "id": "18b5c7d8e9f01234"
@@ -111,7 +112,8 @@ The `messageMissing` event includes identification data and retry statistics:
   "serviceUrl": "https://emailengine.example.com",
   "account": "outlook-user",
   "date": "2025-10-17T09:30:45.789Z",
-  "path": "Inbox",
+  "path": "\\All",
+  "specialUse": "\\All",
   "event": "messageMissing",
   "data": {
     "id": "AAMkADI2NGVhZTVlLTI1OGItNDUwZS05ZDVkLWQzN2E2MDUyYzc3YQBGAAAAAAI"
@@ -129,9 +131,7 @@ async function handleMessageMissing(event) {
 
   console.log(`Missing message detected for ${account}:`);
   console.log(`  Message ID: ${data.id}`);
-  if (path) {
-    console.log(`  Folder: ${path}`);
-  }
+  console.log(`  Folder: ${path}`);
   if (data.uid) {
     console.log(`  UID: ${data.uid}`);
   }
@@ -140,24 +140,25 @@ async function handleMessageMissing(event) {
     console.log(`  Total delay: ${data.missingDelay}ms`);
   }
 
-  // Log for monitoring
   await logSyncIssue(account, data.id, 'message_missing');
 }
 ```
 
 ### Monitoring and Alerting
 
-```javascript
-async function handleMessageMissing(event) {
-  const { account, path, date, data, eventId } = event;
+The event identifier is in the `X-EE-Wh-Event-Id` request header, so a record that keeps it needs both the header and the body:
 
-  // Record the sync issue
+```javascript
+async function handleMessageMissing(req) {
+  const eventId = req.headers['x-ee-wh-event-id'];
+  const { account, path, date, data } = req.body;
+
   await db.syncIssues.create({
     data: {
       eventId,
       timestamp: new Date(date),
       account,
-      folder: path || null,
+      folder: path,
       issueType: 'message_missing',
       messageId: data.id,
       uid: data.uid || null,
@@ -166,18 +167,16 @@ async function handleMessageMissing(event) {
     }
   });
 
-  // Check for repeated issues with this account
   const recentIssues = await db.syncIssues.count({
     where: {
       account,
       issueType: 'message_missing',
       timestamp: {
-        gte: new Date(Date.now() - 3600000) // Last hour
+        gte: new Date(Date.now() - 3600000)
       }
     }
   });
 
-  // Alert if too many missing messages
   if (recentIssues >= 5) {
     await alerting.send({
       level: 'warning',
@@ -189,126 +188,86 @@ async function handleMessageMissing(event) {
 }
 ```
 
-### Retry Statistics Analysis
+### Fetching the Message Later
+
+The `id` stays valid for as long as the message exists in that folder, so a handler can try again through the API after a delay:
 
 ```javascript
 async function handleMessageMissing(event) {
   const { account, data } = event;
 
-  // For IMAP accounts, analyze retry behavior
-  if (data.missingRetries && data.missingDelay) {
-    const avgDelayPerRetry = data.missingDelay / data.missingRetries;
-
-    // Log metrics for analysis
-    await metrics.record({
-      name: 'message_missing_retries',
-      value: data.missingRetries,
-      tags: { account }
-    });
-
-    await metrics.record({
-      name: 'message_missing_total_delay_ms',
-      value: data.missingDelay,
-      tags: { account }
-    });
-
-    console.log(`Message ${data.id} missing after ${data.missingRetries} retries`);
-    console.log(`Average delay per retry: ${avgDelayPerRetry.toFixed(0)}ms`);
-  }
+  await jobQueue.add(
+    'retry-fetch-message',
+    {
+      account,
+      messageId: data.id,
+      attempt: 1
+    },
+    {
+      delay: 300000
+    }
+  );
 }
-```
 
-### Custom Retry Logic
+async function retryFetchMessage(job) {
+  const { account, messageId } = job.data;
 
-```javascript
-async function handleMessageMissing(event) {
-  const { account, data } = event;
-
-  // For critical accounts, schedule a manual re-sync attempt
-  const criticalAccounts = ['ceo@company.com', 'support@company.com'];
-
-  if (criticalAccounts.includes(account)) {
-    // Schedule a delayed re-fetch attempt
-    await jobQueue.add(
-      'retry-fetch-message',
-      {
-        account,
-        messageId: data.id,
-        uid: data.uid,
-        attempt: 1
-      },
-      {
-        delay: 300000 // Wait 5 minutes before retrying
+  const response = await fetch(
+    `https://emailengine.example.com/v1/account/${account}/message/${messageId}`,
+    {
+      headers: {
+        'Authorization': 'Bearer YOUR_ACCESS_TOKEN'
       }
-    );
+    }
+  );
 
-    console.log(`Scheduled retry for critical account ${account}, message ${data.id}`);
+  if (response.status === 404) {
+    console.log(`Message ${messageId} is gone for good`);
+    return;
   }
+
+  const message = await response.json();
+  await processNewEmail(account, message);
 }
 ```
 
 ## Important Considerations
 
-### Why Messages Go Missing
-
-There are several reasons a message might be missing:
-
-1. **Race conditions** - The message was deleted between notification and fetch
-2. **Replication lag** - Multi-server IMAP environments may have sync delays
-3. **Server issues** - Temporary server errors or maintenance
-4. **Network problems** - Timeouts or connection drops during retrieval
-5. **Quota issues** - Server rejecting requests due to rate limiting
-
-### Retry Behavior
-
-For IMAP accounts, EmailEngine automatically retries message fetching with exponential backoff:
-
-- Delay formula: `1.7^n` seconds (where n is the retry attempt number)
-- Maximum retries: Configurable, typically 5 attempts
-- Total delay: Reported in `missingDelay` field (in milliseconds)
-
-Gmail API and Microsoft Graph accounts do not include retry statistics as they use different notification mechanisms.
-
 ### This Event is Not Always an Error
 
-A `messageMissing` event doesn't necessarily indicate a problem. It may occur when:
+A `messageMissing` event does not necessarily indicate a problem. It also occurs when:
 
-- A user quickly deletes a message after it arrives
-- Spam filters move or delete messages before EmailEngine can fetch them
-- Server-side rules process messages rapidly
+- A user deletes a message right after it arrives
+- A server-side rule or spam filter moves or deletes the message before EmailEngine fetches it
+- The IMAP server's listing runs ahead of its message store, which some clustered servers do briefly
 
 Consider the frequency of these events when deciding how to handle them.
 
 ### Correlation with Other Events
 
-You may receive both `messageMissing` and `messageDeleted` events for the same message if:
-
-1. EmailEngine tried to fetch a new message (message notified but not yet synced)
-2. The user deleted it before EmailEngine could retrieve it
-3. EmailEngine logs `messageMissing` (couldn't fetch the content)
-4. Later, EmailEngine detects the deletion and sends `messageDeleted`
-
-Track message IDs to correlate these events in your logging.
+On IMAP accounts the UID was added to EmailEngine's index before the fetch was attempted, so under the full [indexer](/docs/accounts/imap-indexers) the server's later expunge of it produces a [`messageDeleted`](/docs/webhooks/messagedeleted) event carrying the same `id` and `uid`. Track the `id` to correlate the two.
 
 ## Comparing to messageDeleted
 
 | Aspect | messageMissing | messageDeleted |
 |--------|----------------|----------------|
-| **Trigger** | Message cannot be retrieved from server | Message was successfully tracked then removed |
+| **Trigger** | A new message could not be fetched | A tracked message was removed |
 | **Content accessed** | Never successfully fetched | Was fetched at least once |
-| **Common cause** | Sync timing issues, server problems | User action, filter rules, API deletion |
+| **Common cause** | Timing, filters, server problems | User action, filter rules, API deletion |
 | **Includes retry stats** | Yes (IMAP only) | No |
 | **Indicates error** | Potentially | No |
 
 ## Related Events
 
-- [messageNew](/docs/webhooks/messagenew) - Triggered when a new message arrives successfully
+- [messageNew](/docs/webhooks/messagenew) - Triggered when a new message is fetched successfully
 - [messageDeleted](/docs/webhooks/messagedeleted) - Triggered when a tracked message is removed
 - [connectError](/docs/webhooks/connecterror) - Triggered when connection to email server fails
 - [authenticationError](/docs/webhooks/authenticationerror) - Triggered when authentication fails
 
 ## See Also
 
-- [Webhooks Overview](/docs/webhooks/overview) - Complete webhook setup guide
+- [Webhooks Overview](/docs/webhooks/overview) - Delivery, retries, headers and signing
+- [Message API](/docs/api/get-v-1-account-account-message-message) - Fetching a message by `id` later
+- [IMAP indexers](/docs/accounts/imap-indexers) - How EmailEngine tracks what is in a folder
 - [Troubleshooting](/docs/troubleshooting) - Diagnosing sync issues
 - [Settings API](/docs/api/post-v-1-settings) - Configure webhook settings

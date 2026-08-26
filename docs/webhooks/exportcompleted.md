@@ -6,17 +6,17 @@ description: "Webhook event triggered when a bulk email export job finishes succ
 
 # exportCompleted
 
-The `exportCompleted` webhook event is triggered when EmailEngine successfully completes a bulk email export job. This event provides statistics about the export and indicates that the export file is ready for download.
+The `exportCompleted` webhook event is triggered when EmailEngine finishes a bulk message export. It carries the export's statistics and the time the file will be deleted, and it means the file is ready for download.
 
 ## When This Event is Triggered
 
 The `exportCompleted` event fires when:
 
-- All messages in the export scope have been processed
-- The export file has been written and closed successfully
-- The export enters the `completed` status
+- Every queued message has been written or skipped
+- The export file has been closed
+- The export has been marked `completed`
 
-This event confirms that the export file is available for download via the [Download Export API](/docs/api/get-v-1-account-account-export-exportid-download).
+The event confirms that the file is available through the [Download Export API](/docs/api/get-v-1-account-account-export-exportid-download). An export that was cut short by the message or size limit still completes and sends this event; the [export status](/docs/receiving/exporting#progress-fields) then reports `truncated: true`.
 
 ## Common Use Cases
 
@@ -24,7 +24,7 @@ This event confirms that the export file is available for download via the [Down
 - **Notification systems** - Alert users when their export is ready
 - **Workflow triggers** - Initiate downstream processing pipelines
 - **Audit logging** - Track export completion for compliance purposes
-- **Cleanup scheduling** - Schedule export file deletion after processing
+- **Cleanup scheduling** - Delete the export once it has been downloaded
 
 ## Payload Schema
 
@@ -32,33 +32,33 @@ This event confirms that the export file is available for download via the [Down
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `serviceUrl` | string | No | The configured EmailEngine service URL |
-| `account` | string | Yes | Account ID that the export belongs to |
+| `serviceUrl` | string or null | Yes | The configured EmailEngine service URL. `null` when the `serviceUrl` setting is empty |
+| `account` | string | Yes | Account ID the export belongs to |
 | `date` | string | Yes | ISO 8601 timestamp when the webhook was generated |
-| `event` | string | Yes | Event type, always "exportCompleted" for this event |
-| `data` | object | Yes | Event data object (see below) |
+| `event` | string | Yes | Always `exportCompleted` |
+| `data` | object | Yes | Export details (see below) |
 
 ### Data Object Fields
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `exportId` | string | Yes | Unique identifier for the export job |
-| `folders` | array | Yes | Folder paths that were included in the export |
+| `exportId` | string | Yes | Identifier of the export job |
+| `folders` | array | Yes | The `folders` value the export was created with: folder paths or special-use flags. An empty array when none were given, which exports the [default folder set](/docs/receiving/exporting#request-options) |
 | `startDate` | string | Yes | ISO 8601 start of the exported date range |
 | `endDate` | string | Yes | ISO 8601 end of the exported date range |
-| `messagesExported` | number | Yes | Total messages successfully written to the export file |
-| `messagesSkipped` | number | Yes | Messages that were skipped (deleted or inaccessible) |
-| `bytesWritten` | number | Yes | Total bytes written to the export file (compressed) |
-| `duration` | number | Yes | Export duration in milliseconds |
-| `expiresAt` | string | Yes | ISO 8601 time after which the export file is deleted |
+| `messagesExported` | number | Yes | Messages written to the export file |
+| `messagesSkipped` | number | Yes | Messages that were queued but could not be fetched, see below |
+| `bytesWritten` | number | Yes | Bytes of NDJSON written, before compression |
+| `duration` | number | Yes | Milliseconds from the moment the worker picked the job up to completion |
+| `expiresAt` | string | Yes | ISO 8601 time after which the export is deleted |
+
+There is no event ID in the body. EmailEngine sends it in the `X-EE-Wh-Event-Id` request header. See [Delivery and Retries](/docs/webhooks/overview#delivery-and-retries).
 
 :::warning Download before `expiresAt`
-The export file is removed once it expires, and the export cannot be re-downloaded afterwards. Treat this event as the start of a deadline, not just a completion notice. The retention window is set by `EENGINE_EXPORT_MAX_AGE`.
+The export file is deleted when it expires, and cannot be recovered afterwards. Treat this event as the start of a deadline, not only as a completion notice. The retention window is the `exportMaxAge` setting, or the `EENGINE_EXPORT_MAX_AGE` environment variable when the setting is empty, and 24 hours by default. It is counted from completion, so a long-running export gets the full window.
 :::
 
 ## Example Payload
-
-### Standard Export Completion
 
 ```json
 {
@@ -80,7 +80,9 @@ The export file is removed once it expires, and the export cannot be re-download
 }
 ```
 
-### Large Export with Many Skipped Messages
+### Default folder set
+
+An export created without `folders` reports an empty array:
 
 ```json
 {
@@ -90,10 +92,14 @@ The export file is removed once it expires, and the export cannot be re-download
   "event": "exportCompleted",
   "data": {
     "exportId": "exp_xyz789ghi012xyz789ghi012",
+    "folders": [],
+    "startDate": "2015-01-01T00:00:00.000Z",
+    "endDate": "2025-01-01T00:00:00.000Z",
     "messagesExported": 45230,
     "messagesSkipped": 127,
     "bytesWritten": 2147483648,
-    "duration": 3600000
+    "duration": 3600000,
+    "expiresAt": "2025-01-16T18:45:00.000Z"
   }
 }
 ```
@@ -102,27 +108,20 @@ The export file is removed once it expires, and the export cannot be re-download
 
 ### messagesExported vs messagesSkipped
 
-- **`messagesExported`**: Messages successfully fetched and written to the export file
-- **`messagesSkipped`**: Messages that could not be exported, typically because:
-  - The message was deleted between indexing and export
-  - The message exceeded size limits
-  - Transient errors exhausted retry attempts
+- **`messagesExported`**: Messages fetched and written to the export file
+- **`messagesSkipped`**: Messages that were listed while indexing but could not be fetched afterwards: the message was deleted or moved between indexing and export, the server answered 404 for it, or EmailEngine could not generate an ID for it
 
-A high `messagesSkipped` count may indicate:
-- Active mailbox with frequent deletions
-- Network instability during export
-- Rate limiting from the email provider
+A skipped message is dropped, not retried. Transient fetch errors are retried and do not count as skipped; if the retries run out, the export fails instead and sends [`exportFailed`](/docs/webhooks/exportfailed). A folder that disappears mid-export is treated as empty rather than skipped.
+
+A high `messagesSkipped` count on a busy mailbox usually means messages were deleted or moved while the export ran.
 
 ### bytesWritten
 
-The `bytesWritten` field represents the compressed file size (gzip). The actual uncompressed data size is typically 3-10x larger depending on message content.
+`bytesWritten` counts the NDJSON lines as written, before gzip compression, so it is larger than the downloaded file. It is the same figure the [export status](/docs/receiving/exporting#progress-fields) reports.
 
 ### duration
 
-Time in milliseconds from export job start to completion. Use this to:
-- Estimate completion times for similar exports
-- Identify performance issues
-- Track export throughput trends
+Time in milliseconds from the worker picking the job up to completion. Queue time before the job started is not included. Use it to estimate completion times for similar exports and to track throughput.
 
 ## Handling the Event
 
@@ -135,14 +134,16 @@ async function handleExportCompleted(event) {
   console.log(`Export completed for account ${account}`);
   console.log(`  Export ID: ${data.exportId}`);
   console.log(`  Messages: ${data.messagesExported} exported, ${data.messagesSkipped} skipped`);
-  console.log(`  File size: ${(data.bytesWritten / 1024 / 1024).toFixed(2)} MB`);
+  console.log(`  Written: ${(data.bytesWritten / 1024 / 1024).toFixed(2)} MB before compression`);
+  console.log(`  Expires: ${data.expiresAt}`);
 
   // Update your database
   await db.exports.update({
     exportId: data.exportId,
     status: 'completed',
     messagesExported: data.messagesExported,
-    completedAt: event.date
+    completedAt: event.date,
+    expiresAt: data.expiresAt
   });
 
   // Notify the user
@@ -185,6 +186,8 @@ async function handleExportCompleted(event) {
 }
 ```
 
+The download is encrypted when EmailEngine runs with a service secret. See [Encryption](/docs/receiving/exporting#encryption) for the file format.
+
 ### With Error Handling
 
 ```javascript
@@ -204,7 +207,8 @@ async function handleExportCompleted(event) {
     });
 
     // Check for high skip rate
-    const skipRate = data.messagesSkipped / (data.messagesExported + data.messagesSkipped);
+    const total = data.messagesExported + data.messagesSkipped;
+    const skipRate = total ? data.messagesSkipped / total : 0;
     if (skipRate > 0.1) {
       console.warn(`High skip rate (${(skipRate * 100).toFixed(1)}%) for export ${data.exportId}`);
     }
@@ -214,7 +218,7 @@ async function handleExportCompleted(event) {
 
   } catch (error) {
     console.error('Failed to process exportCompleted webhook:', error);
-    throw error; // Re-throw to trigger webhook retry
+    throw error; // Respond with an error status so EmailEngine retries the delivery
   }
 }
 ```
@@ -229,25 +233,25 @@ The `exportCompleted` event is part of the export lifecycle:
 4. **exportFailed** - Export encountered a fatal error (alternative outcome)
 
 After receiving `exportCompleted`:
-- The export file is available for download
-- The file will be automatically deleted after `exportMaxAge` (default: 24 hours)
-- Download promptly or the file will expire
+
+- The export file is available for download until `expiresAt`
+- Download it, then delete the export to free disk space
 
 ## Best Practices
 
-1. **Download promptly** - Export files expire based on `exportMaxAge` setting
-2. **Verify message counts** - Compare `messagesExported` with expected count
-3. **Monitor skip rates** - High skip rates may indicate issues
-4. **Process asynchronously** - Don't block webhook response for downloads
+1. **Download promptly** - The file is deleted at `expiresAt`
+2. **Verify message counts** - Compare `messagesExported` with the count you expected
+3. **Monitor skip rates** - A high skip rate points at a mailbox that changed while the export ran
+4. **Process asynchronously** - Respond to the webhook first, download afterwards
 5. **Clean up after download** - Delete exports to free disk space
-6. **Use for automation** - Trigger downstream processing pipelines
 
 ## Related Events
 
-- [exportFailed](/docs/webhooks/exportfailed) - Export job failed
+- [exportFailed](/docs/webhooks/exportfailed) - The export stopped on an error
 
 ## See Also
 
-- [Webhooks Overview](/docs/webhooks/overview) - Complete webhook setup guide
-- [Exporting Messages](/docs/receiving/exporting) - Export feature documentation
-- [Download Export API](/docs/api/get-v-1-account-account-export-exportid-download) - Download export files
+- [Webhooks Overview](/docs/webhooks/overview) - Configuring the webhook URL and the `webhookEvents` allowlist
+- [Exporting Messages](/docs/receiving/exporting) - Creating exports, status fields, limits and retention
+- [Download Export API](/docs/api/get-v-1-account-account-export-exportid-download) - Fetching the file this event announces
+- [Delete Export API](/docs/api/delete-v-1-account-account-export-exportid) - Removing the export once it has been downloaded

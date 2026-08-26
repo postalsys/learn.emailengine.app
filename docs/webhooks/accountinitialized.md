@@ -6,30 +6,24 @@ description: "Webhook event triggered when an email account completes its initia
 
 # accountInitialized
 
-The `accountInitialized` webhook event is triggered when an email account has successfully connected and completed its initial mailbox synchronization. This marks the point at which the account is fully operational and ready for use.
+The `accountInitialized` webhook event is triggered when an email account reaches the `connected` state for the first time. For an IMAP account that is after the first pass over its folders; for a Gmail API or Microsoft Graph account it is after the provider profile check succeeds. From this point the account is operational.
 
 ## When This Event is Triggered
 
 The `accountInitialized` event fires when:
 
-- An account establishes its **first successful connection** after being added or after a flush/reset
-- The initial mailbox synchronization has completed
-- The account transitions from "connecting" to "connected" state for the first time
+- An account reaches the `connected` state for the **first time** after being added
+- An account reaches the `connected` state again after a [flush](/docs/api/put-v-1-account-account-flush)
 
-This event is triggered only once per account initialization cycle. It will not fire on subsequent reconnections unless the account is flushed or reset.
+It fires once per initialization cycle. Routine reconnections, restarts and recoveries from error states do not fire it again unless the account has been flushed in between.
 
 ### Technical Details
 
-EmailEngine tracks the connection count for each account. When the account:
-1. Transitions to the "connected" state
-2. And the previous connection count was "0" (indicating first connection)
-3. Then the `accountInitialized` event is fired
-
-This ensures the event fires only on the first successful connection, not on routine reconnections.
+EmailEngine keeps a per-account counter of how many times the account has entered the `connected` state. The counter is created at `0` when the account is registered, and reset to `0` by a flush. When the state becomes `connected` and the counter moves from `0` to `1`, the event is sent.
 
 ## Common Use Cases
 
-- **Account activation confirmation** - Know when accounts are fully ready to use
+- **Account activation confirmation** - Know when accounts are ready to use
 - **Onboarding completion** - Mark user onboarding as complete when their email is connected
 - **Initial data sync** - Trigger processes that need mailbox data to be available
 - **User notifications** - Inform users their email account is now active
@@ -42,17 +36,19 @@ This ensures the event fires only on the first successful connection, not on rou
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `serviceUrl` | string | No | The configured EmailEngine service URL, if set. `null` if not configured. |
-| `account` | string | Yes | The unique account ID for the initialized account |
+| `serviceUrl` | string or null | Yes | The configured EmailEngine service URL. `null` when the `serviceUrl` setting is empty |
+| `account` | string | Yes | The account ID that was initialized |
 | `date` | string | Yes | ISO 8601 timestamp when the webhook was generated |
-| `event` | string | Yes | Event type, always `accountInitialized` for this event |
-| `data` | object | Yes | Event data object containing initialization details |
+| `event` | string | Yes | Always `accountInitialized` |
+| `data` | object | Yes | Event data object |
 
 ### Event Data Fields (`data` object)
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `initialized` | boolean | Yes | Always `true`, indicating the account has been initialized |
+| `initialized` | boolean | Yes | Always `true` |
+
+There is no event ID in the body. EmailEngine sends it in the `X-EE-Wh-Event-Id` request header, which is what to deduplicate on. See [Delivery and Retries](/docs/webhooks/overview#delivery-and-retries).
 
 ## Example Payload
 
@@ -89,8 +85,9 @@ When no service URL is configured:
 ### Basic Handler
 
 ```javascript
-async function handleAccountInitialized(event) {
-  const { account, date, eventId } = event;
+async function handleAccountInitialized(event, headers) {
+  const { account, date } = event;
+  const eventId = headers['x-ee-wh-event-id'];
 
   console.log(`Account initialized: ${account}`);
   console.log(`  Time: ${date}`);
@@ -104,8 +101,9 @@ async function handleAccountInitialized(event) {
 ### Updating Account Status
 
 ```javascript
-async function handleAccountInitialized(event) {
-  const { account, date, eventId } = event;
+async function handleAccountInitialized(event, headers) {
+  const { account, date } = event;
+  const eventId = headers['x-ee-wh-event-id'];
 
   // Update account status to active
   await db.accounts.update({
@@ -148,7 +146,7 @@ async function handleAccountInitialized(event) {
     await sendNotification({
       userId: user.id,
       type: 'account_ready',
-      message: 'Your email account is now connected and ready to use!'
+      message: 'Your email account is now connected and ready to use'
     });
 
     // Complete onboarding if this was their first account
@@ -163,7 +161,7 @@ async function handleAccountInitialized(event) {
 
 ```javascript
 async function handleAccountInitialized(event) {
-  const { account, date } = event;
+  const { account } = event;
 
   // Mark account as ready
   await db.accounts.update({
@@ -182,25 +180,22 @@ async function handleAccountInitialized(event) {
 
 ## Event Sequence
 
-When a new account is added, webhooks are typically received in this order:
+When a new IMAP account is added, webhooks arrive in this order:
 
 1. **`accountAdded`** - Account configuration is stored
-2. **`authenticationSuccess`** - Account authenticates with mail server
-3. **`accountInitialized`** - Initial sync is complete (this event)
+2. **`authenticationSuccess`** - The mail server accepted the login
+3. **`accountInitialized`** - The first pass over the folders is complete (this event)
 
-After this sequence, the account is fully operational.
+For a Gmail API or Microsoft Graph account, `accountInitialized` is sent before `authenticationSuccess`, because the state becomes `connected` as soon as the provider profile check succeeds and the success notification follows it. Do not depend on the order between the two.
 
 ### Re-initialization After Flush
 
-When an account is flushed (via the [Flush Account API](/docs/api/put-v-1-account-account-flush)), the connection count is reset to 0. This means:
+The [Flush Account API](/docs/api/put-v-1-account-account-flush) resets the connection counter to `0` and discards the account's mailbox listing and sync state, so:
 
-1. The account will disconnect and re-sync
-2. A new `accountInitialized` event will fire after re-synchronization completes
+1. The account disconnects and re-syncs from the current point in time
+2. A new `accountInitialized` event fires when it reaches `connected` again
 
-This behavior is useful for:
-- Resetting account state after configuration changes
-- Recovering from synchronization issues
-- Re-indexing mailbox contents
+Flushing is the way to re-run the initial sync after a configuration change without deleting and re-adding the account.
 
 ## Differences from Other Account Events
 
@@ -208,7 +203,7 @@ This behavior is useful for:
 |-------|----------------|---------------|
 | `accountAdded` | After account creation | Account config is stored, connection not yet attempted |
 | `authenticationSuccess` | After successful authentication | Account can connect to mail server |
-| `accountInitialized` | After first successful sync | Mailboxes synced, account fully operational (this event) |
+| `accountInitialized` | On the first `connected` state | Account is operational (this event) |
 | `accountDeleted` | When account is removed | Account has been deleted from EmailEngine |
 
 ## Related Events
@@ -216,12 +211,12 @@ This behavior is useful for:
 - [accountAdded](/docs/webhooks/accountadded) - Triggered when account is first registered
 - [authenticationSuccess](/docs/webhooks/authenticationsuccess) - Triggered when authentication succeeds
 - [authenticationError](/docs/webhooks/authenticationerror) - Triggered when authentication fails
-- [connectError](/docs/webhooks/connecterror) - Triggered when connection fails (network-level)
-- accountDeleted - Triggered when an account is removed
+- [connectError](/docs/webhooks/connecterror) - Triggered when the connection fails before authentication
+- [accountDeleted](/docs/webhooks/accountdeleted) - Triggered when an account is removed
 
 ## See Also
 
-- [Webhooks Overview](/docs/webhooks/overview) - Complete webhook setup guide
-- [Account Management](/docs/accounts) - Managing email accounts
-- [Create Account API](/docs/api/post-v-1-account) - API endpoint for creating accounts
-- [Flush Account API](/docs/api/put-v-1-account-account-flush) - API endpoint for resetting account state
+- [Webhooks Overview](/docs/webhooks/overview) - Configuring the webhook URL and the `webhookEvents` allowlist
+- [Account Management](/docs/accounts/managing-accounts) - Account states and the lifecycle around them
+- [Create Account API](/docs/api/post-v-1-account) - Registering the account this event follows
+- [Flush Account API](/docs/api/put-v-1-account-account-flush) - Re-running the initial sync and this event

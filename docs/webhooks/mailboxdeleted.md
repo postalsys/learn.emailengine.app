@@ -6,19 +6,22 @@ description: "Webhook event triggered when a previously tracked folder is no lon
 
 # mailboxDeleted
 
-The `mailboxDeleted` webhook event is triggered when EmailEngine detects that a mailbox folder that was previously being tracked is no longer present on the mail server. This event helps applications stay synchronized when users or administrators delete folders.
+The `mailboxDeleted` webhook event is triggered when a folder that EmailEngine was tracking for an IMAP account is no longer on the mail server, or has been deleted through the API. It tells your application to drop whatever it holds for that folder.
 
 ## When This Event is Triggered
 
 The `mailboxDeleted` event fires when:
 
-- A user deletes a folder through their email client or webmail
-- An administrator removes a folder via server management tools
-- A folder is renamed (which may appear as delete + create)
-- A folder is purged due to quota or retention policies
-- The IMAP connection loses access to a previously visible folder (permission changes)
+- A folder that was in the account's stored folder listing is missing from the listing the server returns on the next sync. EmailEngine does not learn why: the user deleted it in a mail client, an administrator removed it, a retention policy purged it, or the account lost access to it
+- A folder is deleted through the [Delete Mailbox API](/docs/api/delete-v-1-account-account-mailbox)
 
-The event is only triggered for folders that EmailEngine was previously aware of. Folders that were never synced will not generate this event when deleted.
+A rename is a deletion followed by a creation as far as the folder listing is concerned, so it produces `mailboxDeleted` for the old path and [`mailboxNew`](/docs/webhooks/mailboxnew) for the new one.
+
+The event covers only folders EmailEngine knew about. A folder created and deleted between two listings is never seen. Nothing is sent when an account is deleted, paused or reconfigured, even though EmailEngine drops its folder state then.
+
+:::note IMAP accounts only
+Folder events are produced by the IMAP client. Gmail API and Microsoft Graph accounts do not send `mailboxNew`, `mailboxDeleted` or `mailboxReset`.
+:::
 
 ## Common Use Cases
 
@@ -27,7 +30,6 @@ The event is only triggered for folders that EmailEngine was previously aware of
 - **UI synchronization** - Update folder trees and navigation menus in your application
 - **Audit logging** - Track folder deletions for compliance or security monitoring
 - **Sync state cleanup** - Clear sync markers and state data tied to the deleted folder
-- **Resource cleanup** - Release any resources (subscriptions, watches) associated with the folder
 
 ## Payload Schema
 
@@ -35,21 +37,23 @@ The event is only triggered for folders that EmailEngine was previously aware of
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `serviceUrl` | string | No | The configured EmailEngine service URL |
-| `account` | string | Yes | Account ID where the folder was deleted |
+| `serviceUrl` | string or null | Yes | The configured EmailEngine service URL. `null` when the `serviceUrl` setting is empty |
+| `account` | string | Yes | Account ID the folder belonged to |
 | `date` | string | Yes | ISO 8601 timestamp when the webhook was generated |
-| `path` | string | Yes | Mailbox folder path that was deleted (e.g., "Archive/2023") |
-| `specialUse` | string | No | Special use flag of the folder if applicable (e.g., "\Trash", "\Drafts") |
-| `event` | string | Yes | Event type, always "mailboxDeleted" for this event |
-| `data` | object | Yes | Folder details at the time of deletion |
+| `path` | string | Yes | Full path of the deleted folder, for example `Archive/2023` |
+| `specialUse` | string | No | Special-use flag of the folder, for example `\Trash`. Present only when the folder had one |
+| `event` | string | Yes | Always `mailboxDeleted` |
+| `data` | object | Yes | Folder details as last stored |
 
 ### Folder Data Fields (`data` object)
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `path` | string | Yes | Mailbox folder path (duplicated from top level for convenience) |
-| `name` | string | Yes | Display name of the folder (last segment of the path) |
-| `specialUse` | string/boolean | No | Special use attribute (e.g., "\Sent", "\Trash") or `false` if none |
+| `path` | string | Yes | Full folder path, the same value as the top-level `path` |
+| `name` | string | Yes | Display name of the folder, the last segment of the path |
+| `specialUse` | string or boolean | Yes | Special-use flag such as `\Sent`, or `false` when the folder had none |
+
+There is no event ID in the body. EmailEngine sends it in the `X-EE-Wh-Event-Id` request header. See [Delivery and Retries](/docs/webhooks/overview#delivery-and-retries).
 
 ## Example Payload
 
@@ -72,7 +76,7 @@ The event is only triggered for folders that EmailEngine was previously aware of
 
 ### Special Use Folder Deletion
 
-When a special use folder is deleted (note: deleting Trash or other special folders is typically not recommended):
+A folder with a special-use flag carries it at both levels:
 
 ```json
 {
@@ -128,8 +132,9 @@ async function handleMailboxDeleted(event) {
 ### Database Cleanup
 
 ```javascript
-async function handleMailboxDeleted(event) {
-  const { account, path, date, eventId } = event;
+async function handleMailboxDeleted(event, headers) {
+  const { account, path, date } = event;
+  const eventId = headers['x-ee-wh-event-id'];
 
   try {
     // Delete all cached messages for this folder
@@ -161,7 +166,7 @@ async function handleMailboxDeleted(event) {
 
   } catch (err) {
     console.error('Failed to cleanup deleted folder:', err);
-    throw err; // Retry the webhook
+    throw err; // Respond with an error status so EmailEngine retries the delivery
   }
 }
 ```
@@ -202,7 +207,7 @@ async function handleMailboxDeleted(event) {
 
 ```javascript
 async function handleMailboxDeleted(event) {
-  const { account, path, date } = event;
+  const { account, path } = event;
 
   // Delete all indexed documents for this folder
   const result = await searchIndex.deleteByQuery({
@@ -226,31 +231,19 @@ async function handleMailboxDeleted(event) {
 }
 ```
 
-### Alert on Critical Folder Deletion
+### Alert on Special-Use Folder Deletion
 
 ```javascript
-async function handleMailboxDeleted(event) {
-  const { account, path, date, data, eventId } = event;
+async function handleMailboxDeleted(event, headers) {
+  const { account, path, date, data } = event;
+  const eventId = headers['x-ee-wh-event-id'];
 
-  // Alert if a critical folder was deleted
-  const criticalPatterns = [
-    /^inbox$/i,
-    /^sent$/i,
-    /^archive$/i,
-    /\\Inbox/,
-    /\\Sent/,
-    /\\Archive/
-  ];
-
-  const isCritical = criticalPatterns.some(pattern =>
-    pattern.test(path) || pattern.test(data.specialUse || '')
-  );
-
-  if (isCritical) {
+  // Servers normally refuse to delete these; one disappearing is worth a look
+  if (data.specialUse) {
     await alertService.send({
       severity: 'warning',
-      title: 'Critical Folder Deleted',
-      message: `A critical folder "${path}" was deleted on account ${account}`,
+      title: 'Special-use folder deleted',
+      message: `Folder "${path}" (${data.specialUse}) was deleted on account ${account}`,
       details: {
         account,
         folder: path,
@@ -271,16 +264,16 @@ async function handleMailboxDeleted(event) {
 
 ```javascript
 async function handleMailboxDeleted(event) {
-  const { account, path, date } = event;
+  const { account, path } = event;
 
-  // Delete this folder and any child folders that might also be affected
-  // (The IMAP server may send separate events for children, but this ensures cleanup)
+  // Each child folder gets its own event, but cleaning them up here as well
+  // keeps the local state consistent if a child event is delayed or lost
   const deletedFolders = await db.folders.deleteMany({
     where: {
       accountId: account,
       OR: [
         { path: path },
-        { path: { startsWith: `${path}/` } } // Child folders
+        { path: { startsWith: `${path}/` } }
       ]
     }
   });
@@ -304,53 +297,33 @@ async function handleMailboxDeleted(event) {
 
 ### Folder vs Message Deletion
 
-The `mailboxDeleted` event indicates the folder itself is gone. This is different from messages being deleted within a folder:
+The `mailboxDeleted` event means the folder itself is gone. This is different from messages being deleted within a folder:
 
 - **mailboxDeleted** - The entire folder no longer exists
 - **messageDeleted** - Individual messages removed from a folder that still exists
 
-When a folder is deleted, you will receive `mailboxDeleted` but typically not individual `messageDeleted` events for the messages it contained.
+When a folder is deleted, EmailEngine discards its message index without sending `messageDeleted` for the messages it contained. Treat `mailboxDeleted` as covering all of them.
 
 ### Rename Operations
 
-Some email clients and servers handle folder renames as a delete followed by a create. In this case, you may receive:
+EmailEngine matches folders by path and does not detect renames. Renaming a folder produces:
 
-1. `mailboxDeleted` for the old folder path
-2. `mailboxNew` for the new folder path
+1. `mailboxDeleted` for the old path
+2. `mailboxNew` for the new path, after its first sync
 
-If you need to track renames, consider matching by folder contents or timestamps rather than assuming path continuity.
-
-### Special Use Folders
-
-Deleting special use folders (Inbox, Sent, Trash, Drafts) is usually not possible or not recommended. However, some servers allow it. Your application should handle these cases gracefully:
-
-```javascript
-if (data.specialUse) {
-  // Log a warning - special folders shouldn't normally be deleted
-  logger.warn('Special use folder deleted', {
-    account,
-    path,
-    specialUse: data.specialUse
-  });
-}
-```
+If you need to follow renames, match on folder contents rather than assuming path continuity. The messages of the renamed folder are indexed afresh under the new path, and [`messageNew`](/docs/webhooks/messagenew) is not sent for them.
 
 ### Timing and Ordering
 
-The `mailboxDeleted` event is triggered when EmailEngine detects the folder is missing during synchronization. The actual deletion may have occurred earlier. Consider:
+The event is sent when EmailEngine notices the folder is missing, which is on the next folder listing after the deletion, not at the moment of deletion:
 
 - The `date` field is when the webhook was generated, not when the folder was deleted
-- Events for multiple folder operations may arrive out of order
-- If a parent folder is deleted, you may receive events for child folders as well
+- When a folder with subfolders is deleted, each subfolder that disappears from the listing gets its own event
+- Events for several folders are queued together and can be delivered in any order
 
 ### Data Retention
 
-Before deleting cached data, consider whether you need to retain any information for:
-
-- Audit compliance
-- Recovery purposes
-- Analytics and reporting
-- Legal holds
+Before deleting cached data, consider whether you need to retain any information for audit compliance, recovery, analytics or legal holds:
 
 ```javascript
 async function handleMailboxDeleted(event) {
@@ -380,14 +353,14 @@ async function handleMailboxDeleted(event) {
 
 ## Related Events
 
-- [mailboxNew](/docs/webhooks/mailboxnew) - Triggered when a new folder is created
-- [mailboxReset](/docs/webhooks/mailboxreset) - Triggered when a folder's UIDVALIDITY changes
+- [mailboxNew](/docs/webhooks/mailboxnew) - Triggered when a new folder is found
+- [mailboxReset](/docs/webhooks/mailboxreset) - Triggered when a folder's index is rebuilt
 - [messageDeleted](/docs/webhooks/messagedeleted) - Triggered when individual messages are deleted
-- [accountDeleted](/docs/webhooks/overview) - Triggered when an entire account is removed
+- [accountDeleted](/docs/webhooks/accountdeleted) - Triggered when an entire account is removed
 
 ## See Also
 
-- [Webhooks Overview](/docs/webhooks/overview) - Complete webhook setup guide
-- [Mailbox Operations](/docs/api/get-v-1-account-account-mailboxes) - List mailboxes via API
-- [Delete Mailbox API](/docs/api/delete-v-1-account-account-mailbox) - Delete a mailbox programmatically
-- [Settings API](/docs/api/post-v-1-settings) - Configure webhook settings
+- [Webhooks Overview](/docs/webhooks/overview) - Configuring the webhook URL and the `webhookEvents` allowlist
+- [Mailbox Operations](/docs/receiving/mailbox-operations) - Listing, creating, renaming and deleting folders
+- [List Mailboxes API](/docs/api/get-v-1-account-account-mailboxes) - Reading the current folder listing
+- [Delete Mailbox API](/docs/api/delete-v-1-account-account-mailbox) - Deleting a folder, which also triggers this event

@@ -6,23 +6,18 @@ description: "Webhook event triggered when a recipient unsubscribes from a maili
 
 # listUnsubscribe
 
-The `listUnsubscribe` webhook event is triggered when a recipient uses the one-click unsubscribe mechanism to remove themselves from a mailing list. This event enables you to keep your mailing lists synchronized and honor unsubscribe requests promptly.
+The `listUnsubscribe` webhook event is triggered when a recipient unsubscribes from a mailing list through the unsubscribe mechanism EmailEngine adds to messages sent with a `listId`. Use it to keep your own subscriber records in step with the suppression list EmailEngine maintains.
 
 ## When This Event is Triggered
 
-The `listUnsubscribe` event fires when:
+The `listUnsubscribe` event fires when a recipient is added to the suppression list of a `listId` through either of the two public endpoints EmailEngine links from the message:
 
-- A recipient clicks the unsubscribe link in an email that includes List-Unsubscribe headers
-- The recipient confirms unsubscription via the one-click unsubscribe flow (RFC 8058)
-- EmailEngine successfully validates the unsubscribe request signature (if service secret is configured)
-- This is the first time the recipient has unsubscribed from this specific list (duplicate requests are ignored)
+- **One-click unsubscribe (RFC 8058)**: the recipient's mail client sends a `POST` to the signed `List-Unsubscribe` URL. Gmail, Yahoo and other clients do this when the user presses their "Unsubscribe" button
+- **The unsubscribe page**: the recipient opens the same URL in a browser and confirms on the form EmailEngine renders
 
-The one-click unsubscribe mechanism is implemented according to RFC 8058, which allows email clients (like Gmail, Outlook, Yahoo) to display a prominent "Unsubscribe" button that users can click to remove themselves from mailing lists.
+In both cases the request has to carry a valid signature, the account has to exist, and the address must not already be on the suppression list for that `listId`. A repeat request is acknowledged but does not fire the event again.
 
-**Important:** This event is only triggered when:
-1. The email was sent with List-Unsubscribe headers configured
-2. The `listId` was specified when sending the email
-3. The recipient uses the one-click unsubscribe endpoint
+Adding an address through the [Blocklists API](/docs/api/post-v-1-blocklist-listid) or the admin interface does not fire it; the event reports recipient actions.
 
 ## Common Use Cases
 
@@ -39,21 +34,23 @@ The one-click unsubscribe mechanism is implemented according to RFC 8058, which 
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `serviceUrl` | string | No | The configured EmailEngine service URL |
+| `serviceUrl` | string or null | Yes | The configured EmailEngine service URL. `null` when the `serviceUrl` setting is empty |
 | `account` | string | Yes | Account ID that sent the original message |
-| `date` | string | Yes | ISO 8601 timestamp when the unsubscribe request was processed |
-| `event` | string | Yes | Event type, always "listUnsubscribe" for this event |
-| `data` | object | Yes | Unsubscribe data object (see below) |
+| `date` | string | Yes | ISO 8601 timestamp when the webhook was generated |
+| `event` | string | Yes | Always `listUnsubscribe` |
+| `data` | object | Yes | Unsubscribe details (see below) |
 
 ### Data Object Fields
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `recipient` | string | Yes | Email address of the recipient who unsubscribed |
-| `messageId` | string | Yes | Message-ID header of the email from which they unsubscribed |
-| `listId` | string | Yes | The mailing list identifier from which the recipient unsubscribed |
-| `remoteAddress` | string | Yes | IP address of the client that initiated the unsubscribe request |
-| `userAgent` | string | No | User-Agent header from the unsubscribe request |
+| `recipient` | string | Yes | Email address that was unsubscribed |
+| `messageId` | string | No | Message-ID of the message whose unsubscribe link was used. Absent when the link was generated from the admin interface rather than embedded in a message |
+| `listId` | string | Yes | The list the recipient was removed from |
+| `remoteAddress` | string | Yes | IP address the request came from. For a one-click unsubscribe this is the mail provider's server, not the recipient |
+| `userAgent` | string | No | `User-Agent` header of the request, when one was sent |
+
+There is no event ID in the body. EmailEngine sends it in the `X-EE-Wh-Event-Id` request header. See [Delivery and Retries](/docs/webhooks/overview#delivery-and-retries).
 
 ## Example Payload
 
@@ -75,10 +72,11 @@ The one-click unsubscribe mechanism is implemented according to RFC 8058, which 
 
 ## Example with Minimal Data
 
-When the email client submits the one-click unsubscribe request without a User-Agent header:
+A one-click request from a mail provider that sends no `User-Agent` header:
 
 ```json
 {
+  "serviceUrl": "https://emailengine.example.com",
   "account": "notifications",
   "date": "2025-10-17T09:15:22.000Z",
   "event": "listUnsubscribe",
@@ -91,13 +89,9 @@ When the email client submits the one-click unsubscribe request without a User-A
 }
 ```
 
-## Enabling List-Unsubscribe Headers
+## Getting the Unsubscribe Headers into a Message
 
-To enable one-click unsubscribe functionality, include List-Unsubscribe headers when sending emails:
-
-### Per-Message Configuration
-
-Include the `listId` and enable List-Unsubscribe headers when sending:
+EmailEngine adds the headers itself. Set `listId` on the [submit request](/docs/api/post-v-1-account-account-submit) and send to one recipient at a time, and it adds `List-ID`, a signed `List-Unsubscribe` URL and `List-Unsubscribe-Post: List-Unsubscribe=One-Click` to the message:
 
 ```bash
 curl -X POST "https://emailengine.example.com/v1/account/marketing/submit" \
@@ -113,42 +107,19 @@ curl -X POST "https://emailengine.example.com/v1/account/marketing/submit" \
         "address": "subscriber@company.com"
       }
     ],
-    "subject": "Weekly Newsletter - October Edition",
-    "html": "<p>Hello!</p><p>Here is your weekly newsletter...</p>",
-    "listHeaders": {
-      "id": "weekly-newsletter",
-      "unsubscribe": true
-    }
+    "subject": "Weekly Newsletter",
+    "html": "<p>Hello!</p><p>Here is your weekly newsletter.</p>",
+    "listId": "weekly-newsletter"
   }'
 ```
 
-The `listHeaders` object supports the following options:
+Three conditions apply, and if any of them is not met the message is sent without the headers and can never produce this event:
 
-- `id` (required for unsubscribe): Unique identifier for the mailing list
-- `unsubscribe`: Set to `true` to add List-Unsubscribe header with one-click URL
+- The `serviceUrl` setting must be set, because the unsubscribe URL is built from it
+- `listId` must be in hostname format, such as `weekly-newsletter`
+- The message must have exactly one `to` recipient. Use [mail merge](/docs/sending/mail-merge) to send a campaign, which submits one message per recipient
 
-### How List-Unsubscribe Works
-
-When you send an email with List-Unsubscribe enabled, EmailEngine:
-
-1. Generates a signed one-click unsubscribe URL
-2. Adds `List-Unsubscribe` and `List-Unsubscribe-Post` headers to the email
-3. Email clients that support RFC 8058 display an unsubscribe button
-
-Example headers added to the email:
-
-```
-List-Unsubscribe: <https://emailengine.example.com/unsubscribe?data=...&sig=...>
-List-Unsubscribe-Post: List-Unsubscribe=One-Click
-```
-
-When a recipient clicks the unsubscribe button:
-
-1. The email client sends a POST request to the unsubscribe URL
-2. EmailEngine validates the signature
-3. The recipient is added to the suppression list for that list ID
-4. This webhook is triggered (only for the first unsubscribe)
-5. Future emails to this recipient with the same list ID will be suppressed
+A recipient who is already on the suppression list for that `listId` is not sent to at all; the submit response reports the message as skipped. [Virtual Lists](/docs/advanced/virtual-lists) covers the whole flow, and [Blocklists](/docs/advanced/blocklists) covers managing the suppression list.
 
 ## Handling the Event
 
@@ -161,7 +132,7 @@ async function handleListUnsubscribe(event) {
   console.log(`Unsubscribe request for account ${account}`);
   console.log(`  Recipient: ${data.recipient}`);
   console.log(`  List ID: ${data.listId}`);
-  console.log(`  Message-ID: ${data.messageId}`);
+  console.log(`  Message-ID: ${data.messageId || 'none'}`);
   console.log(`  Unsubscribed at: ${date}`);
 
   // Update your mailing list database
@@ -169,7 +140,7 @@ async function handleListUnsubscribe(event) {
     email: data.recipient,
     listId: data.listId,
     unsubscribedAt: new Date(date),
-    source: 'one-click'
+    source: 'emailengine'
   });
 }
 ```
@@ -258,76 +229,64 @@ async function handleListUnsubscribe(event) {
   });
 
   // Find which campaign triggered the unsubscribe
-  const originalMessage = await db.sentMessages.findOne({
-    messageId: data.messageId
-  });
+  if (data.messageId) {
+    const originalMessage = await db.sentMessages.findOne({
+      messageId: data.messageId
+    });
 
-  if (originalMessage) {
-    // Increment unsubscribe count for the campaign
-    await db.campaigns.updateOne(
-      { _id: originalMessage.campaignId },
-      { $inc: { unsubscribeCount: 1 } }
-    );
+    if (originalMessage) {
+      // Increment unsubscribe count for the campaign
+      await db.campaigns.updateOne(
+        { _id: originalMessage.campaignId },
+        { $inc: { unsubscribeCount: 1 } }
+      );
+    }
   }
 }
 ```
 
 ## Technical Details
 
-### One-Click Unsubscribe Flow
+### The Unsubscribe Flow
 
-The one-click unsubscribe mechanism follows RFC 8058:
+1. **Sending**: a message submitted with `listId` to a single recipient gets `List-ID`, `List-Unsubscribe` and `List-Unsubscribe-Post` headers. The unsubscribe URL carries the account, list, recipient and Message-ID in a signed blob, so it cannot be forged or edited
+2. **Recipient action**: the mail client sends a one-click `POST` to the URL, or the recipient opens it and confirms on the page
+3. **Validation**: EmailEngine verifies the signature and that the account exists. A request that fails either check is answered with a plain acknowledgement rather than an error, as RFC 8058 asks, and nothing is recorded
+4. **Suppression**: the recipient is added to the suppression list for that `listId`
+5. **Webhook**: this event is sent if the address was not already on the list
 
-1. **Email Sending**: When an email is sent with `listHeaders.unsubscribe: true`, EmailEngine adds:
-   - `List-Unsubscribe` header with a POST URL
-   - `List-Unsubscribe-Post: List-Unsubscribe=One-Click` header
-
-2. **User Action**: The recipient's email client displays an unsubscribe button. When clicked, the client sends an HTTP POST request to EmailEngine's `/unsubscribe` endpoint.
-
-3. **Validation**: EmailEngine verifies:
-   - The request signature (if service secret is configured)
-   - The data integrity
-   - The account exists
-
-4. **Suppression**: The recipient is added to the suppression list for the specific list ID.
-
-5. **Webhook**: The `listUnsubscribe` event is triggered (only for new unsubscribes).
+The signed link carries no expiry. It stays valid for as long as the service secret it was signed with, so an unsubscribe from an old message still works.
 
 ### Suppression Lists
 
-EmailEngine maintains per-list suppression lists. When a recipient unsubscribes:
+EmailEngine keeps one suppression list per `listId`. After an unsubscribe:
 
-- They are added to the suppression list for that specific `listId`
-- Future emails sent with the same `listId` to that recipient are automatically suppressed
-- The suppression only applies to that specific list, not all emails
-
-You can manage suppression lists via the API:
-
-- [Get blocklist entries](/docs/api/get-v-1-blocklist-listid) - View blocked/unsubscribed emails
-- [Add to blocklist](/docs/api/post-v-1-blocklist-listid) - Manually add entries
-- [Remove from blocklist](/docs/api/delete-v-1-blocklist-listid) - Re-enable sending
+- Future submissions with the same `listId` to that recipient are skipped rather than sent, and the submit response says so
+- Other lists are unaffected
+- The entry stays until it is removed through the [Blocklists API](/docs/api/delete-v-1-blocklist-listid), the admin interface, or the recipient's own re-subscription, which sends [`listSubscribe`](/docs/webhooks/listsubscribe)
 
 ### Duplicate Detection
 
-EmailEngine only triggers the `listUnsubscribe` webhook for the first unsubscribe request. If a recipient clicks unsubscribe multiple times (or if multiple email clients trigger the request), subsequent requests are acknowledged but do not trigger additional webhooks.
+Only the request that adds the address to the suppression list fires the event. A second unsubscribe for the same address and list, from the same or another mail client, is acknowledged without a webhook.
 
 ## Best Practices
 
-1. **Act on every unsubscribe** - Always honor unsubscribe requests immediately to maintain compliance and sender reputation
+1. **Act on every unsubscribe** - Honor unsubscribe requests immediately to maintain compliance and sender reputation
 2. **Update all systems** - Sync unsubscribe status across your CRM, mailing list service, and internal databases
-3. **Log for compliance** - Maintain records of unsubscribe requests with timestamps and source information for regulatory compliance
-4. **Use unique list IDs** - Create distinct list IDs for different mailing lists to allow granular unsubscribe management
+3. **Log for compliance** - Maintain records of unsubscribe requests with timestamps and source information
+4. **Use one list ID per list** - Distinct list IDs let a recipient leave one list without leaving the others
 5. **Monitor unsubscribe rates** - Track unsubscribe rates per campaign to identify content or frequency issues
-6. **Provide alternatives** - Consider offering preference options instead of complete unsubscribe where appropriate
-7. **Handle gracefully** - Even if your webhook processing fails, EmailEngine maintains the suppression list independently
+6. **Handle gracefully** - Even if your webhook processing fails, EmailEngine's suppression list already holds the entry and stops the sending
 
 ## Related Events
 
-- [messageSent](/docs/webhooks/messagesent) - Triggered when the original email was sent
-- [trackClick](/docs/webhooks/trackclick) - Triggered when links in emails are clicked
+- [listSubscribe](/docs/webhooks/listsubscribe) - Triggered when a recipient re-subscribes from the unsubscribe page
+- [messageSent](/docs/webhooks/messagesent) - Triggered when the original message was accepted for delivery
+- [trackClick](/docs/webhooks/trackclick) - Triggered when links in messages are clicked
 
 ## See Also
 
-- [Webhooks Overview](/docs/webhooks/overview) - Complete webhook setup guide
-- [Sending Emails](/docs/sending/basic-sending) - How to send emails with List-Unsubscribe headers
-- [Blocklists API](/docs/api/get-v-1-blocklists) - Manage blocklists and suppression lists programmatically
+- [Webhooks Overview](/docs/webhooks/overview) - Configuring the webhook URL and the `webhookEvents` allowlist
+- [Virtual Lists](/docs/advanced/virtual-lists) - Sending list mail with `listId` so that this event can fire
+- [Blocklists](/docs/advanced/blocklists) - Reading and editing the suppression lists this event updates
+- [Mail Merge](/docs/sending/mail-merge) - Sending one message per recipient

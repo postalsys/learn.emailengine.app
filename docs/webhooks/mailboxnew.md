@@ -6,26 +6,29 @@ description: "Webhook event triggered when a new folder is discovered on the mai
 
 # mailboxNew
 
-The `mailboxNew` webhook event is triggered when EmailEngine discovers a new mailbox folder on the mail server that was not previously tracked. This event helps applications stay synchronized when users or administrators create new folders.
+The `mailboxNew` webhook event is triggered when EmailEngine finds a folder on an IMAP account's mail server that was not in its stored folder listing, and has finished the folder's first sync. It tells your application that a folder exists and that message events for it can follow.
 
 ## When This Event is Triggered
 
-The `mailboxNew` event fires when:
+The `mailboxNew` event fires when a folder appears in the server's folder listing that EmailEngine had not stored before, and its first sync completes. That covers:
 
-- A user creates a new folder through their email client or webmail
-- An administrator creates a folder via server management tools
-- A folder is renamed (which may appear as delete + create)
-- EmailEngine discovers a folder during initial account synchronization
-- A previously inaccessible folder becomes visible (permission changes)
+- A folder created in a mail client, in webmail, by an administrator, or through the [Create Mailbox API](/docs/api/post-v-1-account-account-mailbox)
+- The new path of a renamed folder, which the listing shows as a deletion plus a creation
+- A folder that became visible, for example after a permission change on a shared namespace
+- Every folder of a newly added account, and every folder again after a [flush](/docs/api/put-v-1-account-account-flush), because the stored listing starts empty
 
-The event is triggered after EmailEngine has completed the initial sync of the new folder, ensuring the folder is ready for use.
+The event is sent after the folder's first sync, so by the time it arrives the folder can be listed and its messages fetched. Messages that were already in the folder are indexed as the baseline and do not produce [`messageNew`](/docs/webhooks/messagenew).
+
+:::note IMAP accounts only
+Folder events are produced by the IMAP client. Gmail API and Microsoft Graph accounts do not send `mailboxNew`, `mailboxDeleted` or `mailboxReset`.
+:::
 
 ## Common Use Cases
 
 - **Folder tree synchronization** - Update folder lists and navigation menus in your application
 - **Database initialization** - Create folder metadata records for the new folder
 - **Search index setup** - Initialize search index structures for the new folder
-- **Subscription management** - Automatically subscribe to new folders matching certain patterns
+- **Subscription management** - Start watching folders that match a pattern
 - **Audit logging** - Track folder creation for compliance or security monitoring
 - **User notifications** - Alert users when new folders appear in their accounts
 
@@ -35,22 +38,24 @@ The event is triggered after EmailEngine has completed the initial sync of the n
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `serviceUrl` | string | No | The configured EmailEngine service URL |
-| `account` | string | Yes | Account ID where the folder was created |
+| `serviceUrl` | string or null | Yes | The configured EmailEngine service URL. `null` when the `serviceUrl` setting is empty |
+| `account` | string | Yes | Account ID the folder belongs to |
 | `date` | string | Yes | ISO 8601 timestamp when the webhook was generated |
-| `path` | string | Yes | Mailbox folder path that was created (e.g., "Projects/Active") |
-| `specialUse` | string | No | Special use flag of the folder if applicable (e.g., "\Archive", "\Junk") |
-| `event` | string | Yes | Event type, always "mailboxNew" for this event |
+| `path` | string | Yes | Full path of the new folder, for example `Projects/Active` |
+| `specialUse` | string | No | Special-use flag of the folder, for example `\Archive`. Present only when the folder has one |
+| `event` | string | Yes | Always `mailboxNew` |
 | `data` | object | Yes | Folder details |
 
 ### Folder Data Fields (`data` object)
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `path` | string | Yes | Mailbox folder path (duplicated from top level for convenience) |
-| `name` | string | Yes | Display name of the folder (last segment of the path) |
-| `specialUse` | string/boolean | No | Special use attribute (e.g., "\Sent", "\Archive") or `false` if none |
-| `uidValidity` | string | Yes | IMAP UIDVALIDITY value for the folder (as string) |
+| `path` | string | Yes | Full folder path, the same value as the top-level `path` |
+| `name` | string | Yes | Display name of the folder, the last segment of the path |
+| `specialUse` | string or boolean | Yes | Special-use flag such as `\Sent`, or `false` when the folder has none |
+| `uidValidity` | string | Yes | The folder's IMAP UIDVALIDITY, as a string |
+
+There is no event ID in the body. EmailEngine sends it in the `X-EE-Wh-Event-Id` request header. See [Delivery and Retries](/docs/webhooks/overview#delivery-and-retries).
 
 ## Example Payload
 
@@ -72,9 +77,9 @@ The event is triggered after EmailEngine has completed the initial sync of the n
 }
 ```
 
-### Special Use Folder Creation
+### Special Use Folder
 
-When a special use folder is created or discovered:
+A folder with a special-use flag carries it at both levels:
 
 ```json
 {
@@ -119,7 +124,7 @@ When a special use folder is created or discovered:
 async function handleMailboxNew(event) {
   const { account, path, data } = event;
 
-  console.log(`New folder created for ${account}:`);
+  console.log(`New folder for ${account}:`);
   console.log(`  Path: ${path}`);
   console.log(`  Name: ${data.name}`);
   console.log(`  Special Use: ${data.specialUse || 'none'}`);
@@ -133,8 +138,9 @@ async function handleMailboxNew(event) {
 ### Database Initialization
 
 ```javascript
-async function handleMailboxNew(event) {
-  const { account, path, date, data, eventId } = event;
+async function handleMailboxNew(event, headers) {
+  const { account, path, date, data } = event;
+  const eventId = headers['x-ee-wh-event-id'];
 
   try {
     // Create folder record
@@ -165,12 +171,12 @@ async function handleMailboxNew(event) {
 
   } catch (err) {
     if (err.code === 'P2002') {
-      // Folder already exists - this can happen with duplicate webhooks
+      // Folder already exists - a redelivered webhook, or a flush that re-announced the folder
       console.log(`Folder ${path} already exists, skipping`);
       return;
     }
     console.error('Failed to initialize folder:', err);
-    throw err; // Retry the webhook
+    throw err; // Respond with an error status so EmailEngine retries the delivery
   }
 }
 ```
@@ -198,8 +204,7 @@ async function handleMailboxNew(event) {
     path,
     name: data.name,
     specialUse: data.specialUse,
-    uidValidity: data.uidValidity,
-    messageCount: 0 // New folder starts empty
+    uidValidity: data.uidValidity
   });
 
   // Invalidate folder list cache
@@ -207,32 +212,29 @@ async function handleMailboxNew(event) {
 }
 ```
 
-### Auto-Subscribe to Matching Folders
+### Watching Folders that Match a Pattern
 
 ```javascript
 async function handleMailboxNew(event) {
   const { account, path, data } = event;
 
-  // Define patterns for auto-subscription
-  const autoSubscribePatterns = [
+  // Define patterns for folders your application processes
+  const watchPatterns = [
     /^Projects\//,
     /^Clients\//,
     /^Archive\/\d{4}/
   ];
 
-  const shouldSubscribe = autoSubscribePatterns.some(pattern =>
-    pattern.test(path)
-  );
+  const shouldWatch = watchPatterns.some(pattern => pattern.test(path));
 
-  if (shouldSubscribe) {
-    // Subscribe to notifications for this folder
-    await subscriptionManager.add({
+  if (shouldWatch) {
+    await watchList.add({
       account,
       folder: path,
       events: ['messageNew', 'messageDeleted', 'messageUpdated']
     });
 
-    console.log(`Auto-subscribed to folder ${path} for account ${account}`);
+    console.log(`Watching folder ${path} for account ${account}`);
   }
 
   // Always track the folder
@@ -240,7 +242,7 @@ async function handleMailboxNew(event) {
     path,
     name: data.name,
     specialUse: data.specialUse,
-    subscribed: shouldSubscribe
+    watched: shouldWatch
   });
 }
 ```
@@ -266,49 +268,6 @@ async function handleMailboxNew(event) {
   });
 
   console.log(`Search index initialized for folder ${account}/${path}`);
-}
-```
-
-### Alert on New Shared or Special Folders
-
-```javascript
-async function handleMailboxNew(event) {
-  const { account, path, date, data, eventId } = event;
-
-  // Alert if a new special use folder appears (unusual after initial setup)
-  if (data.specialUse) {
-    const accountAge = await getAccountAge(account);
-    const isNewAccount = accountAge < 5 * 60 * 1000; // Less than 5 minutes old
-
-    if (!isNewAccount) {
-      await alertService.send({
-        severity: 'info',
-        title: 'New Special Use Folder',
-        message: `A new special use folder "${path}" appeared on account ${account}`,
-        details: {
-          account,
-          folder: path,
-          folderName: data.name,
-          specialUse: data.specialUse,
-          timestamp: date,
-          eventId
-        }
-      });
-    }
-  }
-
-  // Track shared folders (common in Exchange/Office 365)
-  if (path.startsWith('Shared/') || path.includes('/Public Folders/')) {
-    await sharedFolderTracker.register({
-      account,
-      path,
-      name: data.name,
-      discoveredAt: date
-    });
-  }
-
-  // Proceed with normal initialization
-  await initializeFolder(account, path, data);
 }
 ```
 
@@ -353,85 +312,47 @@ async function handleMailboxNew(event) {
 }
 ```
 
+The path separator is whatever the server uses. `/` is common, but Microsoft Exchange and some other servers use `.` or `\`. The [List Mailboxes API](/docs/api/get-v-1-account-account-mailboxes) returns each folder's `delimiter`.
+
 ## Important Considerations
 
 ### Initial Account Sync
 
-During initial account synchronization, EmailEngine will trigger `mailboxNew` events for all existing folders. If your application is processing webhooks for a newly added account, expect a burst of `mailboxNew` events.
+When an account is added, or after a flush, every folder is new to EmailEngine, so it sends one `mailboxNew` per folder as each finishes its first sync. Expect a burst for a newly added account, and treat a `mailboxNew` for a folder you already know about as a re-announcement rather than an error:
 
 ```javascript
 async function handleMailboxNew(event) {
-  const { account, path, date } = event;
+  const { account, path } = event;
 
-  // Check if this is during initial sync
-  const accountStatus = await getAccountStatus(account);
+  const known = await db.folders.findFirst({
+    where: { accountId: account, path }
+  });
 
-  if (accountStatus === 'syncing') {
-    // Buffer events during initial sync
-    await eventBuffer.add(account, event);
+  if (known) {
+    // Re-announced after a flush, or a redelivery. Refresh what changed
+    await db.folders.update({
+      where: { id: known.id },
+      data: { uidValidity: event.data.uidValidity, specialUse: event.data.specialUse || null }
+    });
     return;
   }
 
-  // Process normally
   await processNewFolder(account, path, event.data);
 }
 ```
 
 ### Rename Operations
 
-Some email clients and servers handle folder renames as a delete followed by a create. In this case, you may receive:
+EmailEngine matches folders by path and does not detect renames. Renaming a folder produces:
 
-1. `mailboxDeleted` for the old folder path
-2. `mailboxNew` for the new folder path
+1. `mailboxDeleted` for the old path
+2. `mailboxNew` for the new path, after its first sync
 
-If you need to track renames and preserve folder associations:
-
-```javascript
-async function handleMailboxNew(event) {
-  const { account, path, data, date } = event;
-
-  // Check if this might be a rename (recent deletion with same UIDVALIDITY)
-  const recentDeletion = await db.folderDeletions.findFirst({
-    where: {
-      accountId: account,
-      uidValidity: data.uidValidity,
-      deletedAt: {
-        gte: new Date(Date.now() - 60000) // Within last minute
-      }
-    }
-  });
-
-  if (recentDeletion) {
-    // This is likely a rename
-    console.log(`Folder rename detected: ${recentDeletion.path} -> ${path}`);
-
-    // Update existing folder record instead of creating new
-    await db.folders.update({
-      where: { id: recentDeletion.folderId },
-      data: {
-        path: path,
-        name: data.name,
-        deletedAt: null
-      }
-    });
-
-    // Update message folder references
-    await db.messages.updateMany({
-      where: { folderId: recentDeletion.folderId },
-      data: { folder: path }
-    });
-
-    return;
-  }
-
-  // Normal new folder creation
-  await createNewFolder(account, path, data);
-}
-```
+If you need to follow renames, match on folder contents rather than assuming path continuity. The messages of the renamed folder are indexed afresh under the new path, and `messageNew` is not sent for them.
 
 ### UIDVALIDITY
 
-The `uidValidity` field is an important IMAP concept that uniquely identifies the state of a mailbox. If the UIDVALIDITY of a folder changes, all previously cached UIDs become invalid. Store this value to detect mailbox resets:
+`uidValidity` identifies the folder's current numbering of messages. If the server assigns the folder a new UIDVALIDITY later, every UID EmailEngine stored for it becomes invalid; EmailEngine then rebuilds its index and sends [`mailboxReset`](/docs/webhooks/mailboxreset) with the old and new values. Store the value from this event if you want to compare:
 
 ```javascript
 async function handleMailboxNew(event) {
@@ -447,19 +368,19 @@ async function handleMailboxNew(event) {
 
 ### Special Use Folders
 
-The `specialUse` field indicates IMAP special-use attributes defined in RFC 6154:
+The `specialUse` field carries the IMAP special-use attribute defined in RFC 6154, when the server advertises one:
 
 | Value | Description |
 |-------|-------------|
 | `\All` | All messages (virtual folder) |
 | `\Archive` | Archive folder |
 | `\Drafts` | Draft messages |
-| `\Flagged` | Flagged/starred messages |
-| `\Junk` | Spam/junk folder |
+| `\Flagged` | Flagged or starred messages |
+| `\Junk` | Spam or junk folder |
 | `\Sent` | Sent messages |
 | `\Trash` | Deleted messages |
 
-Handle special use folders appropriately:
+`\Inbox` is used for the INBOX folder, which the server does not flag but which has a fixed role.
 
 ```javascript
 async function handleMailboxNew(event) {
@@ -481,11 +402,12 @@ async function handleMailboxNew(event) {
 
 ### Idempotency
 
-Webhooks may be delivered multiple times. Ensure your handler is idempotent:
+A failed or timed-out delivery is retried, so the same event can arrive more than once. Deduplicate on the event ID header:
 
 ```javascript
-async function handleMailboxNew(event) {
-  const { account, path, eventId } = event;
+async function handleMailboxNew(event, headers) {
+  const { account, path } = event;
+  const eventId = headers['x-ee-wh-event-id'];
 
   // Check if we've already processed this event
   const processed = await eventLog.exists(eventId);
@@ -508,13 +430,13 @@ async function handleMailboxNew(event) {
 ## Related Events
 
 - [mailboxDeleted](/docs/webhooks/mailboxdeleted) - Triggered when a folder is removed
-- [mailboxReset](/docs/webhooks/mailboxreset) - Triggered when a folder's UIDVALIDITY changes
+- [mailboxReset](/docs/webhooks/mailboxreset) - Triggered when a folder's index is rebuilt
 - [messageNew](/docs/webhooks/messagenew) - Triggered when new messages arrive in a folder
-- [accountInitialized](/docs/webhooks/overview) - Triggered when initial account sync completes
+- [accountInitialized](/docs/webhooks/accountinitialized) - Triggered when the initial account sync completes
 
 ## See Also
 
-- [Webhooks Overview](/docs/webhooks/overview) - Complete webhook setup guide
-- [Mailbox Operations](/docs/api/get-v-1-account-account-mailboxes) - List mailboxes via API
-- [Create Mailbox API](/docs/api/post-v-1-account-account-mailbox) - Create a mailbox programmatically
-- [Settings API](/docs/api/post-v-1-settings) - Configure webhook settings
+- [Webhooks Overview](/docs/webhooks/overview) - Configuring the webhook URL and the `webhookEvents` allowlist
+- [Mailbox Operations](/docs/receiving/mailbox-operations) - Listing, creating, renaming and deleting folders
+- [List Mailboxes API](/docs/api/get-v-1-account-account-mailboxes) - Reading the current folder listing, with delimiters and special-use flags
+- [Create Mailbox API](/docs/api/post-v-1-account-account-mailbox) - Creating a folder, which also triggers this event

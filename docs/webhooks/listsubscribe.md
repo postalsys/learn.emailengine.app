@@ -6,21 +6,19 @@ description: "Webhook event triggered when a recipient re-subscribes to a mailin
 
 # listSubscribe
 
-The `listSubscribe` webhook event is triggered when a recipient re-subscribes to a mailing list after previously unsubscribing. This event enables you to restore subscriptions and keep your mailing lists synchronized when users decide to receive emails again.
+The `listSubscribe` webhook event is triggered when a recipient re-subscribes to a mailing list after unsubscribing from it. It is the counterpart of [`listUnsubscribe`](/docs/webhooks/listunsubscribe): the address has been removed from EmailEngine's suppression list for that `listId`, and your own subscriber records should follow.
 
 ## When This Event is Triggered
 
 The `listSubscribe` event fires when:
 
-- A recipient was previously on the suppression list for a specific mailing list
-- The recipient uses the re-subscribe functionality on the unsubscribe confirmation page
-- The recipient confirms re-subscription through the modal dialog
-- EmailEngine successfully removes the recipient from the suppression list
+1. A recipient is on the suppression list for a `listId`
+2. They open the unsubscribe page for that list and confirm the re-subscribe action
+3. EmailEngine removes them from the suppression list
 
-**Important:** This event is only triggered when:
-1. The recipient was previously unsubscribed from the specific list
-2. The re-subscribe action successfully removes them from the suppression list
-3. This is a new re-subscription (the event is not triggered if the recipient is already subscribed)
+The re-subscribe action exists only on the unsubscribe page EmailEngine renders. There is no API or one-click equivalent, and removing an address through the [Blocklists API](/docs/api/delete-v-1-blocklist-listid) or the admin interface does not fire the event.
+
+It fires only when an entry was actually removed. If the address was not on the list, because it had never unsubscribed or had already re-subscribed, the page confirms the re-subscription but no webhook is sent.
 
 ## Common Use Cases
 
@@ -37,21 +35,23 @@ The `listSubscribe` event fires when:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `serviceUrl` | string | No | The configured EmailEngine service URL |
+| `serviceUrl` | string or null | Yes | The configured EmailEngine service URL. `null` when the `serviceUrl` setting is empty |
 | `account` | string | Yes | Account ID that sent the original message |
-| `date` | string | Yes | ISO 8601 timestamp when the re-subscribe request was processed |
-| `event` | string | Yes | Event type, always "listSubscribe" for this event |
-| `data` | object | Yes | Re-subscribe data object (see below) |
+| `date` | string | Yes | ISO 8601 timestamp when the webhook was generated |
+| `event` | string | Yes | Always `listSubscribe` |
+| `data` | object | Yes | Re-subscribe details (see below) |
 
 ### Data Object Fields
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `recipient` | string | Yes | Email address of the recipient who re-subscribed |
-| `messageId` | string | No | Message-ID header of the email from which they originally unsubscribed |
-| `listId` | string | Yes | The mailing list identifier to which the recipient re-subscribed |
-| `remoteAddress` | string | Yes | IP address of the client that initiated the re-subscribe request |
-| `userAgent` | string | No | User-Agent header from the re-subscribe request |
+| `recipient` | string | Yes | Email address that re-subscribed |
+| `messageId` | string | No | Message-ID of the message whose unsubscribe link led to the page. Absent when the link was generated from the admin interface rather than embedded in a message |
+| `listId` | string | Yes | The list the recipient was restored to |
+| `remoteAddress` | string | Yes | IP address the browser request came from |
+| `userAgent` | string | No | `User-Agent` header of the browser request, when one was sent |
+
+There is no event ID in the body. EmailEngine sends it in the `X-EE-Wh-Event-Id` request header. See [Delivery and Retries](/docs/webhooks/overview#delivery-and-retries).
 
 ## Example Payload
 
@@ -73,10 +73,11 @@ The `listSubscribe` event fires when:
 
 ## Example with Minimal Data
 
-When the re-subscribe request is submitted without a User-Agent header or Message-ID:
+A re-subscription through a link generated in the admin interface, so there is no originating message, from a client that sent no `User-Agent`:
 
 ```json
 {
+  "serviceUrl": "https://emailengine.example.com",
   "account": "notifications",
   "date": "2025-10-18T11:20:05.000Z",
   "event": "listSubscribe",
@@ -90,23 +91,15 @@ When the re-subscribe request is submitted without a User-Agent header or Messag
 
 ## How Re-subscription Works
 
-The re-subscription flow is triggered from the unsubscribe confirmation page:
+The unsubscribe page is the same signed URL that the message's `List-Unsubscribe` header points at, opened in a browser:
 
-1. **Initial Unsubscribe**: A recipient unsubscribes from a mailing list using the one-click unsubscribe mechanism
-2. **Confirmation Page**: After unsubscribing, the recipient sees a confirmation page with a "Was this a mistake?" link
-3. **Re-subscribe Modal**: Clicking the link opens a confirmation modal asking if they want to re-subscribe
-4. **Confirmation**: The recipient confirms re-subscription by clicking the button in the modal
-5. **Suppression List Update**: EmailEngine removes the recipient from the suppression list for that list ID
-6. **Webhook Trigger**: The `listSubscribe` event is triggered (only for successful removals)
+1. **Unsubscribe**: the recipient confirms the unsubscribe on the page, or their mail client has already done it one-click. EmailEngine adds them to the suppression list and sends [`listUnsubscribe`](/docs/webhooks/listunsubscribe)
+2. **Confirmation**: the page now shows that the address is unsubscribed, with a "Was this a mistake? Click here to re-subscribe." link
+3. **Re-subscribe**: the link opens a confirmation dialog showing the address. Confirming submits the form back to EmailEngine with the signed blob, so the account, list and recipient come from the signature, never from the browser
+4. **Removal**: EmailEngine removes the address from the suppression list for that `listId`
+5. **Webhook**: this event is sent if an entry was removed
 
-### Re-subscribe Confirmation Page
-
-The unsubscribe confirmation page includes:
-
-- Confirmation message that the email address was unsubscribed
-- A link to re-subscribe ("Was this a mistake? Click here to re-subscribe")
-- A modal dialog confirming the re-subscription action
-- Display of the email address being re-subscribed
+The re-subscription affects that `listId` only. The recipient stays unsubscribed from any other list they left.
 
 ## Handling the Event
 
@@ -226,39 +219,15 @@ async function handleListSubscribe(event) {
 }
 ```
 
-## Technical Details
+## Suppression List Management
 
-### Re-subscription Flow
+Once the address is off the suppression list, future submissions with the same `listId` to that recipient are sent again. The list itself can be read and edited through the API:
 
-1. **User visits unsubscribe page**: After unsubscribing, the user sees the confirmation page
-2. **Clicks re-subscribe link**: Opens a modal confirmation dialog
-3. **Confirms action**: Submits a POST request to `/unsubscribe/address` with `action: 'subscribe'`
-4. **Suppression list update**: EmailEngine removes the entry from the suppression list
-5. **Webhook triggered**: Only if the removal was successful (recipient was actually on the list)
+- [Get blocklist entries](/docs/api/get-v-1-blocklist-listid) - View the addresses currently suppressed for a list
+- [Add to blocklist](/docs/api/post-v-1-blocklist-listid) - Suppress an address without a recipient action
+- [Remove from blocklist](/docs/api/delete-v-1-blocklist-listid) - Restore an address without a recipient action
 
-### Suppression List Management
-
-When a recipient re-subscribes:
-
-- They are removed from the suppression list for that specific `listId`
-- Future emails sent with the same `listId` to that recipient will be delivered
-- The re-subscription only affects the specific list, not all lists
-
-You can manage suppression lists via the API:
-
-- [Get blocklist entries](/docs/api/get-v-1-blocklist-listid) - View blocked/suppressed emails
-- [Add to blocklist](/docs/api/post-v-1-blocklist-listid) - Manually add entries
-- [Remove from blocklist](/docs/api/delete-v-1-blocklist-listid) - Remove entries programmatically
-
-### Duplicate Detection
-
-EmailEngine only triggers the `listSubscribe` webhook when a recipient is actually removed from the suppression list. If the recipient:
-
-- Was not on the suppression list
-- Has already re-subscribed
-- Attempts to re-subscribe multiple times
-
-No webhook will be triggered for duplicate or invalid requests.
+Neither API call fires a webhook. See [Blocklists](/docs/advanced/blocklists) for the full picture.
 
 ## Best Practices
 
@@ -266,16 +235,16 @@ No webhook will be triggered for duplicate or invalid requests.
 2. **Log subscription changes** - Maintain audit trails of subscription and re-subscription events
 3. **Consider welcome back emails** - Re-engaged subscribers may appreciate a welcome back message
 4. **Monitor re-subscription rates** - Track how often users re-subscribe after unsubscribing
-5. **Handle gracefully** - Even if your webhook processing fails, EmailEngine maintains the suppression list independently
-6. **Respect user intent** - If a user repeatedly unsubscribes and re-subscribes, consider reaching out to understand their preferences
+5. **Handle gracefully** - Even if your webhook processing fails, EmailEngine has already removed the suppression entry and will send to the address again
 
 ## Related Events
 
 - [listUnsubscribe](/docs/webhooks/listunsubscribe) - Triggered when a recipient unsubscribes from a mailing list
-- [messageSent](/docs/webhooks/messagesent) - Triggered when emails are sent
+- [messageSent](/docs/webhooks/messagesent) - Triggered when a message is accepted for delivery
 
 ## See Also
 
-- [Webhooks Overview](/docs/webhooks/overview) - Complete webhook setup guide
-- [Sending Emails](/docs/sending/basic-sending) - How to send emails with List-Unsubscribe headers
-- [Blocklists API](/docs/api/get-v-1-blocklists) - Manage blocklists and suppression lists programmatically
+- [Webhooks Overview](/docs/webhooks/overview) - Configuring the webhook URL and the `webhookEvents` allowlist
+- [Virtual Lists](/docs/advanced/virtual-lists) - Sending list mail with `listId`, and what the recipient sees on the unsubscribe page
+- [Blocklists](/docs/advanced/blocklists) - Reading and editing the suppression lists this event updates
+- [Blocklists API](/docs/api/get-v-1-blocklists) - Listing every suppression list on the instance

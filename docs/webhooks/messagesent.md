@@ -6,18 +6,21 @@ description: "Webhook event triggered when a queued email is successfully accept
 
 # messageSent
 
-The `messageSent` webhook event is triggered when EmailEngine successfully delivers a queued email to the SMTP server (or Gmail/Outlook API). This event confirms that the message has been accepted for delivery by the mail transfer agent (MTA).
+The `messageSent` webhook event is triggered when a queued email is accepted by the SMTP server, the Gmail API or the Microsoft Graph API. This event confirms that the message has been handed off to the provider for delivery.
 
 ## When This Event is Triggered
 
-The `messageSent` event fires when:
+The `messageSent` event fires once per queued message when:
 
-- A message submitted via the [Submit API](/docs/api/post-v-1-account-account-submit) is accepted by the SMTP server
-- An email sent through Gmail API is successfully delivered
-- An email sent through Microsoft Graph API is successfully delivered
-- The SMTP server returns a 250 OK response
+- The SMTP server accepts the message at the end of the `DATA` command
+- The Gmail API accepts the message (Gmail API accounts)
+- The Microsoft Graph API accepts the message (MS Graph accounts)
 
-This event indicates successful handoff to the mail server. It does not guarantee final delivery to the recipient's inbox, as the message may still bounce or be rejected by downstream servers.
+Which of those applies is decided per submission. A Gmail API or MS Graph account that submits through an [SMTP gateway](/docs/sending/transactional-service) takes the SMTP path, and its `messageSent` payload then carries `response` and `networkRouting` like any other SMTP submission.
+
+This event indicates a successful handoff. It does not guarantee delivery to the recipient's inbox: the message may still bounce or be rejected by downstream servers, which surfaces as a [`messageBounce`](/docs/webhooks/messagebounce) event if the bounce lands in a monitored mailbox.
+
+Messages queued through the [Submit API](/docs/api/post-v-1-account-account-submit) and through the [SMTP interface](/docs/sending/smtp-interface) both produce this event.
 
 ## Common Use Cases
 
@@ -34,40 +37,42 @@ This event indicates successful handoff to the mail server. It does not guarante
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `serviceUrl` | string | No | The configured EmailEngine service URL |
+| `serviceUrl` | string or null | Yes | The configured EmailEngine service URL, `null` if not set |
 | `account` | string | Yes | Account ID that sent the message |
 | `date` | string | Yes | ISO 8601 timestamp when the webhook was generated |
-| `event` | string | Yes | Event type, always "messageSent" for this event |
+| `event` | string | Yes | Always `messageSent` |
 | `data` | object | Yes | Event data object (see below) |
+
+The event carries no `path` or `specialUse`. The unique event identifier is sent as the HTTP header `X-EE-Wh-Event-Id`, not in the JSON payload.
 
 ### Data Object Fields
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `messageId` | string | Yes | Message-ID header of the sent email (may be assigned by MTA) |
-| `originalMessageId` | string | No | Original Message-ID if the MTA assigned a different one |
-| `response` | string | No | SMTP server response (for SMTP submissions only) |
-| `queueId` | string | Yes | EmailEngine's internal queue ID for this submission |
+| `messageId` | string | Yes | Message-ID of the sent email as the provider knows it (see below) |
+| `originalMessageId` | string | No | The Message-ID EmailEngine generated for the message. SMTP submissions carry it only when the server assigned a different `messageId`; Gmail API and MS Graph submissions always carry it |
+| `response` | string | SMTP only | The SMTP server's final response line. Absent for Gmail API and Graph submissions |
+| `queueId` | string | Yes | EmailEngine's queue ID for this submission, the same value the Submit API returned |
 | `envelope` | object | Yes | SMTP envelope with sender and recipients |
-| `networkRouting` | object | No | Network routing information (if local address or proxy was used) |
+| `networkRouting` | object or null | SMTP only | Local address and proxy used for the SMTP connection, `null` when neither was configured. Absent for Gmail API and Graph submissions (see below) |
 
 ### Envelope Object Structure
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `from` | string | Envelope sender (MAIL FROM address) |
-| `to` | array | Array of envelope recipient addresses (RCPT TO) |
+| `from` | string | Envelope sender (`MAIL FROM` address) |
+| `to` | array | Envelope recipient addresses (`RCPT TO`) |
 
 ### Network Routing Object Structure
 
-Present only when a custom local address or proxy is configured:
+Sent as `null` unless a [local address](/docs/advanced/local-addresses) or a proxy was used:
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `localAddress` | string | Local IP address used for the SMTP connection |
-| `proxy` | string | SOCKS proxy URL used for the connection |
-| `name` | string | EHLO hostname used in the SMTP session |
-| `requestedLocalAddress` | string | Originally requested local address (if different from actual) |
+| `proxy` | string | Proxy URL used for the connection |
+| `name` | string | Hostname used in the `EHLO` greeting |
+| `requestedLocalAddress` | string | The `localAddress` requested in the submission, when a different one was used |
 
 ## Example Payload
 
@@ -86,14 +91,15 @@ Present only when a custom local address or proxy is configured:
     "envelope": {
       "from": "sender@example.com",
       "to": ["recipient@destination.com"]
-    }
+    },
+    "networkRouting": null
   }
 }
 ```
 
 ### With Network Routing Information
 
-When EmailEngine uses a custom local address or proxy for the SMTP connection:
+When EmailEngine uses a local address for the SMTP connection:
 
 ```json
 {
@@ -119,7 +125,7 @@ When EmailEngine uses a custom local address or proxy for the SMTP connection:
 
 ### Gmail API Submission
 
-When sending via Gmail API, the response field is not present:
+Submitted through the Gmail API rather than a gateway, so there is no `response` and no `networkRouting`. `messageId` is the Message-ID header read back from the stored message, so it reflects any rewrite Gmail made, and `originalMessageId` is the value EmailEngine submitted:
 
 ```json
 {
@@ -139,9 +145,11 @@ When sending via Gmail API, the response field is not present:
 }
 ```
 
-### Microsoft Outlook API Submission
+On a send-only Gmail account (no read scope) the stored message cannot be read back, so `messageId` equals `originalMessageId`.
 
-When sending via Microsoft Graph API:
+### Microsoft Graph API Submission
+
+Submitted through the Graph API rather than a gateway, so there is no `response` and no `networkRouting`. Graph does not report a Message-ID, so `messageId` and `originalMessageId` both carry the value EmailEngine submitted:
 
 ```json
 {
@@ -150,7 +158,7 @@ When sending via Microsoft Graph API:
   "date": "2025-10-17T10:22:33.456Z",
   "event": "messageSent",
   "data": {
-    "messageId": "<DM6PR01MB1234@outlook.com>",
+    "messageId": "<local-id-789@example.com>",
     "originalMessageId": "<local-id-789@example.com>",
     "queueId": "184c7e41g3cch110789",
     "envelope": {
@@ -163,7 +171,7 @@ When sending via Microsoft Graph API:
 
 ### With MTA Message-ID Override
 
-Some MTAs (like Hotmail/Outlook SMTP or AWS SES) assign their own Message-ID:
+Some SMTP servers assign their own Message-ID and report it in the response. EmailEngine recognizes Outlook.com and Amazon SES responses:
 
 ```json
 {
@@ -172,14 +180,15 @@ Some MTAs (like Hotmail/Outlook SMTP or AWS SES) assign their own Message-ID:
   "date": "2025-10-17T11:45:00.000Z",
   "event": "messageSent",
   "data": {
-    "messageId": "<0102018b9c8d7e6f-a1b2c3d4-5678-90ab-cdef-123456789012-000000@us-east-1.amazonses.com>",
+    "messageId": "<0102018b9c8d7e6f-a1b2c3d4-5678-90ab-cdef-123456789012-000000@eu-west-1.amazonses.com>",
     "originalMessageId": "<local-message-id@example.com>",
     "response": "250 Ok 0102018b9c8d7e6f-a1b2c3d4-5678-90ab-cdef-123456789012-000000",
     "queueId": "184d8f52h4ddi221890",
     "envelope": {
       "from": "sender@example.com",
       "to": ["recipient@destination.com"]
-    }
+    },
+    "networkRouting": null
   }
 }
 ```
@@ -188,31 +197,32 @@ Some MTAs (like Hotmail/Outlook SMTP or AWS SES) assign their own Message-ID:
 
 ### messageId vs originalMessageId
 
-- **`messageId`**: The final Message-ID that will be used for tracking and correlation. This may be assigned by the MTA.
-- **`originalMessageId`**: Present only when the MTA overrides the Message-ID. Contains the original Message-ID that was in the email before submission.
+- **`messageId`**: the Message-ID to use for tracking and correlation. This is the value the provider knows the message by
+- **`originalMessageId`**: the Message-ID EmailEngine generated when the message was queued, which is also the `messageId` the Submit API returned
 
-MTAs that commonly override Message-ID:
-- **AWS SES**: Returns a new ID in the format `<uuid@region.amazonses.com>`
-- **Microsoft Outlook SMTP**: Returns a new ID in the format `<...@prod.outlook.com>`
-- **Gmail API**: Assigns a Gmail-specific Message-ID
+For SMTP submissions `originalMessageId` is present only when the server rewrote the Message-ID:
+- **Amazon SES**: the `250 Ok <id>` response is turned into `<id@region.amazonses.com>`, with the region read from the SMTP hostname. The `us-east-1` region is written as `email.amazonses.com`
+- **Outlook.com SMTP**: the `250 2.0.0 OK <...@...prod.outlook.com>` response carries the new Message-ID
+
+Other servers that rewrite the Message-ID are not detected, and `messageId` keeps the submitted value.
 
 ### response Field
 
-The `response` field contains the raw SMTP server response. Common formats:
+The `response` field contains the SMTP server's final response line. Common formats:
 
-- **Standard**: `250 2.0.0 Ok: queued as 9441D8220E`
-- **AWS SES**: `250 Ok 0102018b9c8d7e6f-...`
+- **Postfix**: `250 2.0.0 Ok: queued as 9441D8220E`
+- **Amazon SES**: `250 Ok 0102018b9c8d7e6f-...`
 - **Gmail SMTP**: `250 2.0.0 OK 1234567890 abc123.456 - gsmtp`
 
-This field is not present for Gmail API or Microsoft Graph API submissions.
+This field is not present for a submission handed to the Gmail API or the Graph API. A submission from such an account that is routed through an SMTP gateway does carry it.
 
 ### queueId Field
 
-The `queueId` is EmailEngine's internal identifier for the submission job. Use this to:
+The `queueId` is EmailEngine's identifier for the submission job. Use it to:
 
 - Correlate with the original [Submit API](/docs/api/post-v-1-account-account-submit) response
-- Track the message through EmailEngine's queue system
-- Reference in support requests
+- Look the job up through the [Outbox API](/docs/api/get-v-1-outbox-queueid) while it is still queued
+- Match the [`messageDeliveryError`](/docs/webhooks/messagedeliveryerror) and [`messageFailed`](/docs/webhooks/messagefailed) events for the same message
 
 ## Handling the Event
 
@@ -231,7 +241,6 @@ async function handleMessageSent(event) {
     console.log(`  Server Response: ${data.response}`);
   }
 
-  // Update your database
   await db.emailLogs.update({
     queueId: data.queueId,
     status: 'sent',
@@ -247,7 +256,6 @@ async function handleMessageSent(event) {
 async function handleMessageSent(event) {
   const { data } = event;
 
-  // Use originalMessageId for correlation if the MTA changed it
   const trackingId = data.originalMessageId || data.messageId;
 
   await db.emails.update(
@@ -268,7 +276,6 @@ async function handleMessageSent(event) {
   try {
     const { account, data, date } = event;
 
-    // Log the successful send
     await auditLog.create({
       type: 'email_sent',
       account,
@@ -278,7 +285,6 @@ async function handleMessageSent(event) {
       timestamp: new Date(date)
     });
 
-    // Notify other systems
     await notifyWebhookSubscribers('email.sent', {
       messageId: data.messageId,
       recipients: data.envelope.to
@@ -286,7 +292,6 @@ async function handleMessageSent(event) {
 
   } catch (error) {
     console.error('Failed to process messageSent webhook:', error);
-    // Re-throw to trigger webhook retry
     throw error;
   }
 }
@@ -297,12 +302,12 @@ async function handleMessageSent(event) {
 The `messageSent` event is part of the email delivery lifecycle:
 
 1. **Submit API call** - Email is queued for sending
-2. **messageSent** - Email accepted by SMTP server (this event)
-3. **messageDeliveryError** - Temporary delivery failure (may retry)
-4. **messageFailed** - Permanent delivery failure (no more retries)
-5. **messageBounce** - Bounce notification received from recipient server
+2. **messageSent** - Email accepted by the provider (this event)
+3. **messageDeliveryError** - A delivery attempt failed and may be retried
+4. **messageFailed** - EmailEngine has given up on the message
+5. **messageBounce** - A bounce notification arrived in a monitored mailbox
 
-A successful `messageSent` event means the MTA accepted the message, but delivery issues may still occur:
+A successful `messageSent` event means the provider accepted the message, but delivery issues may still occur:
 
 - The recipient server may later bounce the message
 - The message may be filtered as spam
@@ -310,24 +315,30 @@ A successful `messageSent` event means the MTA accepted the message, but deliver
 
 Monitor `messageBounce`, `messageDeliveryError`, and `messageFailed` events for complete delivery tracking.
 
+## Version History
+
+- **v2.52.4**: `envelope` is included for Gmail API and MS Graph submissions
+- **v2.40.2**: `networkRouting` added
+
 ## Best Practices
 
 1. **Store the queue ID** - Save `queueId` when calling the Submit API to correlate with this webhook
-2. **Handle Message-ID changes** - Check for `originalMessageId` to maintain tracking when MTAs override IDs
-3. **Don't assume delivery** - This event confirms MTA acceptance, not inbox delivery
+2. **Handle Message-ID changes** - Check for `originalMessageId` to maintain tracking when providers rewrite IDs
+3. **Don't assume delivery** - This event confirms acceptance by the provider, not inbox delivery
 4. **Process quickly** - Return 2xx before the 30 second delivery timeout, then do the work asynchronously
 5. **Use for audit trails** - Log all sent emails for compliance and debugging
 6. **Correlate with bounces** - Match `messageId` with bounce notifications for delivery verification
 
 ## Related Events
 
-- [messageDeliveryError](/docs/webhooks/messagedeliveryerror) - Temporary SMTP delivery failure (will retry)
-- [messageFailed](/docs/webhooks/messagefailed) - Permanent delivery failure
-- [messageBounce](/docs/webhooks/overview) - Bounce message received
+- [messageDeliveryError](/docs/webhooks/messagedeliveryerror) - A delivery attempt failed and may be retried
+- [messageFailed](/docs/webhooks/messagefailed) - EmailEngine has given up on the message
+- [messageBounce](/docs/webhooks/messagebounce) - Bounce message received
 
 ## See Also
 
-- [Webhooks Overview](/docs/webhooks/overview) - Complete webhook setup guide
+- [Webhooks Overview](/docs/webhooks/overview) - Delivery, retries, headers and signing
 - [Submit API](/docs/api/post-v-1-account-account-submit) - Send emails via EmailEngine
+- [Outbox queue](/docs/sending/outbox-queue) - What happens to a message between submission and this event
 - [Outbox API](/docs/api/get-v-1-outbox) - Check queued message status
-- [Sending Emails](/docs/sending) - Email sending guide
+- [Local addresses](/docs/advanced/local-addresses) - Where `networkRouting` comes from

@@ -6,34 +6,26 @@ description: "Webhook event triggered when a recipient clicks a tracked link in 
 
 # trackClick
 
-The `trackClick` webhook event is triggered when a recipient clicks a tracked link in an email that has click tracking enabled. This enables you to monitor email engagement and track which links your recipients interact with.
+The `trackClick` webhook event reports that a rewritten link in a sent message was followed. EmailEngine rewrites the links of outgoing HTML messages through its own `/redirect` endpoint when click tracking is on.
 
 ## When This Event is Triggered
 
-The `trackClick` event fires when:
+The `trackClick` event fires when a request reaches EmailEngine's `/redirect` endpoint with a valid signature, which happens when the recipient follows a rewritten link. EmailEngine records the click and then redirects the browser to the original destination.
 
-- A recipient clicks a link that has been rewritten for click tracking
-- The click redirects through EmailEngine's tracking endpoint before reaching the destination URL
-- EmailEngine successfully validates the tracking signature (if service secret is configured)
+Click tracking works only when all of these hold:
 
-The tracking works by rewriting all HTTP/HTTPS links in the email's HTML body to redirect through EmailEngine's `/redirect` endpoint. When a link is clicked, EmailEngine records the click event, triggers this webhook, and then redirects the recipient to the original destination URL.
-
-**Important:** Click tracking only works when:
-1. The email was sent with HTML content (plain text links are not tracked)
-2. Click tracking was enabled when sending the email (via `trackClicks: true` or global tracking settings)
-3. The link uses HTTP or HTTPS protocol
+1. The message had an HTML part with `http:` or `https:` links. Links in the plain text alternative are never rewritten
+2. Click tracking was on for that message, either per submission or through the `trackClicks` setting (see [Enabling Click Tracking](#enabling-click-tracking))
+3. A [`serviceUrl`](/docs/reference/configuration-options) was configured when the message was sent, since the rewritten link needs an absolute URL
 
 ## Limitations
 
-Click tracking has some inherent limitations:
+- **Plain text parts** - Only HTML parts are rewritten, so a reader in plain text mode follows the original link and nothing is recorded
+- **Non-HTTP schemes** - `mailto:`, `tel:` and other schemes are left alone
+- **Link prefetching** - Security scanners and link-protection services follow links without a human involved
+- **Visible rewriting** - The recipient sees an EmailEngine URL in the status bar rather than the destination, and some corporate mail filters rewrite it again on top
 
-- **Plain text emails** - Links in plain text emails cannot be tracked
-- **Non-HTTP links** - Links using protocols other than HTTP/HTTPS (e.g., mailto:, tel:) are not tracked
-- **Link prefetching** - Some email clients and security scanners prefetch links, potentially triggering false clicks
-- **Privacy features** - Link protection features in some email clients may hide the actual clicker or block tracking
-- **Link modification detection** - Some security-conscious recipients may notice the modified URLs
-
-EmailEngine attempts to filter out automated requests from known security scanners (such as Google's security scanners) to reduce false positives.
+EmailEngine drops the requests it can recognize as automated, see [Automated request filtering](#automated-request-filtering). It cannot recognize all of them.
 
 ## Common Use Cases
 
@@ -50,20 +42,24 @@ EmailEngine attempts to filter out automated requests from known security scanne
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `serviceUrl` | string | No | The configured EmailEngine service URL |
+| `serviceUrl` | string or null | Yes | The configured EmailEngine service URL, `null` if not set |
 | `account` | string | Yes | Account ID that sent the tracked message |
-| `date` | string | Yes | ISO 8601 timestamp when the click was detected |
-| `event` | string | Yes | Event type, always "trackClick" for this event |
+| `date` | string | Yes | ISO 8601 timestamp when the click was recorded |
+| `event` | string | Yes | Always `trackClick` |
 | `data` | object | Yes | Click tracking data object (see below) |
+
+The event carries no `path` or `specialUse`. The unique event identifier is sent as the HTTP header `X-EE-Wh-Event-Id`, not in the JSON payload.
 
 ### Data Object Fields
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `messageId` | string | Yes | Message-ID header of the tracked email |
-| `url` | string | Yes | The original destination URL that was clicked |
-| `remoteAddress` | string | Yes | IP address of the client that clicked the link |
-| `userAgent` | string | No | User-Agent header from the request that clicked the link |
+| `messageId` | string | Yes | Message-ID header of the tracked email, as EmailEngine wrote it when the message was queued. It is the same value the Submit API returned and the [`messageSent`](/docs/webhooks/messagesent) event reports as `originalMessageId` |
+| `url` | string | Yes | The destination URL, exactly as it appeared in the message before rewriting |
+| `remoteAddress` | string | Yes | IP address that followed the link. Behind a reverse proxy this is the client address taken from `X-Forwarded-For`, and only when the request came from an address listed in `EENGINE_API_PROXY_ADDRESSES` |
+| `userAgent` | string | No | `User-Agent` header of that request. Absent when the client sent none |
+
+The event carries no recipient reference. Record the Message-ID when you submit the message if you need to correlate a click with a recipient.
 
 ## Example Payload
 
@@ -76,25 +72,26 @@ EmailEngine attempts to filter out automated requests from known security scanne
   "data": {
     "messageId": "<0ee381d9-581a-2a57-6038-15e64c76f108@example.com>",
     "url": "https://example.com/product-page",
-    "remoteAddress": "192.168.1.100",
+    "remoteAddress": "203.0.113.42",
     "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36"
   }
 }
 ```
 
-## Example with Minimal Data
+### Without a User-Agent
 
-When the email client doesn't send a User-Agent header:
+Some clients follow the link without a `User-Agent` header, and then the field is omitted:
 
 ```json
 {
+  "serviceUrl": "https://emailengine.example.com",
   "account": "marketing",
   "date": "2025-10-17T14:32:15.000Z",
   "event": "trackClick",
   "data": {
     "messageId": "<campaign-2025-q4-001@marketing.example.com>",
     "url": "https://shop.example.com/promo?code=SAVE20",
-    "remoteAddress": "10.0.0.50"
+    "remoteAddress": "198.51.100.7"
   }
 }
 ```
@@ -103,7 +100,7 @@ When the email client doesn't send a User-Agent header:
 
 ### Per-Message Tracking
 
-Enable click tracking when sending an email via the submit API:
+Set `trackClicks` on the submission:
 
 ```bash
 curl -X POST "https://emailengine.example.com/v1/account/user123/submit" \
@@ -120,35 +117,38 @@ curl -X POST "https://emailengine.example.com/v1/account/user123/submit" \
       }
     ],
     "subject": "Check out our latest products",
-    "html": "<p>Hello!</p><p>Visit our <a href=\"https://shop.example.com\">online store</a> for great deals!</p>",
+    "html": "<p>Hello!</p><p>Visit our <a href=\"https://shop.example.com\">online store</a>.</p>",
     "trackClicks": true
   }'
 ```
 
-### Global Tracking Settings
+Messages submitted over the [SMTP interface](/docs/sending/smtp-interface) use the `X-EE-Tracking-Enabled` header instead, which switches both open and click tracking on or off for that message.
 
-Enable click tracking for all outgoing emails via the Settings API:
+### Instance-Wide Setting
+
+`trackClicks` is also a setting, applied to every submission that does not set the field itself:
 
 ```bash
 curl -X POST "https://emailengine.example.com/v1/settings" \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "trackingEnabled": true
+    "trackClicks": true,
+    "trackOpens": false
   }'
 ```
 
-Or enable only click tracking (not open tracking):
+In the admin interface the same switch is **Track Link Clicks** under **Configuration > Email Processing**.
 
-```bash
-curl -X POST "https://emailengine.example.com/v1/settings" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "trackOpens": false,
-    "trackClicks": true
-  }'
-```
+### Which Value Wins
+
+EmailEngine resolves click tracking for each message in this order, taking the first value that is a boolean:
+
+1. `trackClicks` on the submission
+2. `trackingEnabled` on the submission, or the `X-EE-Tracking-Enabled` header for an SMTP submission. This covers both opens and clicks
+3. The `trackClicks` setting
+4. The `trackSentMessages` setting, which covers both opens and clicks and is kept for compatibility
+5. Off
 
 ## Handling the Event
 
@@ -245,68 +245,69 @@ async function handleTrackClick(event) {
 
 ## Technical Details
 
-### How Link Tracking Works
+### How Link Rewriting Works
 
-When click tracking is enabled, EmailEngine:
+When click tracking applies to a message, EmailEngine, in each HTML part of the outgoing message:
 
-1. Parses the HTML content of the outgoing email
-2. Finds all anchor tags (`<a>`) with HTTP/HTTPS href attributes
-3. Encodes the original URL along with account ID and Message-ID into a signed data payload
-4. Rewrites each link to point to EmailEngine's `/redirect` endpoint
+1. Finds every `<a href="http...">` attribute
+2. Builds a payload naming the account, the Message-ID and the original URL, base64url encodes it as the `data` parameter, and signs it with the instance's `serviceSecret` as the `sig` parameter
+3. Replaces the `href` with a `/redirect` URL carrying those two parameters
 
-A tracked link is transformed like this:
+A rewritten link:
 
-**Original:**
 ```html
-<a href="https://example.com/product">View Product</a>
+<a href="https://emailengine.example.com/redirect?data=eyJhY3QiOiJjbGljayJ9&amp;sig=Zm9vYmFy">View Product</a>
 ```
 
-**Tracked:**
-```html
-<a href="https://emailengine.example.com/redirect?data=...&sig=...">View Product</a>
-```
+`/redirect` verifies the signature before doing anything else and answers `403` when it does not match, so a tracking URL cannot be edited to redirect somewhere else. EmailEngine mints a `serviceSecret` on its own the first time it needs one, so signing is always on; set your own value through the [settings API](/docs/api/post-v-1-settings) if you want to control it.
 
-### Excluded Links
+### Links That Are Not Rewritten
 
-EmailEngine does not rewrite certain links to prevent interference with special functionality:
+Two kinds of link are left as they are, so that tracking cannot break them:
 
-- Links pointing to EmailEngine's own `/unsubscribe` endpoint
-- Links already pointing to the `/redirect` endpoint (prevents double-tracking)
+- A link to this instance's own `/unsubscribe` endpoint, which carries its own signed payload
+- A link to this instance's own `/redirect` endpoint, so a forwarded or re-sent message is not wrapped twice
+
+Both are recognized by origin, so a `/redirect` URL on a different host is rewritten like any other link.
 
 ### Redirect Flow
 
-When a recipient clicks a tracked link:
+When a recipient follows a rewritten link:
 
-1. The browser sends a request to EmailEngine's `/redirect` endpoint
-2. EmailEngine decodes and validates the tracking data
-3. If a service secret is configured, the signature is verified
-4. EmailEngine checks if the request appears to be automated (security scanner)
-5. If not automated, the `trackClick` webhook is triggered
-6. The recipient is immediately redirected (HTTP 302) to the original destination URL
+1. The browser requests `/redirect` with the `data` and `sig` parameters
+2. EmailEngine verifies the signature and rejects the request with `403` if it does not match
+3. EmailEngine checks whether the request looks automated, see below
+4. If it does not, the `trackClick` webhook is queued
+5. The browser is answered with a `302` redirect to the original URL, whether or not a webhook was queued
 
 ### Automated Request Filtering
 
-EmailEngine attempts to filter out clicks from automated security scanners to provide more accurate tracking data. Known scanner IP ranges (such as Google's security crawlers) are detected and excluded from triggering webhook events.
+Before queuing the webhook, EmailEngine checks the requesting address against:
 
-When an automated request is detected, the event is logged but no webhook is sent.
+- The published address ranges of Google's crawlers
+- A reverse DNS lookup, treating a hostname under `barracuda.com` or `spfbl.net` as a scanner
+
+A request that matches is written to the log at debug level and no webhook is sent, but the redirect still happens. Everything else is reported, including link-protection scanners that do not identify themselves.
 
 ## Best Practices
 
 1. **Use with open tracking** - Opens and clicks answer different questions; enable both to tell a read from an act
 2. **Handle multiple clicks** - The same link may be clicked multiple times; decide how to count them
 3. **Respect privacy** - Be transparent with recipients about tracking and comply with privacy regulations (GDPR, CAN-SPAM)
-4. **Secure your tracking** - Configure a service secret to prevent tracking URL tampering
+4. **Set your own service secret** - EmailEngine mints one if you do not, but a value you set is one you can rotate and keep across restores
 5. **Monitor for anomalies** - Watch for unusual click patterns that might indicate security scanner activity
 6. **Test tracked links** - Verify that tracked links redirect correctly to the intended destinations
-7. **Consider unsubscribe links** - Ensure unsubscribe functionality works correctly with tracking enabled
 
 ## Related Events
 
-- [trackOpen](/docs/webhooks/trackopen) - Triggered when a tracked email is opened
-- [messageSent](/docs/webhooks/messagesent) - Triggered when the tracked email was sent
+- [trackOpen](/docs/webhooks/trackopen) - Triggered when the tracking pixel of a message is loaded
+- [listUnsubscribe](/docs/webhooks/listunsubscribe) - Triggered when a recipient uses the one-click unsubscribe link
+- [messageSent](/docs/webhooks/messagesent) - Carries the `messageId` this event refers back to
 
 ## See Also
 
-- [Webhooks Overview](/docs/webhooks/overview) - Complete webhook setup guide
-- [Sending Emails](/docs/sending/basic-sending) - How to send emails with tracking enabled
-- [Settings API](/docs/api/post-v-1-settings) - Configure global tracking settings
+- [Webhooks Overview](/docs/webhooks/overview) - Delivery, retries, headers and signing
+- [trackOpen](/docs/webhooks/trackopen) - The open half of the same tracking configuration
+- [Sending Emails](/docs/sending/basic-sending) - Submitting a message with `trackClicks` set
+- [SMTP interface](/docs/sending/smtp-interface) - Switching tracking on with `X-EE-Tracking-Enabled`
+- [Settings API](/docs/api/post-v-1-settings) - Setting `trackClicks` and `serviceSecret`

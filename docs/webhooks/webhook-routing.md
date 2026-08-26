@@ -91,11 +91,14 @@ return {
 
 When EmailEngine generates a webhook event:
 
-1. **Filter Evaluation**: Each enabled route's filter function is executed with the payload
-2. **Matching Routes**: All routes where the filter returns `true` receive the webhook
-3. **Payload Transformation**: If a route has a mapping function, the payload is transformed before delivery
-4. **Parallel Delivery**: Webhooks are queued for delivery to all matching routes simultaneously
-5. **Default Delivery**: The webhook is also sent to either the account-specific URL or global URL (see fallback below)
+1. **Filter evaluation**: every enabled route with a target URL and a compiled filter function runs its filter against the payload
+2. **Matching routes**: each route whose filter returns a truthy value gets its own delivery
+3. **Payload transformation**: a route with a map function delivers what the map returns instead of the original payload
+4. **Default delivery**: independently of all of that, the event is also delivered to the account's own webhook URL if it has one, otherwise to the global webhook URL
+
+A route needs all three of an enabled flag, a target URL and a filter function. A route without a filter function never fires, even when it is enabled and has a URL, and the account page's routing card flags such a route rather than listing it as delivering.
+
+The `webhookEvents` allowlist governs the default delivery only. Routes decide for themselves in their filter, so a route can deliver an event the allowlist excludes, and `inboxNewOnly` likewise does not apply to routes.
 
 ```mermaid
 flowchart TB
@@ -114,9 +117,11 @@ flowchart TB
     end
 
     subgraph fallback [" "]
-        E --> G{Account URL set?}
-        G -->|Yes| H[Deliver to<br/>Account URL]
-        G -->|No| I[Deliver to<br/>Global URL]
+        E --> G{webhookEvents<br/>allows event?}
+        G -->|No| X[Nothing sent]
+        G -->|Yes| H{Account URL set?}
+        H -->|Yes| I[Deliver to<br/>Account URL]
+        H -->|No| J[Deliver to<br/>Global URL]
     end
 ```
 
@@ -126,10 +131,11 @@ The filter function determines whether a webhook should be sent to this route's 
 
 **Requirements:**
 
-- Must return a truthy value to forward the webhook
-- Return `false`, `null`, `undefined`, or any falsy value to skip
-- Has access to the full webhook payload via the `payload` variable
-- Errors are logged but don't stop processing
+- Return a truthy value to forward the webhook
+- Return `false`, `null`, `undefined`, or any other falsy value to skip it
+- The payload is available as the `payload` variable
+- A function that throws is treated as "do not send". The error and the payload are written to the route's **Error log** tab
+- Mutating `payload` has no effect on what is delivered. The function receives a copy
 
 **Example Filter Functions:**
 
@@ -166,20 +172,18 @@ The mapping function transforms the webhook payload before delivery. This is use
 
 **Requirements:**
 
-- Must return the transformed payload object
-- The returned value is sent as the webhook body
-- Has access to the original payload via the `payload` variable
-- If not defined, the original payload is sent unchanged
+- Return the object to send. It becomes the entire request body, replacing the standard payload
+- The payload is available as the `payload` variable
+- Leave the map function empty to send the standard payload unchanged
+- A function that throws sends the standard payload instead. The error and the payload are written to the route's **Error log** tab
+- A mapped body carries no event ID unless the function puts one there, so the `X-EE-Wh-Event-Id` header is absent for such a delivery and deduplication has to use something the mapped body carries
+- A map function with a syntax error takes the whole route down, filter included, until it is fixed
 
 **Example Mapping Functions:**
 
 ```javascript
-// Return payload unchanged (default behavior)
-return payload;
-
-// Add timestamp
-payload.timestamp = Date.now();
-return payload;
+// Add a timestamp to a copy of the standard payload
+return Object.assign({}, payload, { timestamp: Date.now() });
 
 // Transform to Slack format
 return {
@@ -232,10 +236,12 @@ Custom webhook routes are always evaluated first and independently. If a route's
 
 **Track 2: Default Webhook Delivery (Fallback Chain)**
 
-After routes are processed, EmailEngine sends the webhook to a "default" destination using this fallback order:
+The event is also delivered to a default destination, provided `webhookEvents` names it. The destination is resolved in this order:
 
-1. **Account-Specific Webhook URL** - If the account has a dedicated webhook URL configured, the webhook is sent there
-2. **Global Webhook URL** - If no account-specific URL is set, the global webhook URL is used
+1. **Account-specific webhook URL** - if the account has one, the webhook goes there
+2. **Global webhook URL** - otherwise the global URL is used
+
+If neither is set, nothing is sent on this track and the queue job still reports as completed.
 
 :::info Account-Specific Webhooks
 Each account can have its own dedicated webhook URL configured in the account settings. When set, this URL **replaces** the global webhook URL for that account - webhooks are sent to the account URL, not the global URL. This is useful for multi-tenant setups where each customer's account needs to send webhooks to their own endpoint.
@@ -258,13 +264,13 @@ To use only account-specific webhooks (no global fallback):
 1. Navigate to **Configuration** in the sidebar
 2. Click **Webhooks**
 3. Leave the **Webhook URL** field empty
-4. Keep **Enable webhooks** checked (required for routing to work)
-5. Click **Update Settings**
+4. Keep **Enable Webhooks** checked, since it gates routes as well
+5. Click **Save Changes**
 
 ![Webhook Configuration Page](/img/screenshots/webhooks/webhook-config-page.png)
 
 :::warning Important
-The "Enable webhooks" toggle must remain enabled for webhook routing to work. This setting controls the entire webhook system, including custom routes. Only clear the webhook URL field if you want to disable the default destination while keeping routes active.
+The **Enable Webhooks** toggle must remain enabled for webhook routing to work. This setting controls the entire webhook system, including custom routes. Only clear the webhook URL field if you want to disable the default destination while keeping routes active.
 :::
 
 ### Via API
@@ -433,7 +439,7 @@ curl -X PUT "https://emailengine.example.com/v1/account/my-account-id" \
 
 ![Webhook Routes List](/img/screenshots/webhooks/webhook-routes-list-empty.png)
 
-2. Click **Create new** to open the route creation form
+2. Click **Create webhook route** to open the route creation form
 
 3. Fill in the route details:
 
@@ -460,12 +466,7 @@ curl -X PUT "https://emailengine.example.com/v1/account/my-account-id" \
 
 5. Configure the **Map Function** (optional):
 
-   The mapping function transforms the payload before sending. If not defined, the original payload is sent unchanged.
-
-   ```javascript
-   // Return payload unchanged
-   return payload;
-   ```
+   The mapping function replaces the request body with whatever it returns. Leave it empty to send the standard payload unchanged.
 
 6. Click **Create routing** to save the route
 
@@ -484,7 +485,7 @@ After creating a route, you can view its details including:
 
 1. Click on a route in the list to view its details
 2. Click **Edit** to modify the route configuration
-3. Make your changes and click **Update routing**
+3. Make your changes and click **Update webhook**
 
 ![Webhook Route Edit](/img/screenshots/webhooks/webhook-route-edit.png)
 
@@ -495,10 +496,12 @@ You can add custom HTTP headers to webhook requests for authentication or identi
 1. In the route form, expand **Custom request headers**
 2. Add headers in `Key: Value` format, one per line:
 
-   ```
+   ```text
    Authorization: Bearer your-secret-token
    X-Custom-Header: custom-value
    ```
+
+   A route's header list replaces the global `webhooksCustomHeaders` for its own deliveries rather than adding to it. Headers set on the account are applied on top of either, so an account header of the same name wins.
 
 ### Deleting a Route
 
@@ -615,15 +618,17 @@ if (payload.event === 'messageBounce' || payload.event === 'messageComplaint') {
 **Map Function:**
 
 ```javascript
-// Simplify payload for bounce analytics
+// Simplify payload for bounce analytics. messageBounce and messageComplaint
+// carry different fields, so read each from where it actually lives.
 return {
     type: payload.event,
     account: payload.account,
-    originalMessageId: payload.data?.messageId,
-    recipient: payload.data?.recipient,
-    bounceType: payload.data?.bounceInfo?.action,
-    errorCode: payload.data?.bounceInfo?.response?.code,
-    errorMessage: payload.data?.bounceInfo?.response?.message,
+    originalMessageId: payload.data?.messageId || payload.data?.headers?.messageId,
+    recipient: payload.data?.recipient || payload.data?.arf?.originalRcptTo?.[0],
+    action: payload.data?.action,
+    status: payload.data?.response?.status,
+    category: payload.data?.response?.category,
+    errorMessage: payload.data?.response?.message,
     timestamp: payload.date
 };
 ```
@@ -692,14 +697,17 @@ if (payload.event === 'messageNew') {
 
 ### The `payload` Object
 
-The `payload` variable contains the complete webhook payload. The structure varies by event type, but common fields include:
+The `payload` variable holds the same document the default webhook would receive, plus one extra field. Its shape depends on the event, but every event carries:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `event` | string | Event type (e.g., `messageNew`, `messageSent`) |
+| `event` | string | Event type, for example `messageNew` or `messageSent` |
 | `account` | string | Account identifier |
-| `date` | string | ISO timestamp of the event |
-| `path` | string | Mailbox path (for message events) |
+| `date` | string | ISO 8601 timestamp of the event |
+| `serviceUrl` | string or null | The configured `serviceUrl` |
+| `eventId` | string | The value that becomes the `X-EE-Wh-Event-Id` header. Present here, but removed from the delivered body |
+| `_route` | object | `{ "id": "<route id>" }`, naming the route being evaluated. Internal, and removed from the body of an unmapped delivery. A map function that copies the whole payload copies this too |
+| `path` | string | Folder, on the events that have one |
 | `data` | object | Event-specific data |
 
 For `messageNew` events, `payload.data` includes:
@@ -707,18 +715,18 @@ For `messageNew` events, `payload.data` includes:
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | string | EmailEngine message ID |
-| `uid` | number | IMAP UID |
+| `uid` | number | IMAP UID. IMAP accounts only |
 | `messageId` | string | Message-ID header value |
 | `subject` | string | Email subject |
-| `from` | object | Sender information (`name`, `address`) |
+| `from` | object | Sender, with `name` and `address` |
 | `to` | array | Recipients |
 | `date` | string | Message date |
-| `labels` | array | Gmail labels (if applicable) |
+| `labels` | array | Gmail labels, on Gmail accounts |
 | `flags` | array | IMAP flags |
-| `text` | object | Message content (`plain`, `html`) |
-| `attachments` | array | Attachment information |
+| `text` | object | Message content, with `plain` and `html` when `notifyText` is on |
+| `attachments` | array | Attachment metadata |
 
-See [Webhook Events Reference](/docs/reference/webhook-events) for complete payload documentation by event type.
+See [messageNew](/docs/webhooks/messagenew) for the full list, and the page for each event under [Webhooks](/docs/webhooks/overview) for the others.
 
 ### Additional Globals
 
@@ -727,13 +735,13 @@ Filter and mapping functions have access to:
 | Variable | Description |
 |----------|-------------|
 | `payload` | The complete webhook payload object |
-| `logger` | Logging object with `.info()`, `.error()`, etc. |
-| `fetch` | Fetch API for making HTTP requests (async) |
+| `logger` | Writes to the EmailEngine log. Has `trace`, `debug`, `info`, `warn`, `error`, `fatal` and `silent` |
+| `fetch` | The Fetch API, for calling out to another service |
 | `URL` | URL constructor for URL manipulation |
-| `env` | Environment variables defined in Script Environment settings |
+| `env` | The JSON object stored in the `scriptEnv` setting, edited as **Global variables** under **Webhook Scripts** on **Configuration > Webhooks** |
 
-:::info
-The `fetch` function is available for making external API calls within your functions, but use it sparingly as it can slow down webhook processing. Consider using mapping functions only for payload transformation.
+:::info Keep the functions short
+Filters and maps run inside the notify worker, which processes one delivery at a time by default, so every millisecond spent here is a millisecond no webhook is being posted. Synchronous execution is cut off at 30 seconds; awaiting is not bounded by that limit, so a `fetch` against an unresponsive service can hold the queue for as long as its own timeout allows.
 :::
 
 ## Troubleshooting
@@ -743,18 +751,22 @@ The `fetch` function is available for making external API calls within your func
 **Check if the route is enabled:**
 
 - Navigate to the route detail page
-- Verify the status shows "Enabled"
+- Verify the status shows **Enabled**, and that a target URL is set
+
+**Check that the route has a filter function:**
+
+- A route with an empty filter function never fires, whatever else is configured. Add one that returns `true` to forward everything
 
 **Verify the filter function:**
 
-- Use the test payload feature in the UI to test your filter
-- Check the error log tab for any JavaScript errors
-- Ensure the function returns `true` for matching payloads
+- Use **Set test payload** in the route form to run the filter against a sample event
+- Check the **Error log** tab for compilation or runtime errors. A filter that fails to compile leaves the route inert
+- Ensure the function returns a truthy value for matching payloads
 
 **Confirm webhooks are enabled globally:**
 
 - Go to **Configuration > Webhooks**
-- Ensure "Enable webhooks" is checked
+- Ensure **Enable Webhooks** is checked
 
 ### Webhooks Not Being Delivered
 
@@ -767,48 +779,46 @@ The `fetch` function is available for making external API calls within your func
 **Review the webhook queue:**
 
 - Go to **System > Queues**
-- Check the "Webhooks" queue for failed jobs
+- Check the **Webhooks Queue** for failed jobs
 - Review error messages for delivery failures
 
 **Enable job retention:**
 
 - Go to **Configuration > General**
-- Set "Completed/failed queue entries to keep" to 100
-- Failed webhooks will be visible in Bull Board
+- Set **Job History Limit** to 100
+- Failed deliveries are kept without this; the setting adds the successful ones
 
 ### Filter Function Errors
 
 **Check the error log:**
 
 - Open the route detail page
-- Click the "Error log" tab
+- Click the **Error log** tab
 - Review recent errors with their payloads
 
 **Common issues:**
 
 - Accessing undefined properties: Use optional chaining (`payload.data?.from?.address`)
-- Syntax errors: Check for missing brackets or semicolons
-- Type errors: Ensure you're comparing the right types
+- Syntax errors: a function that fails to compile disables the route, and the failure is logged once at compile time rather than per event
+- Type errors: check that both sides of a comparison are the type you expect
 
 ### Mapping Function Issues
 
 **Verify the output:**
 
-- Use the mapping preview in the edit form
-- Test with sample payloads
-- Check that the return value is valid JSON
+- Use **Mapping preview** in the route form to see what the function produces for a sample event, and **Send webhook preview** to post it
+- Check that the return value serializes to JSON
 
 **Common issues:**
 
-- Not returning a value: The function must return the transformed payload
-- Returning undefined: Check for conditional paths that don't return
-- Invalid JSON: Template strings with special characters need escaping
+- Returning nothing: a code path that falls off the end sends the standard payload instead of the mapped one, which reads as the map being ignored
+- Throwing: the standard payload is sent and the error lands in the **Error log** tab
+- Values JSON cannot represent, such as a `Date` or a `Map`, do not survive serialization
 
 ## See Also
 
-- [Webhook Overview](/docs/webhooks/overview) - General webhook concepts and setup
-- [Webhook Events Reference](/docs/reference/webhook-events) - Complete event type documentation
-- [Webhooks API](/docs/api-reference/webhooks-api) - API endpoints for webhook management
-- [Pre-Processing Functions](/docs/advanced/pre-processing) - Advanced JavaScript functions for EmailEngine
-- [List Webhook Routes API](/docs/api/get-v-1-webhookroutes) - API reference for listing routes
-- [Get Webhook Route API](/docs/api/get-v-1-webhookroutes-webhookroute-webhookroute) - API reference for route details
+- [Webhooks Overview](/docs/webhooks/overview) - Delivery, retries, headers and signing for every webhook
+- [Webhook events reference](/docs/reference/webhook-events) - Which events exist and what each one reports
+- [Pre-processing functions](/docs/advanced/pre-processing) - The same scripting environment applied to other parts of EmailEngine
+- [List webhook routes API](/docs/api/get-v-1-webhookroutes) - Reading the configured routes programmatically
+- [Webhooks API](/docs/api-reference/webhooks-api) - Managing the webhook configuration over the API

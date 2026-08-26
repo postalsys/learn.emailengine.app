@@ -6,19 +6,23 @@ description: "Webhook event triggered when EmailEngine rebuilds a folder's index
 
 # mailboxReset
 
-The `mailboxReset` webhook event is triggered when EmailEngine has to rebuild its index for a folder from scratch. It is rare but significant: every message UID EmailEngine previously tracked for that folder is no longer meaningful.
+The `mailboxReset` webhook event is triggered when EmailEngine has to rebuild its index for an IMAP folder from scratch. It is rare but significant: every message UID EmailEngine previously tracked for that folder is no longer meaningful.
 
 ## When This Event is Triggered
 
 The `mailboxReset` event fires when:
 
-- The IMAP server reports a different UIDVALIDITY value than what was previously stored (`reason: "uidValidityChange"`), which happens when a folder is recreated, repaired, migrated, or restored from backup
-- EmailEngine's own stored index for the folder is missing or unusable and has to be rebuilt from the server (`reason: "syncStateLost"`)
+- The IMAP server reports a different UIDVALIDITY for the folder than the one EmailEngine stored (`reason: "uidValidityChange"`). Servers do this when a folder is recreated, repaired, migrated or restored from backup
+- EmailEngine's own stored index for the folder is missing while the account has synced before and the server still has messages in the folder (`reason: "syncStateLost"`), for example after the folder's keys were evicted from Redis
 
 UIDVALIDITY is the IMAP mechanism that tells a client whether previously assigned UIDs are still valid. When it changes, they are not, and the folder must be fully resynchronized. A lost local index has the same practical consequence.
 
 :::note No message events are replayed
-Rebuilding the baseline deliberately does not emit `messageNew` for the messages it re-indexes. Without that suppression, a reset on a large folder would replay the entire mailbox to your webhook endpoint. Treat `mailboxReset` itself as the signal to reconcile.
+Rebuilding the baseline deliberately does not emit `messageNew` for the messages it re-indexes. Without that suppression, a reset on a large folder would replay the entire mailbox to your webhook endpoint. Treat `mailboxReset` itself as the signal to reconcile, and fetch the folder's messages through the API if you need them.
+:::
+
+:::note IMAP accounts only
+Folder events are produced by the IMAP client. Gmail API and Microsoft Graph accounts do not send `mailboxNew`, `mailboxDeleted` or `mailboxReset`.
 :::
 
 ## Common Use Cases
@@ -28,7 +32,6 @@ Rebuilding the baseline deliberately does not emit `messageNew` for the messages
 - **Search index rebuild** - Mark the folder's search index for rebuild
 - **Audit logging** - Track mailbox reset events for operational monitoring
 - **Alert systems** - Notify administrators about unusual mailbox resets that may indicate server issues
-- **Sync state reset** - Clear any sync state markers tied to old UIDs
 
 ## Payload Schema
 
@@ -36,31 +39,33 @@ Rebuilding the baseline deliberately does not emit `messageNew` for the messages
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `serviceUrl` | string | No | The configured EmailEngine service URL |
-| `account` | string | Yes | Account ID where the mailbox reset occurred |
+| `serviceUrl` | string or null | Yes | The configured EmailEngine service URL. `null` when the `serviceUrl` setting is empty |
+| `account` | string | Yes | Account ID the folder belongs to |
 | `date` | string | Yes | ISO 8601 timestamp when the webhook was generated |
-| `path` | string | Yes | Mailbox folder path that was reset (e.g., "INBOX") |
-| `specialUse` | string | No | Special use flag of the folder (e.g., "\Inbox", "\Sent", "\Trash") |
-| `event` | string | Yes | Event type, always "mailboxReset" for this event |
-| `data` | object | Yes | Reset details including UIDVALIDITY information |
+| `path` | string | Yes | Full path of the folder that was reset, for example `INBOX` |
+| `specialUse` | string | No | Special-use flag of the folder, for example `\Inbox`. Present only when the folder has one |
+| `event` | string | Yes | Always `mailboxReset` |
+| `data` | object | Yes | Reset details |
 
 ### Reset Data Fields (`data` object)
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `path` | string | Yes | Mailbox folder path (duplicated from top level) |
-| `name` | string | Yes | Display name of the folder |
-| `specialUse` | string/boolean | No | Special use attribute (e.g., "\Inbox", "\Sent") or `false` if none |
-| `uidValidity` | string/boolean | Yes | New UIDVALIDITY value as a string, or `false` if the server did not report a usable one |
-| `prevUidValidity` | string/boolean | No | Previous UIDVALIDITY value as a string, or `false` if not available. Omitted entirely when there was no previous value |
+| `path` | string | Yes | Full folder path, the same value as the top-level `path` |
+| `name` | string | Yes | Display name of the folder, the last segment of the path |
+| `specialUse` | string or boolean | Yes | Special-use flag such as `\Inbox`, or `false` when the folder has none |
+| `uidValidity` | string or boolean | Yes | The folder's current UIDVALIDITY as a string, or `false` if the server did not report a usable one |
+| `prevUidValidity` | string or boolean | No | The UIDVALIDITY EmailEngine had stored, as a string, or `false` if the stored value was not usable. Present only with `reason: "uidValidityChange"` |
 | `reason` | string | Yes | Why the folder was reset, see below |
+
+There is no event ID in the body. EmailEngine sends it in the `X-EE-Wh-Event-Id` request header. See [Delivery and Retries](/docs/webhooks/overview#delivery-and-retries).
 
 ### Reset Reasons
 
 | Reason | Meaning |
 |--------|---------|
 | `uidValidityChange` | The server issued a new UIDVALIDITY for the folder, which invalidates every UID EmailEngine had stored |
-| `syncStateLost` | EmailEngine's own index for the folder was missing or unusable and had to be rebuilt from the server |
+| `syncStateLost` | EmailEngine's own index for the folder was missing and had to be rebuilt from the server |
 
 Both mean the same thing for your application: the message IDs you previously stored for this folder no longer refer to those messages. Branch on `reason` only if you want to distinguish a server-side renumbering from a local index rebuild.
 
@@ -107,9 +112,9 @@ Both mean the same thing for your application: the message IDs you previously st
 }
 ```
 
-### Mailbox Without Previous UIDVALIDITY
+### Lost Local Index
 
-When EmailEngine has no record of a previous UIDVALIDITY (e.g., first detection after some data corruption):
+When the stored index was missing, there is no previous UIDVALIDITY to report and `prevUidValidity` is omitted:
 
 ```json
 {
@@ -123,8 +128,7 @@ When EmailEngine has no record of a previous UIDVALIDITY (e.g., first detection 
     "name": "2024",
     "specialUse": false,
     "uidValidity": "1697564200",
-    "prevUidValidity": false,
-    "reason": "uidValidityChange"
+    "reason": "syncStateLost"
   }
 }
 ```
@@ -139,6 +143,7 @@ async function handleMailboxReset(event) {
 
   console.log(`Mailbox reset detected for ${account}:`);
   console.log(`  Folder: ${path}`);
+  console.log(`  Reason: ${data.reason}`);
   console.log(`  New UIDVALIDITY: ${data.uidValidity}`);
   console.log(`  Previous UIDVALIDITY: ${data.prevUidValidity || 'unknown'}`);
 
@@ -188,12 +193,12 @@ async function handleMailboxReset(event) {
     await resyncQueue.add('folder-resync', {
       account,
       path,
-      reason: 'uidvalidity_change'
+      reason: data.reason
     });
 
   } catch (err) {
     console.error('Failed to handle mailbox reset:', err);
-    throw err; // Retry the webhook
+    throw err; // Respond with an error status so EmailEngine retries the delivery
   }
 }
 ```
@@ -211,6 +216,7 @@ async function handleMailboxReset(event) {
     action: 'mailbox_reset',
     folder: path,
     metadata: {
+      reason: data.reason,
       newUidValidity: data.uidValidity,
       prevUidValidity: data.prevUidValidity,
       folderName: data.name,
@@ -226,7 +232,7 @@ async function handleMailboxReset(event) {
     await alertService.send({
       severity: 'warning',
       title: 'Critical Mailbox Reset Detected',
-      message: `UIDVALIDITY changed for ${path} on account ${account}`,
+      message: `Folder ${path} on account ${account} was reset (${data.reason})`,
       details: {
         account,
         folder: path,
@@ -283,32 +289,20 @@ UIDVALIDITY is an IMAP concept that guarantees message UID uniqueness within a m
 - A full folder resync is required to rebuild the message list
 - Any cached message data keyed by UID should be discarded
 
-### When EmailEngine Handles Reset
+### What EmailEngine Does on a Reset
 
-When EmailEngine detects a UIDVALIDITY change, it automatically:
+When EmailEngine detects a UIDVALIDITY change, or finds its index for the folder missing, it:
 
-1. Deletes all stored message metadata for the folder from Redis
-2. Clears the mailbox state
-3. Triggers a full resync of the folder
-4. Sends this webhook notification
+1. Discards the stored message index for the folder
+2. Records every message currently on the server as already seen, without sending `messageNew` for any of them
+3. Stores the server's current state as the new baseline
+4. Sends this webhook
 
-New `messageNew` webhooks will follow as messages are rediscovered during resync.
+Messages that arrive after the reset are reported with `messageNew` as usual. Nothing is sent for the messages that were in the folder at the time of the reset, so reconcile from the API rather than waiting for events.
 
-### Rare But Important
+### EmailEngine Message IDs Change Too
 
-UIDVALIDITY changes are relatively rare in normal operation. Common causes include:
-
-- Mail server migration
-- Database repairs or corruption recovery
-- Server software updates that reset counters
-- Mailbox import/export operations
-- Administrative maintenance
-
-Frequent UIDVALIDITY changes may indicate server issues that should be investigated.
-
-### Handling Message ID Continuity
-
-While IMAP UIDs become invalid, EmailEngine's message IDs (the `id` field) may still provide continuity if the messages themselves haven't changed. Consider:
+EmailEngine's message IDs (the `id` field on messages and in message events) are derived from the folder and the UID, so a reset invalidates them along with the UIDs. Match on the `Message-ID` header if you need to relate messages across a reset:
 
 ```javascript
 async function handleMailboxReset(event) {
@@ -326,20 +320,32 @@ async function handleMailboxReset(event) {
     }
   });
 
-  // After resync, messageNew events will arrive
-  // Match by Message-ID header if you need to preserve relationships
+  // Then list the folder through the API and match on the Message-ID header
 }
 ```
 
+### Rare But Important
+
+UIDVALIDITY changes are relatively rare in normal operation. Common causes include:
+
+- Mail server migration
+- Database repairs or corruption recovery
+- Server software updates that reset counters
+- Mailbox import and export operations
+- Administrative maintenance
+
+Frequent resets on one account point at a server that reassigns UIDVALIDITY on every folder open, which is a server problem rather than something the handler can work around.
+
 ## Related Events
 
-- [mailboxNew](/docs/webhooks/overview) - Triggered when a new folder is detected
-- [mailboxDeleted](/docs/webhooks/overview) - Triggered when a folder is removed
-- [messageNew](/docs/webhooks/messagenew) - Will fire for messages after resync
-- [messageDeleted](/docs/webhooks/messagedeleted) - May fire during resync cleanup
+- [mailboxNew](/docs/webhooks/mailboxnew) - Triggered when a new folder is found
+- [mailboxDeleted](/docs/webhooks/mailboxdeleted) - Triggered when a folder is removed
+- [messageNew](/docs/webhooks/messagenew) - Triggered for messages that arrive after the reset
+- [messageDeleted](/docs/webhooks/messagedeleted) - Triggered when individual messages are deleted
 
 ## See Also
 
-- [Webhooks Overview](/docs/webhooks/overview) - Complete webhook setup guide
-- [Mailbox Operations](/docs/api/get-v-1-account-account-mailboxes) - List mailboxes via API
-- [Settings API](/docs/api/post-v-1-settings) - Configure webhook settings
+- [Webhooks Overview](/docs/webhooks/overview) - Configuring the webhook URL and the `webhookEvents` allowlist
+- [Mailbox Operations](/docs/receiving/mailbox-operations) - Listing folders and their current UIDVALIDITY
+- [List Messages API](/docs/api/get-v-1-account-account-messages) - Reconciling the folder's contents after a reset
+- [IDs Explained](/docs/advanced/ids-explained) - How EmailEngine message IDs are built from the folder and UID

@@ -6,20 +6,21 @@ description: "Webhook event triggered when EmailEngine fails to deliver an email
 
 # messageDeliveryError
 
-The `messageDeliveryError` webhook event is triggered when EmailEngine encounters an SMTP error while attempting to deliver an email. Unlike `messageFailed`, this event indicates a temporary failure that may be retried automatically.
+The `messageDeliveryError` webhook event is triggered when an SMTP delivery attempt for a queued email fails. It is sent for every failed attempt, including the last one. Whether the attempt is retried depends on the error; when EmailEngine gives up, a [`messageFailed`](/docs/webhooks/messagefailed) event follows.
 
 ## When This Event is Triggered
 
-The `messageDeliveryError` event fires when:
+The `messageDeliveryError` event fires when an attempt to hand a queued message to an SMTP server fails, for example because:
 
-- The SMTP server returns an error response during message submission
-- A connection timeout occurs while communicating with the SMTP server
-- TLS negotiation fails with the mail server
+- The SMTP server rejects the sender, a recipient or the message content
+- The connection times out, or the TCP connection cannot be established
+- TLS negotiation or certificate validation fails
 - DNS resolution fails for the SMTP hostname
-- Authentication with the SMTP server fails
-- The TCP connection to the SMTP server cannot be established
+- Authentication with the SMTP server fails, or an OAuth2 access token cannot be obtained
 
-This event is triggered for each failed delivery attempt. If retries are configured, the message will be re-queued for another attempt. Monitor this event to track delivery issues and diagnose SMTP connectivity problems.
+This event covers SMTP submissions only, including messages routed through an [SMTP gateway](/docs/sending/transactional-service). A Gmail API or MS Graph account that submits through a gateway takes the SMTP path too, so it produces this event.
+
+A submission handed to the Gmail API or the Microsoft Graph API does not produce it. Such a failure is retried by the queue in the same way, but only the final outcome is reported, as [`messageFailed`](/docs/webhooks/messagefailed).
 
 ## Common Use Cases
 
@@ -36,51 +37,59 @@ This event is triggered for each failed delivery attempt. If retries are configu
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `serviceUrl` | string | No | The configured EmailEngine service URL |
+| `serviceUrl` | string or null | Yes | The configured EmailEngine service URL, `null` if not set |
 | `account` | string | Yes | Account ID that attempted to send the message |
 | `date` | string | Yes | ISO 8601 timestamp when the webhook was generated |
-| `event` | string | Yes | Event type, always "messageDeliveryError" for this event |
+| `event` | string | Yes | Always `messageDeliveryError` |
 | `data` | object | Yes | Event data object (see below) |
+
+The event carries no `path` or `specialUse`. The unique event identifier is sent as the HTTP header `X-EE-Wh-Event-Id`, not in the JSON payload.
 
 ### Data Object Fields
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `queueId` | string | Yes | EmailEngine's internal queue ID for this submission |
+| `queueId` | string | Yes | EmailEngine's queue ID for this submission, the same value the Submit API returned |
 | `envelope` | object | Yes | SMTP envelope with sender and recipients |
-| `messageId` | string | No | Message-ID header of the email being sent |
-| `error` | string | Yes | Human-readable error message |
-| `errorCode` | string | No | Error code (e.g., "ETIMEDOUT", "EAUTH", "ECONNECTION") |
-| `smtpResponse` | string | No | Raw SMTP server response (if available) |
-| `smtpResponseCode` | number | No | SMTP response code (e.g., 421, 450, 550) |
-| `smtpCommand` | string | No | SMTP command that triggered the error (e.g., "RCPT TO", "DATA") |
-| `networkRouting` | object | No | Network routing information (if local address or proxy was used) |
-| `job` | object | Yes | Job queue information including retry details |
+| `messageId` | string | Yes | Message-ID header of the email being sent |
+| `error` | string | Yes | Error message from the SMTP client |
+| `errorCode` | string | No | Error code (see [Error Codes Reference](#error-codes-reference)) |
+| `smtpResponse` | string | No | The server's response line, when the server answered |
+| `smtpResponseCode` | number | No | SMTP reply code from that response (for example `421`, `450`, `550`) |
+| `smtpCommand` | string | No | SMTP command the server rejected (for example `RCPT TO`, `DATA`, `AUTH PLAIN`) |
+| `networkRouting` | object or null | Yes | Local address and proxy used for the SMTP connection, `null` when neither was configured (see below) |
+| `job` | object | Yes | Queue job information including retry details (see below) |
+
+Fields whose value is not known (`errorCode`, `smtpResponse`, `smtpResponseCode`, `smtpCommand`) are omitted from the JSON.
 
 ### Envelope Object Structure
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `from` | string | Envelope sender (MAIL FROM address) |
-| `to` | array | Array of envelope recipient addresses (RCPT TO) |
+| `from` | string | Envelope sender (`MAIL FROM` address) |
+| `to` | array | Envelope recipient addresses (`RCPT TO`) |
 
 ### Network Routing Object Structure
 
-Present only when a custom local address or proxy is configured:
+Sent as `null` unless a [local address](/docs/advanced/local-addresses) or a proxy was used:
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `localAddress` | string | Local IP address used for the SMTP connection |
-| `proxy` | string | SOCKS proxy URL used for the connection |
+| `proxy` | string | Proxy URL used for the connection |
+| `name` | string | Hostname used in the `EHLO` greeting |
+| `requestedLocalAddress` | string | The `localAddress` requested in the submission, when a different one was used |
 
 ### Job Object Structure
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `id` | string | Internal job ID in the queue system |
-| `attemptsMade` | number | Number of delivery attempts made so far |
-| `attempts` | number | Maximum number of attempts configured |
-| `nextAttempt` | string | ISO 8601 timestamp of the next scheduled retry (or false if no more retries) |
+| `id` | string | Queue job ID. The submit job is created with the queue ID as its job ID, so this is the same value as `queueId` |
+| `attemptsMade` | number | Attempts completed before this one. `0` on the first attempt |
+| `attempts` | number | Maximum number of attempts for this message: the `deliveryAttempts` of the submission, or the `deliveryAttempts` setting, or `10` |
+| `nextAttempt` | string or boolean | ISO 8601 time of the next attempt if this one is retried, or `false` when this was the last attempt |
+
+`nextAttempt` is computed before the attempt is made, from the attempt count alone. A permanent failure (see [Retry Behavior](#retry-behavior)) ends the job even when `nextAttempt` carries a time; in that case `messageFailed` follows immediately.
 
 ## Example Payload
 
@@ -99,19 +108,23 @@ Present only when a custom local address or proxy is configured:
       "to": ["recipient@destination.com"]
     },
     "messageId": "<305eabf4-9538-2747-acec-dc32cb651a0e@example.com>",
-    "error": "Request timed out. Possibly a firewall issue or a wrong hostname/port (smtp.destination.com:587).",
+    "error": "Connection timeout",
     "errorCode": "ETIMEDOUT",
+    "smtpCommand": "CONN",
+    "networkRouting": null,
     "job": {
-      "id": "42",
-      "attemptsMade": 1,
+      "id": "183e4b18f0ffe977476",
+      "attemptsMade": 0,
       "attempts": 10,
-      "nextAttempt": "2025-10-17T08:20:32.456Z"
+      "nextAttempt": "2025-10-17T08:15:37.456Z"
     }
   }
 }
 ```
 
 ### Authentication Failure
+
+A `535` reply is permanent, so the message is not retried even though `nextAttempt` carries a time:
 
 ```json
 {
@@ -126,16 +139,17 @@ Present only when a custom local address or proxy is configured:
       "to": ["recipient@destination.com"]
     },
     "messageId": "<abc123@example.com>",
-    "error": "Authentication failed",
+    "error": "Invalid login: 535 5.7.8 Authentication credentials invalid",
     "errorCode": "EAUTH",
     "smtpResponse": "535 5.7.8 Authentication credentials invalid",
     "smtpResponseCode": 535,
-    "smtpCommand": "AUTH",
+    "smtpCommand": "AUTH PLAIN",
+    "networkRouting": null,
     "job": {
-      "id": "43",
-      "attemptsMade": 2,
+      "id": "184a5c29e1aaf988567",
+      "attemptsMade": 0,
       "attempts": 10,
-      "nextAttempt": "2025-10-17T09:40:15.123Z"
+      "nextAttempt": "2025-10-17T09:30:20.123Z"
     }
   }
 }
@@ -156,46 +170,23 @@ Present only when a custom local address or proxy is configured:
       "to": ["customer@external.com"]
     },
     "messageId": "<msg-456@company.com>",
-    "error": "Certificate check for smtp.external.com:465 failed. CERT_HAS_EXPIRED",
+    "error": "certificate has expired",
     "errorCode": "ESOCKET",
+    "smtpCommand": "CONN",
+    "networkRouting": null,
     "job": {
-      "id": "44",
+      "id": "184b6d30f2bbg099678",
       "attemptsMade": 1,
       "attempts": 10,
-      "nextAttempt": "2025-10-17T10:50:00.000Z"
+      "nextAttempt": "2025-10-17T10:45:10.000Z"
     }
   }
 }
 ```
 
-### DNS Resolution Failure
+### Temporary Recipient Rejection
 
-```json
-{
-  "serviceUrl": "https://emailengine.example.com",
-  "account": "user123",
-  "date": "2025-10-17T11:22:33.789Z",
-  "event": "messageDeliveryError",
-  "data": {
-    "queueId": "184c7e41g3cch110789",
-    "envelope": {
-      "from": "sender@example.com",
-      "to": ["user@typo-domain.com"]
-    },
-    "messageId": "<dns-err-789@example.com>",
-    "error": "EmailEngine failed to resolve DNS record for smtp.typo-domain.com",
-    "errorCode": "EDNS",
-    "job": {
-      "id": "45",
-      "attemptsMade": 3,
-      "attempts": 10,
-      "nextAttempt": "2025-10-17T11:42:33.789Z"
-    }
-  }
-}
-```
-
-### SMTP Rejection with Response Code
+A `450` reply is transient, so the message is retried:
 
 ```json
 {
@@ -207,19 +198,20 @@ Present only when a custom local address or proxy is configured:
     "queueId": "184d8f52h4ddi221890",
     "envelope": {
       "from": "sender@example.com",
-      "to": ["blocked@strict-server.com"]
+      "to": ["greylisted@strict-server.com"]
     },
     "messageId": "<rejected-msg@example.com>",
-    "error": "Message rejected by server",
-    "errorCode": "EMESSAGE",
-    "smtpResponse": "450 4.7.1 Client host rejected: cannot find your hostname",
+    "error": "Can't send mail - all recipients were rejected: 450 4.7.1 <greylisted@strict-server.com>: Recipient address rejected: Greylisted, see http://postgrey.schweikert.ch/help/strict-server.com.html",
+    "errorCode": "EENVELOPE",
+    "smtpResponse": "450 4.7.1 <greylisted@strict-server.com>: Recipient address rejected: Greylisted, see http://postgrey.schweikert.ch/help/strict-server.com.html",
     "smtpResponseCode": 450,
     "smtpCommand": "RCPT TO",
+    "networkRouting": null,
     "job": {
-      "id": "46",
-      "attemptsMade": 1,
+      "id": "184d8f52h4ddi221890",
+      "attemptsMade": 2,
       "attempts": 10,
-      "nextAttempt": "2025-10-17T12:05:00.000Z"
+      "nextAttempt": "2025-10-17T12:00:20.000Z"
     }
   }
 }
@@ -227,7 +219,7 @@ Present only when a custom local address or proxy is configured:
 
 ### With Network Routing Information
 
-When EmailEngine uses a custom local address or proxy for the SMTP connection:
+When EmailEngine uses a local address and a proxy for the SMTP connection:
 
 ```json
 {
@@ -242,17 +234,19 @@ When EmailEngine uses a custom local address or proxy for the SMTP connection:
       "to": ["customer@email.com"]
     },
     "messageId": "<campaign-123@company.com>",
-    "error": "EmailEngine failed to establish TCP connection against smtp.email.com",
-    "errorCode": "ECONNECTION",
+    "error": "connect ECONNREFUSED 203.0.113.25:587",
+    "errorCode": "ESOCKET",
+    "smtpCommand": "CONN",
     "networkRouting": {
       "localAddress": "192.168.1.100",
-      "proxy": "socks5://proxy.company.com:1080"
+      "proxy": "socks5://proxy.company.com:1080",
+      "name": "mail.company.com"
     },
     "job": {
-      "id": "47",
-      "attemptsMade": 2,
+      "id": "184e9g63i5eej332901",
+      "attemptsMade": 9,
       "attempts": 10,
-      "nextAttempt": "2025-10-17T13:25:45.678Z"
+      "nextAttempt": false
     }
   }
 }
@@ -260,18 +254,22 @@ When EmailEngine uses a custom local address or proxy for the SMTP connection:
 
 ## Error Codes Reference
 
+`errorCode` is the code set by the SMTP client library:
+
 | Error Code | Description |
 |------------|-------------|
-| `ETIMEDOUT` | Connection timed out - firewall issue or wrong hostname/port |
-| `EAUTH` | SMTP authentication failed |
-| `ETLS` | TLS/SSL negotiation failed |
+| `ETIMEDOUT` | Connection or command timed out |
+| `ECONNECTION` | Failed to establish a TCP connection to the SMTP server |
+| `ESOCKET` | Socket-level error, including refused connections and TLS certificate failures |
 | `EDNS` | DNS resolution failed for the SMTP hostname |
-| `ECONNECTION` | Failed to establish TCP connection to SMTP server |
-| `EPROTOCOL` | Unexpected response from SMTP server |
-| `ESOCKET` | Socket-level error (often TLS certificate issues) |
-| `EMESSAGE` | Message-related error from SMTP server |
-| `ESTREAM` | Stream error during message transmission |
-| `EENVELOPE` | Invalid envelope (sender/recipient) |
+| `ETLS` | TLS negotiation failed |
+| `EPROTOCOL` | Unexpected response from the SMTP server |
+| `EAUTH` | SMTP authentication failed |
+| `ENOAUTH` | The server requires authentication and no credentials were configured |
+| `EOAUTH2` | An OAuth2 access token could not be obtained or was rejected |
+| `EENVELOPE` | The server rejected the sender or the recipients |
+| `EMESSAGE` | The server rejected the message content |
+| `ESTREAM` | The message stream failed during transmission |
 
 ## Handling the Event
 
@@ -285,7 +283,7 @@ async function handleMessageDeliveryError(event) {
   console.log(`  Queue ID: ${data.queueId}`);
   console.log(`  Error: ${data.error}`);
   console.log(`  Error Code: ${data.errorCode}`);
-  console.log(`  Attempt: ${data.job.attemptsMade}/${data.job.attempts}`);
+  console.log(`  Attempt: ${data.job.attemptsMade + 1}/${data.job.attempts}`);
 
   if (data.job.nextAttempt) {
     console.log(`  Next retry: ${data.job.nextAttempt}`);
@@ -293,13 +291,12 @@ async function handleMessageDeliveryError(event) {
     console.log(`  No more retries scheduled`);
   }
 
-  // Log to your monitoring system
   await monitoring.logDeliveryError({
     account,
     queueId: data.queueId,
     error: data.error,
     errorCode: data.errorCode,
-    attempt: data.job.attemptsMade,
+    attempt: data.job.attemptsMade + 1,
     timestamp: event.date
   });
 }
@@ -311,12 +308,11 @@ async function handleMessageDeliveryError(event) {
 async function handleMessageDeliveryError(event) {
   const { account, data } = event;
 
-  // Alert if message has failed multiple times
   if (data.job.attemptsMade >= 5) {
     await alerting.send({
       severity: 'warning',
       title: 'Email delivery struggling',
-      message: `Message ${data.queueId} has failed ${data.job.attemptsMade} times`,
+      message: `Message ${data.queueId} has failed ${data.job.attemptsMade + 1} times`,
       details: {
         account,
         error: data.error,
@@ -326,7 +322,6 @@ async function handleMessageDeliveryError(event) {
     });
   }
 
-  // Track error patterns
   await analytics.trackError({
     type: 'smtp_delivery_error',
     account,
@@ -342,64 +337,52 @@ async function handleMessageDeliveryError(event) {
 async function handleMessageDeliveryError(event) {
   const { account, data } = event;
 
-  // Authentication errors require immediate attention
   if (data.errorCode === 'EAUTH') {
     await notifyAdmin({
       title: 'SMTP Authentication Failed',
       message: `Account ${account} failed to authenticate with SMTP server`,
       action: 'Check SMTP credentials in account configuration'
     });
-
-    // Optionally disable the account to prevent further failures
-    await disableAccountSending(account);
   }
 }
 ```
 
 ## Retry Behavior
 
-EmailEngine uses exponential backoff for delivery retries:
+Whether a failed attempt is retried depends on the error:
 
-1. **Default configuration**: 10 retry attempts with exponential delay
-2. **Backoff formula**: `2^attemptsMade * baseDelay` (base delay is typically 5 seconds)
-3. **Example delays**: 10s, 20s, 40s, 80s, 160s, 320s, 640s, 1280s, 2560s, 5120s
+- A server reply of `5xx` is permanent, except `503`. The job ends and `messageFailed` follows
+- A server reply of `4xx` (or `503`) is transient and the attempt is retried
+- Without a server reply, `EAUTH`, `ENOAUTH`, `EOAUTH2`, `ETLS`, `EENVELOPE`, `EMESSAGE` and `EPROTOCOL` are permanent; every other error is retried
 
-The `job.nextAttempt` field shows when the next retry is scheduled. If `nextAttempt` is `false`, no more retries will be attempted.
-
-### Permanent vs Temporary Failures
-
-- **5xx SMTP codes** (500-599): Considered permanent failures - no more retries
-- **4xx SMTP codes** (400-499): Considered temporary - will be retried
-- **Connection errors**: Will be retried (may be transient network issues)
-
-When all retries are exhausted or a permanent failure occurs, a `messageFailed` webhook is triggered instead.
+Retries follow an exponential backoff: 5 seconds after the first failure, doubling each time, with a random reduction of up to 20 percent. When the attempts are used up, `messageFailed` is sent. The full schedule, the `deliveryAttempts` setting and what the queue keeps afterwards are described on the [Outbox queue](/docs/sending/outbox-queue#delivery-attempts) page.
 
 ## Relationship to Other Events
 
 The `messageDeliveryError` event is part of the email delivery lifecycle:
 
 1. **Submit API call** - Email is queued for sending
-2. **messageDeliveryError** - Temporary delivery failure (this event, may occur multiple times)
-3. **messageSent** - Email accepted by SMTP server (success path)
-4. **messageFailed** - Permanent delivery failure (failure path, no more retries)
+2. **messageDeliveryError** - A delivery attempt failed (this event, may occur multiple times)
+3. **messageSent** - Email accepted by the SMTP server (success path)
+4. **messageFailed** - EmailEngine has given up (failure path)
 
-```
+```text
 Submit API
-    │
-    ▼
-┌─────────────────────────────────────────┐
-│  Delivery Attempt                        │
-└─────────────────────────────────────────┘
-    │                        │
-    │ Success                │ Error
-    ▼                        ▼
-messageSent             messageDeliveryError
-                             │
-                             │ Retry?
-                   ┌─────────┴─────────┐
-                   │ Yes               │ No
-                   ▼                   ▼
-              [Retry loop]        messageFailed
+    |
+    v
++------------------+
+| Delivery attempt |
++------------------+
+    |               |
+    | success       | error
+    v               v
+messageSent    messageDeliveryError
+                    |
+                    | retry?
+              +-----+-----+
+              | yes       | no
+              v           v
+         next attempt  messageFailed
 ```
 
 ## Best Practices
@@ -407,20 +390,20 @@ messageSent             messageDeliveryError
 1. **Monitor error patterns** - Track error codes to identify systemic issues (DNS, TLS, auth)
 2. **Set up alerts** - Notify operators when error rates spike or specific errors occur
 3. **Log for debugging** - Store full webhook payloads to diagnose delivery problems
-4. **Handle auth errors specially** - Authentication failures often indicate configuration problems
+4. **Handle auth errors specially** - Authentication failures are permanent and usually mean a configuration problem
 5. **Track retry counts** - Know which messages are struggling to deliver
-6. **Consider circuit breakers** - Temporarily pause sending to problematic SMTP servers
-7. **Process quickly** - Return 2xx before the 30 second delivery timeout, then do the work asynchronously
+6. **Process quickly** - Return 2xx before the 30 second delivery timeout, then do the work asynchronously
 
 ## Related Events
 
-- [messageSent](/docs/webhooks/messagesent) - Successful delivery to SMTP server
-- [messageFailed](/docs/webhooks/messagefailed) - Permanent delivery failure
-- [messageBounce](/docs/webhooks/overview) - Bounce message received
+- [messageSent](/docs/webhooks/messagesent) - Successful delivery to the SMTP server
+- [messageFailed](/docs/webhooks/messagefailed) - EmailEngine has given up on the message
+- [messageBounce](/docs/webhooks/messagebounce) - Bounce message received
 
 ## See Also
 
-- [Webhooks Overview](/docs/webhooks/overview) - Complete webhook setup guide
+- [Webhooks Overview](/docs/webhooks/overview) - Delivery, retries, headers and signing
+- [Outbox queue](/docs/sending/outbox-queue) - Retry schedule, permanent versus transient failures, and what the queue keeps
 - [Submit API](/docs/api/post-v-1-account-account-submit) - Send emails via EmailEngine
-- [Outbox API](/docs/api/get-v-1-outbox) - Check queued message status
-- [Sending Emails](/docs/sending) - Email sending guide
+- [Outbox API](/docs/api/get-v-1-outbox-queueid) - Check the state of a queued message by `queueId`
+- [Local addresses](/docs/advanced/local-addresses) - Where `networkRouting` comes from
