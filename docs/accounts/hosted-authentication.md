@@ -580,6 +580,8 @@ These can be configured via:
 
 :::tip Framework-Free Styling
 Since EmailEngine v2.73.0 the hosted pages are framework-free: plain HTML styled by a single standalone stylesheet with stable, human-readable class names (`ee-card`, `ee-btn`, `ee-input`, and so on) and CSS custom properties for the design tokens (colors, radii, shadows). Redefine the tokens in `templateHtmlHead` for quick restyling - your CSS loads after EmailEngine's, so it always wins - or target the `ee-*` classes directly for deeper changes. The stylesheet source (`static/css/public.css` in the EmailEngine repository) documents every token and class. Versions up to v2.72.x used Bootstrap 4 classes (`btn-primary`, `card`) instead.
+
+Since v2.79.9 the hosted pages carry a Content-Security-Policy that allows inline `<style>` and `<script>` blocks and external assets served over `https://`; a stylesheet, font or script referenced over plain `http://` is blocked by the browser.
 :::
 
 **OAuth2 provider settings (configured in Google Cloud Console / Azure AD):**

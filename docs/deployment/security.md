@@ -635,7 +635,10 @@ server {
     ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256;
     ssl_prefer_server_ciphers off;
 
-    # HSTS
+    # HSTS: EmailEngine already sends max-age=31536000 for this host once the service URL
+    # setting is https. Add it here only for includeSubDomains or preload, and then replace
+    # EmailEngine's header instead of sending two
+    proxy_hide_header Strict-Transport-Security;
     add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
 }
 ```
@@ -733,6 +736,19 @@ curl -X POST https://emailengine.example.com/v1/tokens \
 | `timeWindow` | Time window duration in seconds |
 
 Every accepted request from such a token carries `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset` headers. Once the window is used up, the API answers `429 Too Many Requests` with `X-RateLimit-Limit` and `X-RateLimit-Reset` (seconds until the window resets) and a `ttl` field in the error body carrying the same number. The denial is also recorded in the [token audit log](/docs/api-reference/access-tokens#audit-log). Restrictions can also pin a token to source addresses and referrers; see [Token Restrictions](/docs/api-reference/access-tokens#token-restrictions).
+
+### Security Headers
+
+Since v2.79.9 EmailEngine sends the browser security headers itself, chosen per surface, so a reverse proxy needs no `add_header` lines for them:
+
+| Surface | Headers |
+|---------|---------|
+| Admin console (`/admin`) | A nonce-based `Content-Security-Policy` (only scripts and stylesheets the server rendered with the request's nonce run), `X-Frame-Options: SAMEORIGIN`, `Cross-Origin-Opener-Policy`, `Cross-Origin-Resource-Policy`, `Permissions-Policy`, `Cache-Control: no-store` |
+| REST API (`/v1`, `/mcp`, `/metrics`, `/swagger.json`) | `Content-Security-Policy: default-src 'none'`, `X-Frame-Options: DENY`, `Cache-Control: no-store` |
+| Public pages (hosted authentication form, unsubscribe, error pages) | A relaxed policy that allows inline scripts and styles and `https:` sources, so the markup you add through the branding settings keeps working; the pages stay embeddable in your own application |
+| Every response | `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, and `Strict-Transport-Security: max-age=31536000` once the service URL setting is `https://` |
+
+The policy can be switched to report-only or off with `EENGINE_CSP_MODE` (see [Advanced Settings](/docs/configuration/environment-variables#advanced-settings)): in report-only mode violations show in the browser console without blocking anything, which is the way to check a customised deployment before enforcing.
 
 ### Cross-Origin Requests
 

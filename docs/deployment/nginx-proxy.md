@@ -268,11 +268,14 @@ server {
     resolver 8.8.8.8 8.8.4.4 valid=300s;
     resolver_timeout 5s;
 
-    # Security headers
-    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header Referrer-Policy "no-referrer-when-downgrade" always;
+    # Security headers come from EmailEngine itself (Content-Security-Policy, X-Frame-Options,
+    # X-Content-Type-Options, Referrer-Policy, Permissions-Policy, and Strict-Transport-Security
+    # once the service URL setting is https), so do not add them here as well: a second copy is
+    # redundant at best, and two Content-Security-Policy headers are both enforced. Only add
+    # HSTS at the proxy when you want includeSubDomains or preload, and then replace
+    # EmailEngine's copy rather than stacking a second one:
+    # proxy_hide_header Strict-Transport-Security;
+    # add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
 
     # Logging
     access_log /var/log/nginx/emailengine-access.log combined;

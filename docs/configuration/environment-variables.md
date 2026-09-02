@@ -628,6 +628,7 @@ Advanced configuration options for debugging and performance tuning.
 | `EENGINE_CORS_MAX_AGE` | duration | `60` seconds | How long a browser may cache a CORS preflight response. A bare number is milliseconds, so use a unit | `1h` |
 | `EENGINE_DOCUMENT_STORE_ENABLED` | boolean | `false` | Enable the deprecated Document Store (Elasticsearch) feature gate | `true` |
 | `EENGINE_MCP_ENABLED` | boolean | `true` | Register the [MCP endpoint](/docs/mcp) routes. Registration alone serves nothing: the `mcpEnabled` setting is the runtime switch | `false` |
+| `EENGINE_CSP_MODE` | string | `enforce` | How the Content-Security-Policy is delivered: `enforce`, `report-only` (violations are only reported to the browser console) or `off`. The other security headers are unaffected | `report-only` |
 | `EENGINE_DISABLE_THREAD_COLLAPSE` | boolean | `false` | Stop web-safe HTML from folding quoted thread history into a collapsible block | `true` |
 | `EENGINE_BEACON_DISABLED` | boolean | `false` | Disable the anonymized feature beacon that rides on the license validation request | `true` |
 | `EENGINE_UPDATE_CHECK_DISABLED` | boolean | `false` | Disable the update check against the GitHub releases API | `true` |
@@ -676,6 +677,8 @@ Since EmailEngine v2.75.0, [web-safe HTML](/docs/receiving/web-safe-html) wraps 
 The Document Store (Elasticsearch) feature is deprecated and disabled by default since EmailEngine v2.71.0, and it is **removed from EmailEngine releases starting October 1, 2026**. This startup gate must be turned on before EmailEngine will run the document indexing worker or register the Document Store API and admin endpoints (`/v1/chat/{account}`, `/v1/unified/search`, and the `Configuration > Document Store` page). While the gate is off, those endpoints return `404`, even if the runtime "Document Store" setting is still enabled. The equivalent config-file setting is `[documentStore] enabled = true` (CLI flag `--documentStore.enabled=true`).
 
 If you depend on the Document Store, plan the migration now. Staying on the last release that still ships it means running an EmailEngine that no longer receives security updates.
+
+`EENGINE_CSP_MODE` selects how the [Content-Security-Policy](/docs/deployment/security#security-headers) reaches the browser. `enforce` (the default) blocks what the policy forbids. `report-only` keeps only the framing protection enforced and delivers the rest of the policy as `Content-Security-Policy-Report-Only`, so a violation shows up in the browser console without breaking the page - use it to check a customised deployment before enforcing. `off` sends the framing directive only. The equivalent config-file setting is `[api] cspMode`, and a change requires a restart.
 
 `EENGINE_MCP_ENABLED` is a deployment gate rather than an on switch: it defaults to `true`, and setting it to `false` removes the `/mcp` routes and the MCP configuration page from the instance so the surface does not exist at all. The endpoint itself stays off until an admin enables the `mcpEnabled` setting, which starts out disabled. The equivalent config-file setting is `[mcp] enabled = false` (CLI flag `--mcp.enabled=false`), and a change requires a restart. See [MCP for AI Agents](/docs/mcp).
 
