@@ -120,8 +120,8 @@ graph TB
 
 If EmailEngine is deployed behind a firewall that blocks outbound connections, you must whitelist the following domains for EmailEngine to function correctly.
 
-:::info Proxy Limitations
-EmailEngine's [proxy settings](/docs/accounts/imap-smtp#proxy-configuration) apply only to IMAP and SMTP connections. HTTP requests to the domains listed below are **not** routed through the configured proxy and require direct network access or a system-wide HTTP proxy.
+:::info Reaching these through a proxy
+Since v2.79.9, EmailEngine's [proxy settings](/docs/accounts/imap-smtp#proxy-configuration) cover HTTP requests as well as IMAP and SMTP, so the domains below can be reached through the proxy instead of being whitelisted at the firewall. Up to v2.79.8 they required direct network access or the separate HTTP proxy settings.
 :::
 
 #### Required Domains

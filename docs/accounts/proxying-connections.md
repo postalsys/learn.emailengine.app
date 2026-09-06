@@ -116,7 +116,7 @@ _Enable the proxy and set the listen address, port and TLS options_
 
 After saving, EmailEngine starts the proxy on the given host and port. The plaintext listener does not offer STARTTLS; TLS is either on for the whole listener or off.
 
-This page configures the listener your clients connect to. Routing EmailEngine's own outbound IMAP and SMTP connections through a SOCKS or HTTP proxy is a different setting, `proxyUrl`, described under [Proxy Configuration](/docs/accounts/imap-smtp#proxy-configuration).
+This page configures the listener your clients connect to. Routing EmailEngine's own outbound connections through a SOCKS or HTTP proxy is a different setting, `proxyUrl`, described under [Proxy Configuration](/docs/accounts/imap-smtp#proxy-configuration).
 
 :::note TLS needs a Service URL with a real domain
 There is no certificate upload here. When TLS is enabled, EmailEngine serves the certificate it manages for the hostname in your **Service URL**, so the checkbox stays disabled until that URL points at a real domain rather than an IP address or `localhost` (once TLS is on, it can still be switched off). The `EENGINE_IMAPPROXY_TLS_KEY` and `EENGINE_IMAPPROXY_TLS_CERT` [environment variables](/docs/configuration/environment-variables#certificates-for-emailengines-own-listeners) supply a certificate of your own; a valid managed certificate for the Service URL hostname takes precedence over them.

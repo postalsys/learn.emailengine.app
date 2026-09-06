@@ -746,7 +746,7 @@ Monitor additional folders in real-time:
 
 ### Proxy Configuration
 
-Route EmailEngine's outbound IMAP/SMTP connections through a SOCKS or HTTP proxy server.
+Route EmailEngine's outbound connections through a SOCKS or HTTP proxy server.
 
 **Per-account proxy:**
 
@@ -777,9 +777,9 @@ Set the `proxy` field at the account level (not inside imap/smtp objects):
 }
 ```
 
-**Global proxy for all accounts:**
+**Global proxy:**
 
-Configure a default proxy for all accounts via the settings API:
+Configure a default proxy via the settings API:
 
 ```bash
 curl -X POST https://emailengine.example.com/v1/settings \
@@ -802,23 +802,60 @@ curl -X POST https://emailengine.example.com/v1/settings \
 
 Per-account proxy settings override the global proxy setting.
 
-:::warning IMAP and SMTP Only
-The `proxyEnabled` and `proxyUrl` settings apply only to IMAP and SMTP socket connections. HTTP requests made by EmailEngine (webhooks, OAuth2 token exchange, Gmail API, Microsoft Graph API, license validation, etc.) are **not** routed through this proxy.
+#### What the global proxy covers
 
-To proxy HTTP traffic, use the separate HTTP proxy settings instead: set `httpProxyEnabled` and `httpProxyUrl` via the settings API, or use the `EENGINE_HTTP_PROXY_ENABLED` and `EENGINE_HTTP_PROXY_URL` environment variables. Note that EmailEngine does not honor the standard `HTTP_PROXY`/`HTTPS_PROXY` environment variables.
+Since v2.79.9, `proxyEnabled` and `proxyUrl` apply to everything EmailEngine sends out:
+
+- IMAP and SMTP sessions with mail servers
+- Gmail API and Microsoft Graph API requests
+- OAuth2 authorization and token requests
+- Webhook deliveries
+- Autodiscovery lookups for `GET /v1/autoconfig` and the hosted authentication form
+- Requests to a configured [authentication server](/docs/accounts/authentication-server)
+- EmailEngine's own requests: license validation, update checks, ACME certificate issuance and renewal, OpenAI requests, and error reports to Sentry
+
+The Elasticsearch connection of the deprecated Document Store is the one exception. It never uses a proxy.
+
+Up to v2.79.8 the setting reached IMAP and SMTP sockets only, and HTTP traffic needed the separate settings described below. An instance that already sets both keeps working unchanged.
+
+#### Using a different proxy for HTTP
+
+`httpProxyEnabled` and `httpProxyUrl` route HTTP and HTTPS requests through a proxy of their own, leaving IMAP and SMTP on `proxyUrl`. Use them when the two kinds of traffic take different paths out of your network:
 
 ```bash
 curl -X POST https://emailengine.example.com/v1/settings \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
+    "proxyEnabled": true,
+    "proxyUrl": "socks5://mail-proxy.example.com:1080",
     "httpProxyEnabled": true,
-    "httpProxyUrl": "http://proxy.example.com:3128"
+    "httpProxyUrl": "http://http-proxy.example.com:3128"
   }'
 ```
 
-For environments with strict outbound firewalls, see [Outbound Connection Whitelist](/docs/deployment/security#outbound-connection-whitelist) for a list of domains that EmailEngine needs to reach.
+EmailEngine picks the proxy for an HTTP request in this order:
+
+| Order | Source | Applies when |
+|-------|--------|--------------|
+| 1 | `EENGINE_HTTP_PROXY_ENABLED=false` | The variable is set to a false value. HTTP proxying is off, the global proxy included |
+| 2 | `httpProxyEnabled` and `httpProxyUrl` | Both a flag and a URL are set. `EENGINE_HTTP_PROXY_ENABLED` and `EENGINE_HTTP_PROXY_URL` replace the stored values when present |
+| 3 | `proxyEnabled` and `proxyUrl` | Both a flag and a URL are set, and no HTTP proxy applied above |
+| 4 | No proxy | Neither pair is complete |
+
+Note that the environment variables override the dedicated HTTP proxy settings, not the global proxy. `EENGINE_HTTP_PROXY_URL` on its own has no effect unless the HTTP proxy is also enabled, by the setting or by `EENGINE_HTTP_PROXY_ENABLED`.
+
+Setting `EENGINE_HTTP_PROXY_ENABLED=false` is how you keep mail traffic on the global proxy while HTTP requests go out directly.
+
+:::note Per-account proxies are IMAP and SMTP only
+The account-level `proxy` field applies to that account's IMAP and SMTP sockets. It does not affect HTTP requests, so a Gmail API or Microsoft Graph account follows the global or HTTP proxy setting rather than its own `proxy` value.
 :::
+
+:::note Standard proxy variables are ignored
+EmailEngine does not read the conventional `HTTP_PROXY`, `HTTPS_PROXY` or `NO_PROXY` environment variables. Configure the settings above instead.
+:::
+
+For environments with strict outbound firewalls, see [Outbound Connection Whitelist](/docs/deployment/security#outbound-connection-whitelist) for a list of domains that EmailEngine needs to reach.
 
 ## See Also
 

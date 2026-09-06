@@ -703,16 +703,18 @@ EENGINE_CORS_MAX_AGE=1h
 
 ## HTTP Proxy
 
-Route outbound HTTP/HTTPS requests (webhooks, OAuth2 token requests, API calls) through an HTTP or SOCKS proxy.
+Route outbound HTTP and HTTPS requests (webhooks, OAuth2 token requests, Gmail API and Microsoft Graph calls, license validation) through an HTTP or SOCKS proxy.
 
 | Variable | Type | Default | Description | Example |
 |----------|------|---------|-------------|---------|
-| `EENGINE_HTTP_PROXY_ENABLED` | boolean | `false` | Enable HTTP proxy for outbound requests | `true` |
+| `EENGINE_HTTP_PROXY_ENABLED` | boolean | `false` | Enable a dedicated proxy for outbound HTTP requests | `true` |
 | `EENGINE_HTTP_PROXY_URL` | string | none | Proxy server URL (HTTP, HTTPS, or SOCKS) | `socks5://proxy.example.com:1080` |
 
 :::info Settings Override
 These environment variables override the equivalent API settings (`httpProxyEnabled` and `httpProxyUrl` via `POST /v1/settings`). When both are set, environment variables take precedence.
 :::
+
+Since v2.79.9 these are not the only way to proxy HTTP traffic. The global proxy (`proxyEnabled` and `proxyUrl`) covers HTTP requests as well as IMAP and SMTP, and the variables here are the override for sending HTTP somewhere else. [Proxy Configuration](/docs/accounts/imap-smtp#proxy-configuration) has the full precedence order.
 
 **Examples:**
 
@@ -727,6 +729,17 @@ EENGINE_HTTP_PROXY_URL=http://proxy.example.com:8080
 EENGINE_HTTP_PROXY_ENABLED=true
 EENGINE_HTTP_PROXY_URL=socks5://proxy.example.com:1080
 ```
+
+**Keep HTTP requests off the global proxy:**
+```bash
+EENGINE_HTTP_PROXY_ENABLED=false
+```
+
+An explicit `false` disables HTTP proxying entirely, so IMAP and SMTP keep using `proxyUrl` while HTTP requests go out directly. This restores the behavior of releases up to v2.79.8.
+
+:::note Standard proxy variables are ignored
+EmailEngine does not read `HTTP_PROXY`, `HTTPS_PROXY` or `NO_PROXY`. Use the variables above, or the proxy settings in the admin interface.
+:::
 
 ## Logging & Monitoring
 

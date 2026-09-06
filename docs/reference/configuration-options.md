@@ -229,10 +229,10 @@ curl -X POST "https://emailengine.example.com/v1/settings" \
 | `imapStrategy` | `default`, `dedicated`, `random` | `default` | How outbound IMAP connections pick a local address |
 | `smtpStrategy` | `default`, `dedicated`, `random` | `default` | How outbound SMTP connections pick a local address |
 | `localAddresses` | array of IP strings | unset | Local addresses available to the strategies above |
-| `proxyEnabled` | boolean | off | Route IMAP and SMTP connections through a proxy |
-| `proxyUrl` | string | unset | Proxy URL for mail connections, for example `socks5://proxy.example.com:1080` |
-| `httpProxyEnabled` | boolean | off, or `EENGINE_HTTP_PROXY_ENABLED` | Route outbound HTTP requests (webhooks, OAuth2, provider APIs) through a proxy |
-| `httpProxyUrl` | string | unset, or `EENGINE_HTTP_PROXY_URL` | HTTP proxy URL |
+| `proxyEnabled` | boolean | off | Route every outbound connection through a proxy: IMAP and SMTP sessions, and, since v2.79.9, HTTP requests too |
+| `proxyUrl` | string | unset | Proxy URL, for example `socks5://proxy.example.com:1080` |
+| `httpProxyEnabled` | boolean | off, or `EENGINE_HTTP_PROXY_ENABLED` | Send outbound HTTP requests (webhooks, OAuth2, provider APIs) through a proxy of their own instead of `proxyUrl` |
+| `httpProxyUrl` | string | unset, or `EENGINE_HTTP_PROXY_URL` | HTTP proxy URL, used in place of `proxyUrl` for HTTP requests |
 | `gmailSubscriptionTtl` | integer (days) | unset (Google default, 31 days) | Gmail Pub/Sub subscription inactivity expiry; `0` never expires |
 | `imapClientName` | string | unset | Client name advertised through the IMAP ID extension |
 | `imapClientVersion` | string | unset | Client version advertised through IMAP ID |
