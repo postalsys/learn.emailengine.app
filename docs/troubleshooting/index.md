@@ -106,7 +106,7 @@ emailengine version
 
 3. **Node.js version too old**
 
-   EmailEngine declares Node.js 20 or newer in its `engines` field. The startup guard is older than that requirement and only refuses to run below Node.js 17, exiting immediately with `Node.js version vX.Y.Z is not supported. Please upgrade to Node.js 17 or later.`. A version between 17 and 19 starts but is untested, so treat a strange failure on one as a version problem.
+   EmailEngine declares Node.js 20 or newer in its `engines` field and refuses to start below it, exiting immediately with `Node.js version vX.Y.Z is not supported. Please upgrade to Node.js 20 or later.`. Before v2.79.9 the guard only caught Node.js 16 and older, so a version between 17 and 19 started and then failed later in a way that did not name the cause.
 
    **Solution:**
 

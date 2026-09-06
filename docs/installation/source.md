@@ -29,7 +29,7 @@ The figures on the [installation overview](/docs/installation#system-requirement
 
 ### Required Software
 
-- **Node.js 20+** (the `engines` field in EmailEngine's package.json is `>=20.x`; the release builds and CI use 24)
+- **Node.js 20+** (the `engines` field in EmailEngine's package.json is `>=20.0.0`; the release builds and CI use 24)
 - **Redis** - a stand-alone instance with `maxmemory-policy noeviction` and persistence enabled
 - **wget/curl** (for downloading release tarballs)
 
